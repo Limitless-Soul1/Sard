@@ -269,7 +269,6 @@ export function Sidebar(props: SidebarProps) {
         // click that opens the shelf. That is the same bargain `useBookPickup` strikes for a book,
         // and it is why no control had to be added to a row whose layout is already settled.
         onPointerDown={draggable ? (e) => rowDrag.begin(e, s.id, siblings!) : undefined}
-        onClickCapture={draggable ? rowDrag.onClickCapture : undefined}
         // A SHELF IN THE SIDEBAR IS A PLACE A BOOK CAN BE PUT.
         //
         // Until now a destination existed only where the current view happened to have DRAWN it,

@@ -88,9 +88,72 @@ describe("the gesture's edges", () => {
     expect(DRAG).toContain("if (Math.abs(e.clientY - st.startY) < DRAG_THRESHOLD_PX) return;");
   });
 
+  it("alters NOTHING about a press until it has travelled", () => {
+    // THE REGRESSION THIS HOLDS SHUT. `begin` used to call `preventDefault()` on the pointerdown.
+    // Cancelling `pointerdown` suppresses the compatibility mouse sequence and the CLICK with it, so
+    // a shelf row — whose navigation is an `onClick` on the button inside it — stopped opening at
+    // all. Every press paid for a drag that usually never happened.
+    //
+    // The case grip hid it: it has no `onClick` of its own, and a case's name is a different button
+    // the gesture never touches, so only shelves showed the damage.
+    const begin = DRAG.slice(DRAG.indexOf("const begin = useCallback"), DRAG.indexOf("// ── the carry"));
+    expect(begin).not.toMatch(/e\.preventDefault\(\)/);
+    expect(begin).not.toMatch(/setPointerCapture/);
+    expect(begin).not.toMatch(/userSelect/);
+  });
+
+  it("takes the press over only once it is genuinely a drag", () => {
+    // Everything `begin` stopped doing has to happen SOMEWHERE, and the threshold is the only honest
+    // place for it: after `st.moved = true`, which is the line that decides this is a drag.
+    const after = DRAG.slice(DRAG.indexOf("st.moved = true;"));
+    expect(after).toContain("e.preventDefault();");
+    expect(after).toContain("setPointerCapture");
+    expect(after).toContain('document.body.style.userSelect = "none";');
+  });
+
+  it("gives the selection back however the drag ends", () => {
+    // Committed, cancelled or escaped — `finish` is the one exit, and it restores what it suppressed.
+    const finish = DRAG.slice(DRAG.indexOf("const finish = useCallback"), DRAG.indexOf("const begin = useCallback"));
+    expect(finish).toContain('document.body.style.userSelect = "";');
+  });
+
   it("eats the click that ends a drag, so a shelf row does not also navigate", () => {
-    expect(DRAG).toContain("spent.current = true;");
-    expect(CHROME).toContain("onClickCapture={draggable ? rowDrag.onClickCapture : undefined}");
+    expect(DRAG).toContain("armClickSwallow();");
+    expect(DRAG).toContain('window.addEventListener("click", fn, true);');
+  });
+
+  it("eats ONE click, and takes its own listener off as it does", () => {
+    // THE DEFECT THIS HOLDS SHUT. This was a flag set when a drag ended and cleared by the next click
+    // to reach a row — but a click goes to the COMMON ANCESTOR of the press and the release, so a
+    // drag ending over a different row produced no click on the dragged row at all. The flag stayed
+    // armed and ate a later, unrelated click: one dead click on a shelf after every drag.
+    //
+    // The listener must therefore remove itself inside its own handler, not wait to be cleared.
+    const handler = DRAG.slice(DRAG.indexOf("const armClickSwallow"), DRAG.indexOf("}, [disarmClick]);"));
+    expect(handler).toContain("disarmClick();");
+    expect(handler).toContain("e.stopPropagation();");
+    // and there is exactly one place that arms it, so two drags cannot stack two listeners
+    expect((DRAG.match(/armClickSwallow\(\);/g) ?? [])).toHaveLength(1); // armed in exactly one place
+  });
+
+  it("disarms on any new press, so a drag that produced no click cannot poison the next one", () => {
+    // If the release never generates a click — the pointer left the window, say — the listener would
+    // otherwise sit waiting. A fresh pointerdown proves that click is never coming.
+    expect(DRAG).toContain("const down = () => disarmClick();");
+    expect(DRAG).toContain('window.addEventListener("pointerdown", down, true);');
+    expect(DRAG).toContain('window.removeEventListener("pointerdown", down, true);');
+  });
+
+  it("cannot leave a click listener behind when it unmounts", () => {
+    const cleanup = DRAG.slice(DRAG.indexOf("return () => {", DRAG.indexOf("const down =")));
+    expect(cleanup).toContain("disarmClick();");
+  });
+
+  it("suppresses with no timer at all", () => {
+    // An arbitrary delay would be a guess about when the click arrives. The pointer lifecycle says
+    // it exactly: the next click, or the next press, whichever comes first.
+    const region = DRAG.slice(DRAG.indexOf("const swallow"), DRAG.indexOf("const register"));
+    expect(region).not.toMatch(/setTimeout|setInterval/);
   });
 
   it("takes every window listener back off again", () => {
@@ -103,6 +166,46 @@ describe("the gesture's edges", () => {
 
   it("answers only the primary button", () => {
     expect(DRAG).toContain("if (e.button !== 0) return;");
+  });
+
+  it("gives the pointer capture back when the gesture is over", () => {
+    // The browser releases implicitly on pointerup, but a drag ended by Escape finishes while the
+    // pointer is still DOWN — holding another element's pointer after the gesture has ended is not
+    // ours to do.
+    expect(DRAG).toContain("releasePointerCapture");
+    const finish = DRAG.slice(DRAG.indexOf("const finish = useCallback"), DRAG.indexOf("const begin = useCallback"));
+    expect(finish).toContain("releasePointerCapture");
+  });
+
+  it("leaves nothing behind if it unmounts mid-drag", () => {
+    // A live drag holds three things the component does not own: the body's selection, a settle timer
+    // and the window listeners. All three are given back in the effect's cleanup.
+    const cleanup = DRAG.slice(DRAG.indexOf("return () => {", DRAG.indexOf("const down =")));
+    expect(cleanup).toContain('document.body.style.userSelect = "";');
+    expect(cleanup).toContain("window.clearTimeout(settleTimer.current)");
+    expect(cleanup).toContain("disarmClick();");
+    expect(cleanup).toContain("scroller.stop();");
+  });
+
+  it("holds its one timer by handle, so it cannot fire into a dead component", () => {
+    // The settle's fallback exists because a transform that was already 0 fires no `transitionend`.
+    // It is the only timer here, and it is cancelled from both exits.
+    // Two, and each is held by a handle its own exit clears: the cancel-settle fallback (a transform
+    // that was already 0 fires no `transitionend`) and the FLIP's release frame. Neither is a delay
+    // chosen to paper over an event — both are guaranteed-completion guards.
+    const timers = DRAG.match(/setTimeout\(/g) ?? [];
+    const clears = DRAG.match(/clearTimeout\(/g) ?? [];
+    expect(timers).toHaveLength(2);
+    expect(clears.length).toBeGreaterThanOrEqual(timers.length);
+    expect(DRAG).toContain("settleTimer.current = window.setTimeout(done, SETTLE_MS + 80);");
+    expect((DRAG.match(/clearTimeout\(settleTimer\.current\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    // and the animation frame is cancelled too
+    expect(DRAG).toContain("cancelAnimationFrame(raf);");
+  });
+
+  it("stops the edge auto-scroll on every exit", () => {
+    const finish = DRAG.slice(DRAG.indexOf("const finish = useCallback"), DRAG.indexOf("const begin = useCallback"));
+    expect(finish).toContain("scrollerRef.current?.stop();");
   });
 });
 

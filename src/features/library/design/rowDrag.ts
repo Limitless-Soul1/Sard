@@ -72,6 +72,8 @@ interface Live {
   /** The scroll position those tops were measured at, so an auto-scroll can be corrected for. */
   scrollTop: number;
   scroller: HTMLElement | null;
+  /** The element the press began on — captured only once the drag starts. */
+  container: Element | null;
   moved: boolean;
   at: number;
   pointerId: number;
@@ -100,13 +102,47 @@ export function useRowDrag(opts: RowDragOptions) {
   /** Where every row sat just before a commit, for the FLIP that follows it. */
   const lastTops = useRef<Map<string, number> | null>(null);
   /**
-   * Set the moment a press turns out to have been a drag, and cleared by the click it then eats.
+   * THE ONE CLICK A DRAG PRODUCES, AND NOT A CLICK MORE.
    *
-   * A shelf row is also a link: pressing it navigates. Without this, every drag ended by opening
-   * whatever the row pointed at — the same defect `useBookPickup` records for the press-and-hold,
-   * and it takes the same answer.
+   * A shelf row is also a link: pressing it navigates. So the click a finished drag leaves behind has
+   * to be eaten, or every drag ends by opening whatever the row pointed at — the defect
+   * `useBookPickup` records for the press-and-hold.
+   *
+   * This was a flag, set when a drag ended and cleared by the next click to reach a row. That is not
+   * the same thing. A click is dispatched to the COMMON ANCESTOR of the press and the release, so a
+   * drag that ends over a different row — which is the ordinary case — produces no click on the row
+   * that was dragged at all. The flag then stayed armed and ate a later, unrelated click: one dead
+   * click on a shelf after every drag.
+   *
+   * So the suppression is bound to the pointer interaction instead of left lying about. Ending a drag
+   * arms ONE capture-phase listener on the window, which eats the next click and immediately removes
+   * itself; and any new `pointerdown` disarms it, because a fresh press means the click it was
+   * waiting for is never coming. Nothing accumulates, and nothing survives into the next interaction.
    */
-  const spent = useRef(false);
+  const swallow = useRef<((e: MouseEvent) => void) | null>(null);
+  /**
+   * The settle's belt-and-braces timer, held so it can be cancelled.
+   *
+   * NOT a workaround for anything: a row whose transform was ALREADY `translateY(0)` fires no
+   * `transitionend`, so without a second way to finish, its inline styles would never be cleared.
+   * Holding the handle is what keeps it from firing into a component that has since unmounted.
+   */
+  const settleTimer = useRef<number | null>(null);
+  const disarmClick = useCallback(() => {
+    if (!swallow.current) return;
+    window.removeEventListener("click", swallow.current, true);
+    swallow.current = null;
+  }, []);
+  const armClickSwallow = useCallback(() => {
+    disarmClick();
+    const fn = (e: MouseEvent) => {
+      disarmClick(); // one click, whatever it turns out to be
+      e.stopPropagation();
+      e.preventDefault();
+    };
+    swallow.current = fn;
+    window.addEventListener("click", fn, true);
+  }, [disarmClick]);
   const commit = useRef(opts.onCommit);
   commit.current = opts.onCommit;
 
@@ -177,9 +213,17 @@ export function useRowDrag(opts: RowDragOptions) {
     const st = live.current;
     live.current = null;
     scrollerRef.current?.stop();
+    document.body.style.userSelect = "";
+    if (settleTimer.current != null) { window.clearTimeout(settleTimer.current); settleTimer.current = null; }
+    // THE CAPTURE IS GIVEN BACK EXPLICITLY. The browser releases it implicitly on pointerup, but a
+    // drag ended by Escape is finished while the pointer is still down — and holding another
+    // element's pointer after the gesture is over is not ours to do.
+    if (st?.container) {
+      try { (st.container as HTMLElement).releasePointerCapture?.(st.pointerId); } catch { /* already gone */ }
+    }
     if (!st) return;
     if (!st.moved) { setDraggingId(null); return; }
-    spent.current = true; // the press is spent; the click that follows is not a navigation
+    armClickSwallow(); // the click this drag leaves behind is not a navigation
 
     if (commitIt && st.at !== st.from) {
       // Remember where everything is NOW, so the re-render that follows can be animated from here
@@ -202,13 +246,13 @@ export function useRowDrag(opts: RowDragOptions) {
       if (self && animate) {
         const done = () => { clearAll(st.ids); self.removeEventListener("transitionend", done); };
         self.addEventListener("transitionend", done);
-        window.setTimeout(done, SETTLE_MS + 80); // a transform that was already 0 fires no event
+        settleTimer.current = window.setTimeout(done, SETTLE_MS + 80);
       } else {
         clearAll(st.ids);
       }
     }
     setDraggingId(null);
-  }, [clearAll]);
+  }, [clearAll, armClickSwallow]);
 
   /**
    * Begin a drag from a grip. The press is only RECORDED here; it becomes a drag once the pointer
@@ -220,8 +264,14 @@ export function useRowDrag(opts: RowDragOptions) {
     if (from < 0) return;
     const self = rows.current.get(id);
     if (!self) return;
-    e.preventDefault();
-    e.stopPropagation();
+    // NOTHING IS PREVENTED HERE, and nothing is captured. A press is only RECORDED; until it has
+    // travelled it is an ordinary press and must behave like one.
+    //
+    // THE DEFECT THIS FIXES. `preventDefault()` used to run on every pointerdown on a row. Cancelling
+    // `pointerdown` suppresses the compatibility mouse sequence, and the CLICK goes with it — so a
+    // shelf row, whose navigation is an `onClick` on the button inside it, stopped opening at all.
+    // The case grip never showed it: it has no `onClick`, and the case's name is a different button
+    // the gesture never touches. Everything that alters the press now waits for the threshold.
 
     const tops: number[] = [];
     const heights: number[] = [];
@@ -239,12 +289,12 @@ export function useRowDrag(opts: RowDragOptions) {
       tops, heights,
       scrollTop: scroller ? scroller.scrollTop : 0,
       scroller,
+      container: null,
       moved: false,
       at: from,
       pointerId: e.pointerId,
     };
-    scrollerRef.current?.setContainer(e.currentTarget as Element);
-    try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* not supported */ }
+    live.current.container = e.currentTarget as Element;
   }, []);
 
   // ── the carry, bound to the window so leaving the grip does not end it ──────────────────────────
@@ -258,6 +308,13 @@ export function useRowDrag(opts: RowDragOptions) {
       if (!st.moved) {
         if (Math.abs(e.clientY - st.startY) < DRAG_THRESHOLD_PX) return;
         st.moved = true;
+        // FROM HERE IT IS A DRAG, so from here the press may be taken over: the pointer is captured
+        // so leaving the row cannot end it, selection is suppressed so the list does not highlight
+        // as it moves, and the move itself is cancelled to stop the browser starting a selection.
+        e.preventDefault();
+        scroller.setContainer(st.container ?? null);
+        try { (st.container as HTMLElement | null)?.setPointerCapture?.(st.pointerId); } catch { /* unsupported */ }
+        document.body.style.userSelect = "none";
         const self = rows.current.get(st.id);
         if (self) {
           self.style.transition = "none";
@@ -273,19 +330,29 @@ export function useRowDrag(opts: RowDragOptions) {
     const up = () => finish(true);
     const cancel = () => finish(false);
     const key = (e: KeyboardEvent) => { if (e.key === "Escape") finish(false); };
+    // ANY new press ends the wait. The click a finished drag was holding a listener for either
+    // arrives before this, or never arrives at all — and a fresh interaction proves it was the latter.
+    const down = () => disarmClick();
 
+    window.addEventListener("pointerdown", down, true);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("keydown", key);
     return () => {
+      // UNMOUNTING DURING A DRAG must leave nothing behind: the page keeps the body it was given,
+      // and no timer fires into a component that is gone.
       scroller.stop();
+      document.body.style.userSelect = "";
+      if (settleTimer.current != null) { window.clearTimeout(settleTimer.current); settleTimer.current = null; }
+      window.removeEventListener("pointerdown", down, true);
+      disarmClick();
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("keydown", key);
     };
-  }, [paint, finish]);
+  }, [paint, finish, disarmClick]);
 
   // ── THE SETTLE. FLIP: invert to where the rows were, then release them to where they now are ────
   useLayoutEffect(() => {
@@ -320,21 +387,10 @@ export function useRowDrag(opts: RowDragOptions) {
   useEffect(() => () => { scrollerRef.current?.stop(); }, []);
 
   /**
-   * Put on any row that is also a link. It runs in the CAPTURE phase, so the click is stopped
-   * before it reaches the name inside the row rather than after.
-   */
-  const onClickCapture = useCallback((e: React.MouseEvent) => {
-    if (!spent.current) return;
-    spent.current = false;
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  /**
    * Is a drag actually under way? Read from the ref rather than from state, because a row's own
    * `pointerup` runs before the window's and must be able to tell a drag from a click there.
    */
   const isDragging = useCallback(() => live.current?.moved === true, []);
 
-  return { begin, register, draggingId, onClickCapture, isDragging };
+  return { begin, register, draggingId, isDragging };
 }

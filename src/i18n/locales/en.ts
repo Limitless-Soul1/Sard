@@ -311,6 +311,7 @@ export const en = {
   "lib.moveCase": "Move this case",
   "lib.moveCaseHint": "Drag to reorder this case",
   "lib.caseMoved": "“{name}” moved to position {n}.",
+  "lib.shelfMoved": "“{name}” moved to position {n}.",
   "lib.moveShelf": "Move this shelf",
   "lib.moveShelfHint": "Drag to reorder this shelf",
   "lib.moveCategory": "Move this category",

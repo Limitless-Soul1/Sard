@@ -1868,6 +1868,22 @@ export function LibraryDesign(props: LibraryDesignProps) {
     [props, loadTree, scope],
   );
 
+  /**
+   * Drop a shelf at a position among its siblings, and say where it landed.
+   *
+   * The index-taking twin of `shelfOps.move`, which steps by one — both call `shelf_reorder`, so
+   * the drag in the sidebar and the «move» in the ⋯ menu write exactly the same order.
+   */
+  const placeShelf = useCallback(
+    async (id: string, at: number) => {
+      const name = shelfById.get(id)?.shelf.name ?? "";
+      if (await write(() => shelfReorder(id, at))) {
+        flash(t("lib.shelfMoved", { name, n: num(at + 1) }));
+      }
+    },
+    [shelfById, write, flash, t, num],
+  );
+
   const shelfOps = useMemo(
     () => ({
       setOrder: async (shelfId: string, order: ShelfOrder) => {
@@ -2685,6 +2701,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           onNewRuleShelf={(caseId) => write(() => shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={(id, ink) => write(() => caseSetInk(id, ink))}
           onPlaceCase={placeCase}
+          onPlaceShelf={placeShelf}
           onManageUnfiled={() => setEditorFor(UNFILED_EDITOR)}
           onManageCase={setEditorFor}
           onRenameShelf={renameShelf}
@@ -2754,6 +2771,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         onNewRuleShelf={(caseId) => write(() => shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={(id, ink) => write(() => caseSetInk(id, ink))}
           onPlaceCase={placeCase}
+          onPlaceShelf={placeShelf}
           onManageUnfiled={() => setEditorFor(UNFILED_EDITOR)}
           onManageCase={setEditorFor}
           onRenameShelf={renameShelf}

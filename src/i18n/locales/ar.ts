@@ -304,6 +304,7 @@ export const ar: Record<TKey, string> = {
   "lib.moveCase": "تحريك هذه الخزانة",
   "lib.moveCaseHint": "اسحب لإعادة ترتيب هذه الخزانة",
   "lib.caseMoved": "نُقلت «{name}» إلى الموضع {n}.",
+  "lib.shelfMoved": "نُقل «{name}» إلى الموضع {n}.",
   "lib.moveShelf": "تحريك هذا الرفّ",
   "lib.moveShelfHint": "اسحب لإعادة ترتيب هذا الرفّ",
   "lib.moveCategory": "تحريك هذه الفئة",

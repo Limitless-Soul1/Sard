@@ -70,18 +70,29 @@ describe("the gate that remains is the global Immersive state", () => {
     // This is what makes "Immersive OFF never dims" true without any JavaScript: the selectors
     // cannot match. If either loses `.immersive`, switching appearance could dim a non-immersive
     // read, which is the opposite failure.
-    const scrimRule = CSS.indexOf('.reader-root.immersive.scrolled-away .reader-desk {');
-    expect(scrimRule, "the scrim-step rule should be present").toBeGreaterThan(-1);
-    expect(CSS.slice(scrimRule, scrimRule + 220)).toContain("--bg-rd-scrim: calc(");
-
-    const blurRule = CSS.indexOf('.reader-root.immersive.scrolled-away .reader-desk::before {');
-    expect(blurRule, "the blur-step rule should be present").toBeGreaterThan(-1);
-    expect(CSS.slice(blurRule, blurRule + 220)).toContain("--bg-rd-immstep");
+    // FURTHER CLASSES ON THE SAME COMPOUND ARE TOLERATED, deliberately. A later task made the
+    // dimming its own preference and added a third gate (`.im-dim`) to both selectors; pinning the
+    // exact selector text would fail that change while every property THIS test exists to protect
+    // still held. What is asserted here is the REQUIREMENT — immersive, and deliberately scrolled
+    // away — not the complete class list. The extra gate has its own cover in
+    // `immersiveBackgroundDimming.test.ts`, which pins the full compound and the four-case table.
+    const NL2 = String.fromCharCode(10);
+    const ruleLine = (ending: string): string => {
+      const found = CSS.split(NL2).filter(
+        (l) => l.includes(".reader-root.immersive.scrolled-away") && l.trimEnd().endsWith(ending),
+      );
+      expect(found.length, `exactly one rule should end "${ending}"`).toBe(1);
+      return found[0];
+    };
+    const scrim = ruleLine(".reader-desk {");
+    const blur = ruleLine(".reader-desk::before {");
+    expect(CSS.slice(CSS.indexOf(scrim), CSS.indexOf(scrim) + scrim.length + 220)).toContain("--bg-rd-scrim: calc(");
+    expect(CSS.slice(CSS.indexOf(blur), CSS.indexOf(blur) + blur.length + 220)).toContain("--bg-rd-immstep");
 
     // And both are additionally gated on a wallpaper actually being bound, which is why an
     // appearance with no reading image still dims nothing.
-    expect(CSS.slice(Math.max(0, scrimRule - 60), scrimRule)).toContain('[data-bg-reading="on"]');
-    expect(CSS.slice(Math.max(0, blurRule - 60), blurRule)).toContain('[data-bg-reading="on"]');
+    expect(scrim).toContain('[data-bg-reading="on"]');
+    expect(blur).toContain('[data-bg-reading="on"]');
   });
 
   it("the amounts and the transition are unchanged", () => {

@@ -7167,18 +7167,28 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    The scrim step is a composited opacity change; the blur step is deliberately SMALL (+4px) because
    animating a large blur radius over a full-window layer is the expensive kind of filter animation.
 
-   RAWY-278 — the blur step is now OPTIONAL, and the fallback is what preserves today.
-   `--bg-rd-immstep` is emitted by `applyBackgrounds` ONLY when the reader turns the preference off,
-   in which case it is `0px`. When the preference is on — the default, and every profile that predates
-   it — the property is absent and this `var()` resolves to its own `4px` fallback, so the enabled
-   state is byte-identical to what shipped rather than a value re-derived in JS.
-   At `0px` the receded filter computes to the SAME value as the un-receded state, so Chromium starts
-   no transition and re-rasterises nothing. The scrim step below is deliberately NOT gated: only the
-   blur is optional, and the environment still recedes. */
+   WHETHER IT RECEDES AT ALL IS `.im-dim`, AND THAT IS THE ONLY GATE.
+   `.im-dim` is rendered by the Reader from `useTheme.immersiveDim` — the Background Dimming
+   preference — exactly as `.immersive` is rendered from `useTheme.immersive`. So the recede needs
+   three things that are all reading state and none of them a look: immersive on, deliberately
+   scrolled away, dimming wanted. Immersive with the dimming off is a real, reachable combination:
+   the chrome goes quiet and the picture stays exactly as it was set.
+
+   A SELECTOR GATE, NOT ZEROED PROPERTIES. The previous design emitted `--bg-rd-immstep: 0px` and
+   `--bg-rd-immscrim: 0%` from `applyBackgrounds` whenever the active هيئة said so, which is how a
+   look came to own a reading behaviour (removed in the commit before this one). Not matching the
+   rule is strictly better than matching it with neutral values: no property is written, no stale
+   pair can outlive the هيئة that wrote it, and `4px` / `14%` stay in the stylesheet as the var
+   fallbacks — the shipped amounts, unchanged by this task.
+
+   The TRANSITION below is deliberately left on `.immersive` alone. It describes how the filter
+   moves if it moves at all; keeping it unconditional means turning the preference off while already
+   scrolled away eases back to the resting blur instead of snapping, and when there is nothing to
+   animate an unmatched filter change costs nothing. */
 :root[data-bg-reading="on"] .reader-root.immersive .reader-desk::before {
   transition: filter 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away .reader-desk::before {
+:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away.im-dim .reader-desk::before {
   filter: blur(calc(var(--bg-rd-blur, 0px) + var(--bg-rd-immstep, 4px)));
 }
 /* RAWY-278 (fix) — PREVIEW, so the boost can actually be SEEN while it is being set.
@@ -7205,16 +7215,14 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* The scrim step: ONE value change, on the registered property, so it interpolates. Additive
    so the measured floor is only ever moved UP — the recede can never make the desk more exposed.
 
-   RAWY-278 (bug fix) — THE STEP IS GATED BY THE SAME PREFERENCE AS THE BLUR, and this is the fix for
-   "the immersive blur toggle does nothing". The recede has TWO steps and only the blur was gated;
-   the +14% scrim kept firing. On a real wallpaper the SCRIM is the part you can see: measured live,
-   entering immersive with the boost OFF changed 91.4% of pixels (mean 3.49/255), and neutralising
-   just this step took the same transition to 412 pixels of 792,000 (mean 0.0235/255). The blur step
-   alone is mean 1.20/255 — 2.9x smaller. A contrast drop on a dark image reads as softening, which
-   is exactly why it was reported as blur.
-   `14%` stays as the var's own fallback, so the ENABLED default is byte-identical to what shipped;
-   `applyBackgrounds` emits `0%` only when the reader switches the preference off. */
-:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away .reader-desk {
+   GATED ON `.im-dim` TOO, because the scrim is the half you actually see. Measured live on a real
+   wallpaper, entering immersive changed 91.4% of pixels (mean 3.49/255) with the scrim step in play
+   and 412 pixels of 792,000 (mean 0.0235/255) without it; the blur step alone is mean 1.20/255, 2.9x
+   smaller. A preference called "dim the background" that gated only the blur would under-deliver by
+   roughly 3x and read as doing nothing — the exact complaint this control exists to answer.
+   `14%` and the `4px` above remain the stylesheet's own fallbacks: this task moved the decision,
+   not the amounts. */
+:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away.im-dim .reader-desk {
   --bg-rd-scrim: calc(var(--bg-rd-scrim-base, 100%) + var(--bg-rd-immscrim, 14%));
 }
 @media (prefers-reduced-motion: reduce) {

@@ -767,35 +767,35 @@ export function applyBackgrounds(theme: { paperBg: string; text: string; muted: 
     // immersive recede can interpolate) and the receded state ADDS to this base — never subtracts,
     // so the floor cannot be undercut from the stylesheet.
     r.style.setProperty("--bg-rd-scrim-base", `${(scrimAlpha(p.presence, "reading") * 100).toFixed(2)}%`);
-    // RAWY-278 — the immersive blur STEP, and the asymmetry here is the whole design.
+    // THE IMMERSIVE RECEDE BELONGS TO IMMERSIVE MODE, NOT TO THE هيئة.
     //
-    // ENABLED (the default) writes NOTHING. The stylesheet's own `var(--bg-rd-immstep, 4px)` fallback
-    // supplies the 4px, so the enabled path emits not one property that today does not emit, and
-    // "pixel-identical to the current release" is true BY CONSTRUCTION rather than by re-derivation.
-    // DISABLED writes `0px`, which collapses the receded filter to `blur(base + 0px)` — the same
-    // computed value as the un-receded state, so Chromium starts no transition and re-rasterises
-    // nothing. Nothing else in the recede is touched: the +14% scrim step still runs.
+    // The recede has two steps — +4px of blur and +14% of scrim — and the stylesheet gates BOTH of
+    // them on `.reader-root.immersive.scrolled-away` (the `--bg-rd-scrim` and `--bg-rd-immstep`
+    // rules in global.css). That gate is ALREADY the global Immersive Mode state: `useTheme.immersive`
+    // owns it, `immersive_scroll` persists it, and the Reader renders the class from it. So nothing
+    // is read here and no second owner is introduced — the step SIZES are left to the stylesheet's
+    // own `4px` / `14%` fallbacks, and whether they apply at all is decided by that one flag.
     //
-    // `removeProperty` on the enabled branch is what makes toggling OFF then ON return to the exact
-    // original state — a skipped `setProperty` would leave the stale `0px` on `:root` forever.
+    // WHAT THIS REMOVES, AND WHY IT WAS A DEFECT. These two properties used to be written as `0px`
+    // and `0%` whenever the ACTIVE هيئة's `bg.reading.params.immersiveBlur` was false, which
+    // neutralised both steps. `applyProfile` writes `bg_reading_params` and then re-runs
+    // `initBackground` → `applyBackgrounds`, so wearing a هيئة re-answered "should immersive dim the
+    // page?" on the reader's behalf. MEASURED on the rendered desk with Immersive ON throughout:
+    // the receded scrim went 54.4% → 68.4% under one هيئة and 24% → 24% under the next, and the
+    // receded blur 1px → 5px and then 1px → 1px. The effect switched itself off because the LOOK had
+    // changed, not because the reader had asked for anything.
     //
-    // ⚠ THE SCRIM STEP IS GATED HERE TOO, AND THAT IS THE ACTUAL BUG FIX.
-    // The recede has TWO steps: +4px of blur AND +14% of scrim. Gating only the blur made the option
-    // look broken, because on a real wallpaper the scrim step is the part you can SEE. MEASURED in
-    // the running app, entering immersive with the boost switched OFF: 91.4% of pixels changed, mean
-    // 3.49/255 — a clearly visible change the reader had just asked for none of. Neutralising the
-    // scrim step took the same transition to 412 pixels of 792,000 (mean 0.0235/255), i.e. nothing.
-    // For comparison the blur step alone is mean 1.20/255 — 2.9x SMALLER than the scrim step. A
-    // contrast drop on a dark image reads as softening, which is why it was reported as "blur".
-    // Same construction as the blur step: ENABLED emits nothing and the stylesheet's own `14%`
-    // fallback applies, so the default is byte-identical to what shipped.
-    if (p.immersiveBlur === false) {
-      r.style.setProperty("--bg-rd-immstep", "0px");
-      r.style.setProperty("--bg-rd-immscrim", "0%");
-    } else {
-      r.style.removeProperty("--bg-rd-immstep");
-      r.style.removeProperty("--bg-rd-immscrim");
-    }
+    // A هيئة still owns its wallpaper, its presence, its own blur and its base scrim; the recede
+    // composes on top of whatever that leaves. It no longer owns whether immersive recedes at all.
+    //
+    // REMOVED UNCONDITIONALLY, which is also what clears a `0px`/`0%` left on `:root` by a
+    // previously-worn هيئة — otherwise the stale pair would outlive the هيئة that wrote it.
+    //
+    // `immersiveBlur` IS STILL PARSED AND STILL STORED (here and in profile.ts) so existing هيئات and
+    // packages stay readable and nothing migrates. It simply no longer gates anything, which leaves
+    // the "Extra blur in immersive mode" control inert and wanting a decision of its own.
+    r.style.removeProperty("--bg-rd-immstep");
+    r.style.removeProperty("--bg-rd-immscrim");
     r.dataset.bgReading = "on";
   }
 }

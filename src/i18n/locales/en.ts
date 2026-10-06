@@ -140,6 +140,8 @@ export const en = {
   "type.immersiveHint": "Scrolling down hides the toolbar, read-aloud controls, and scrollbar — leaving only the page. They return when you scroll up or reach the top. While listening, the highlight keeps following the words.",
   "type.immHidePill": "Hide read-aloud controls",
   "type.immHideScrollbar": "Hide scrollbar",
+  "type.immDim": "Dim the background",
+  "type.immDimHint": "Once you scroll into the page, the reading background steps back — a little darker and a little softer. Turn this off to keep it exactly as you set it. Applies when a reading background picture is showing.",
   "type.align": "Alignment",
   "type.alignJustify": "Justify",
   "type.alignStart": "Start",

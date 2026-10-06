@@ -601,7 +601,7 @@ export function Reader({
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
   // colour + hide-chapter-titles stay GLOBAL flags. RAWY-216: Reader only READS them now (to inject
   // the CSS); the setters live where the controls do — the drawer's "All books" tab / Global Settings.
-  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive } = useTheme();
+  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, immersiveDim } = useTheme();
   // RAWY-265 (Phase 3): the effective page opacity + the desk scrim in force. Both ride the EXISTING
   // applyTheme(theme, flags) channel rather than new plumbing, and both are 1 unless a reading
   // background is genuinely showing — so an untouched profile passes exactly what it passed before.
@@ -3509,7 +3509,7 @@ export function Reader({
       // Left alone it would have inverted — appearing when the LIBRARY is Moonlit and vanishing when
       // the book is. This is the reader's own copy of the same question.
       data-book-theme={readingTheme.id}
-      className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
+      className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${immersiveDim ? " im-dim" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div
         ref={deskRef}

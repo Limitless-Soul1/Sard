@@ -939,7 +939,7 @@ export function ReadingSettings({
   // not information, and one that still said "this book" would be false.
   // Override-book-colour + hide-chapter-title + hide-first-line stay GLOBAL flags (RAWY-40); the
   // THEME is per-book. RAWY-69 split hide-chapter-title/hide-first-line into two independent flags.
-  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, setOverride, setHideTitles, setHideFirstLine, setImmersive } = useTheme();
+  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, immersiveDim, setOverride, setHideTitles, setHideFirstLine, setImmersive, setImmersiveDim } = useTheme();
   const customFonts = useFonts((s) => s.custom); // RAWY-44 — imported fonts for the book pickers
   const theme = resolveTheme(bookThemeId);
   // The theme's DISPLAYED name. The sixteen Sard ships are localised (`theme.<id>`); a
@@ -1434,6 +1434,17 @@ export function ReadingSettings({
           shows in immersive mode (owner revision). */}
       <ToggleRow sub disabled={!immersive} label={t("type.immHidePill")} on={style.immHidePill} onToggle={() => update({ immHidePill: !style.immHidePill })} />
       <ToggleRow sub disabled={!immersive} label={t("type.immHideScrollbar")} on={style.immHideScrollbar} onToggle={() => update({ immHideScrollbar: !style.immHideScrollbar })} />
+      {/* BACKGROUND DIMMING — a third sub-option, and a GLOBAL flag like the master above it rather
+          than typography, so it goes through `useTheme` and not `update`. It sits here because this
+          is where a reader looks for what immersive does; it is a sub-toggle because it only applies
+          inside immersive, and `disabled` + the shared `inert.immersiveOff` line say so in the same
+          treatment its two siblings already use.
+          It carries a HINT where the siblings do not, because unlike hiding a pill the effect has a
+          precondition the reader cannot see from here: a reading background picture has to be
+          showing at all (the CSS gate gives `[data-bg-reading="on"]`). Saying that is cheaper and
+          more honest than disabling the row on background state, which would make a
+          reading-behaviour preference look like it belonged to the Appearance again. */}
+      <ToggleRow sub disabled={!immersive} label={t("type.immDim")} hint={t("type.immDimHint")} on={immersiveDim} onToggle={() => setImmersiveDim(!immersiveDim)} />
       {!immersive && <div className="rs-inert">{t("inert.immersiveOff")}</div>}
 
       </>

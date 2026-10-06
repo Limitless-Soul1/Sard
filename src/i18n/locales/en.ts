@@ -3,6 +3,11 @@
 export const en = {
   "app.name": "Sard",
 
+  "window.minimize": "Minimize",
+  "window.maximize": "Maximize",
+  "window.restore": "Restore",
+  "window.close": "Close",
+
   "picker.prompt": "Choose your language",
   "picker.sub": "You can change this later in settings.",
   "lang.english": "English",
@@ -16,6 +21,14 @@ export const en = {
   "reader.layout": "Layout",
   "reader.bookmark": "Bookmark",
   "reader.settings": "Settings",
+  // Copy the selected passage. The caption is the bare verb, as every caption on this bar is; the
+  // title and accessible name say what it acts on, because a reader who has selected nothing deserves
+  // to learn that from the control rather than from its silence.
+  "reader.copy": "Copy",
+  "reader.copyAria": "Copy the selected text",
+  // The confirmation, and it is also the caption for that moment — so the button says what it did
+  // rather than a badge saying it elsewhere.
+  "reader.copied": "Copied",
   // RAWY-216: the five concept tabs. `reader.typography` / `reader.layout` above are reused as tab labels.
   "settings.colour": "Colour",
   "settings.readaloud": "Read-aloud",
@@ -36,18 +49,25 @@ export const en = {
   // RAWY-88: in-book search + spoiler-safe (Plan Phase 7).
   "search.title": "Search",
   "search.placeholder": "Search this book…",
+  "search.backward": "Search backward",
+  "search.backwardSub": "From where you are, back to the beginning",
   "search.spoiler": "Spoiler-safe",
+  "search.wholeWord": "Whole word",
+  "search.wholeWordSub": "Match the word on its own, not inside a longer one",
   "search.spoilerSub": "Hide matches past your position · {pos}",
   "search.count": "{n} matches · {m} up to your position",
+  /** Spoiler-safe: the only count the reader may have. The total is deliberately absent — with it,
+   *  the number of matches ahead is a subtraction away. */
+  "search.countUpTo": "{n} matches up to your position",
   "search.countAll": "{n} matches · all shown",
+  // The boundary is always where the reader is standing, so this line is always true and there is no
+  // second wording. (There was one, `search.furthestHere`, for the period when the boundary was the
+  // furthest point reached and "your position" would have been a plain untruth. The boundary is the
+  // reader's position again, so the alternative is gone rather than left to rot.)
   "search.youAreHere": "You are here · {pos}",
-  // The search boundary once the reader has moved back to an earlier chapter: it stays at the
-  // furthest point they reached, so calling it "your position" would be untrue. Worded exactly as the
-  // contents control words it, and no longer than the line it replaces — the line clips at its end,
-  // so a longer one eats the chapter name that is the whole point of showing it.
-  "search.furthestHere": "Furthest you've read · {pos}",
   "search.nothingBefore": "Nothing before {pos}.",
-  "search.hidden": "{n} matches ahead are hidden",
+  /** No count, and none is available: sealed, the text ahead is never searched. */
+  "search.hidden": "Matches ahead are hidden",
   "search.hiddenBody": "Sard won’t show you text you haven’t reached yet.",
   "search.reveal": "Show them anyway →",
   "search.hideAgain": "Hide them again",
@@ -67,7 +87,7 @@ export const en = {
   // RAWY-85: PDF Phase 0 — read-only "view as-is". Honest in-app limits.
   "pdf.options": "PDF",
   "pdf.readonly.title": "PDF — view only",
-  "pdf.readonly.body": "PDFs open for reading as-is. Zoom and page appearance are below; fonts, highlights, notes, bookmarks and Photo Mode aren’t available for PDFs yet.",
+  "pdf.readonly.body": "PDFs open as they are: fonts, highlights, notes, bookmarks and Photo Mode aren’t available for them yet.",
   // RAWY-86 gave PDFs an appearance INVERT + copy-selection. RAWY-141 removed the reading-direction
   // toggle (cosmetic/confusing on a fixed-layout PDF) and the in-PDF find (unreliable for Arabic text
   // layers + a cramped misfit), leaving a tidy menu: the read-only note + Appearance + Copy.
@@ -85,12 +105,23 @@ export const en = {
   "pdf.theme.ink": "High contrast",
   "pdf.tts.title": "Read aloud",
   "pdf.tts.body": "PDF text extraction varies between documents. Some PDFs — especially scanned or poorly encoded files — may not be read accurately, or cannot be read aloud at all.",
+  "pdf.mode": "Reading mode",
+  "pdf.mode.scroll": "Scroll",
+  "pdf.mode.pages": "Pages",
+  "pdf.mode.scrollHint": "Pages run in one continuous column — scroll to move between them.",
+  "pdf.mode.pagesHint": "One page at a time. Scrolling stays on the page; turn it with the buttons or the arrow keys.",
   "pdf.zoom": "Zoom",
   "pdf.zoom.in": "Zoom in",
   "pdf.zoom.out": "Zoom out",
   "pdf.zoom.fitWidth": "Fit width",
-  "pdf.zoom.fitPage": "Fit page",
-  "pdf.zoom.hint": "Ctrl + wheel, or pinch on a trackpad. Pages are re-rendered at the new size, so zooming stays sharp.",
+  "pdf.zoom.fitPage": "Whole page",
+  "pdf.zoom.hint": "Ctrl + wheel, or pinch on a trackpad.",
+  "pdf.surround": "Around the page",
+  "pdf.surround.normal": "Normal",
+  "pdf.surround.reduced": "Reduced",
+  "pdf.surround.none": "None",
+  "pdf.surround.size": "How far the surround extends beyond the page",
+  "pdf.surround.hint": "Changes only the space around the page — the page itself stays exactly as it is.",
   "pdf.copy": "Copy selection",
   "pdf.copied": "Copied",
   "pdf.copyEmpty": "Select text on the page first",
@@ -109,6 +140,8 @@ export const en = {
   "type.immersiveHint": "Scrolling down hides the toolbar, read-aloud controls, and scrollbar — leaving only the page. They return when you scroll up or reach the top. While listening, the highlight keeps following the words.",
   "type.immHidePill": "Hide read-aloud controls",
   "type.immHideScrollbar": "Hide scrollbar",
+  "type.immDim": "Dim the background",
+  "type.immDimHint": "Once you scroll into the page, the reading background steps back — a little darker and a little softer. Turn this off to keep it exactly as you set it. Applies when a reading background picture is showing.",
   "type.align": "Alignment",
   "type.alignJustify": "Justify",
   "type.alignStart": "Start",
@@ -280,6 +313,7 @@ export const en = {
   "lib.moveCase": "Move this case",
   "lib.moveCaseHint": "Drag to reorder this case",
   "lib.caseMoved": "“{name}” moved to position {n}.",
+  "lib.shelfMoved": "“{name}” moved to position {n}.",
   "lib.moveShelf": "Move this shelf",
   "lib.moveShelfHint": "Drag to reorder this shelf",
   "lib.moveCategory": "Move this category",
@@ -859,6 +893,11 @@ export const en = {
   // reading position itself settles further on than it has ever been.
   "toc.furthest": "Furthest you've read",
   "toc.furthestAria": "Return to the furthest point you have read in this book",
+  // Beside it, not instead of it: the mark keeps its name because that is what it is. This action moves
+  // the mark down to where the reader is standing, for a reader who overshot, skimmed ahead, or simply
+  // wants the frontier to be here now. It does not move them, and it changes nothing about searching.
+  "toc.furthestReset": "Reset",
+  "toc.furthestResetAria": "Move the furthest-read point back to where you are now, without moving you",
   "panel.hideTitles": "Hide titles",
   "panel.showTitles": "Show titles",
   "panel.hideFirstLine": "Hide first line",
@@ -922,6 +961,17 @@ export const en = {
   "type.paper": "Paper",
   "theme.day": "Day",
   "theme.night": "Night",
+  // THIS BOOK'S هيئة, under the swatches that set every following book's paper. It names an APPEARANCE,
+  // not a colour, so the hint says what that carries — and warns, in the plainest words available, that
+  // changing a reading setting afterwards edits the appearance itself and so reaches every book wearing
+  // it. On the pattern "track.speakSymbolsBookHint": name what is in force, never imply more than it is.
+  // WHOSE PAPER THE GRID EDITS. Same quiet register as "color.within": a qualifier beside the
+  // heading, never a sentence. Absent when no appearance owns the paper.
+  "appearance.paperOwner": "within {name}",
+  "appearance.book": "This book’s appearance",
+  "appearance.book.follow": "Default",
+  "appearance.book.paperOnly": "paper only",
+  "appearance.bookHint": "“Default” follows your current appearance and changes with it. Choosing one here gives this book that whole appearance — its colours, fonts and layout. Changing a reading setting afterwards edits that appearance, so every book using it follows.",
   "mode.label": "Reading mode",
   "mode.scrolled": "Scrolled",
   "mode.paged": "Paged",
@@ -1016,6 +1066,8 @@ export const en = {
   "ne.updated": "Last edited",
   "ne.cancel": "Cancel",
   "ne.delete": "Delete",
+  "ne.deleteConfirm": "Delete this highlight and its note?",
+  "ne.deleteKeep": "Keep",
   "ne.more": "More",
   "ne.less": "Less",
   "ne.close": "Close",
@@ -1049,6 +1101,8 @@ export const en = {
   "rep.add": "Add",
   "rep.save": "Save",
   "rep.cancel": "Cancel",
+  "rep.edit": "Edit",
+  "rep.conflict": "Another replacement already governs these words: “{from}” → “{to}”. Nothing was saved — change the original, or edit that rule instead.",
   "rep.delete": "Delete",
   "rep.deleteConfirm": "Delete for good",
   "rep.deleteCancel": "Undo",
@@ -1553,6 +1607,55 @@ export const en = {
   "profiles.subtitle":
     "A profile is a complete reading preset: paper, colours, backgrounds, faces, marks, read-aloud tracking, and how your books are set — size, line spacing, page width and margins.",
   "profiles.new": "New profile",
+  "profiles.quick.rep.ink": "Page ink: {n} to 1 — comfortable for long reading.",
+  "profiles.quick.rep.inkLow": "Page ink: {n} to 1. That will be hard to read for long.",
+  "profiles.quick.rep.dropped": "Settings that could not be used: {n}. Your own values are kept for those.",
+  "profiles.quick.rep.notExpressible": "Settings this format cannot carry yet: {n}. Your own values are kept.",
+  "profiles.quick.rep.polarity": "This design disagrees with itself about being light or dark. Sard shows it exactly as written.",
+  "profiles.quick.rep.resolved": "Sard draws the secondary colour a little stronger, as it does for every appearance.",
+  "profiles.quick.rep.claims": "The design's own contrast numbers do not match Sard's — it claimed {claimed}, Sard measures {measured}. The colours are exactly as designed.",
+  "profiles.chapter.quick": "Quick customization",
+  "profiles.chapter.quick.q": "Would you like an AI to design this one?",
+  "profiles.quick.apply": "Use this design",
+  "profiles.quick.another": "Try another design",
+  "profiles.quick.done": "Done",
+  "profiles.quick.doneNote": "Nothing is kept until you press Save, as with any change here.",
+  "profiles.quick": "Quick customization",
+  "profiles.quick.body": "Choose the pictures this هيئة will wear, then let Sard write a brief describing everything it can be. Take the brief to whatever AI you use, with the same pictures, and paste the design back here.",
+  "profiles.quick.theDesign": "The design",
+  "profiles.quick.yourType": "Your type",
+  "profiles.quick.yourTypeNote": "A pasted design never changes these. They are yours.",
+  "profiles.quick.changed": "What changed",
+  "profiles.quick.changedNothing": "The design named nothing this appearance could take.",
+  // ONE PICTURE FOR BOTH SURFACES IS THE DEFAULT, so Quick Customization asks what the picture is
+  // FOR rather than which picture the book wears. Same state as «الخلفية»'s own question, different
+  // subject: there, the two surfaces; here, the one design.
+  "profiles.bg.thePicture": "Picture",
+  "profiles.bg.useFor": "Use it for",
+  "profiles.bg.libraryPicture": "The library's picture",
+  "profiles.bg.bookPicture": "This book's picture",
+  "profiles.bg.use.both": "The library and this book",
+  "profiles.bg.use.bothSub": "One picture dresses both.",
+  "profiles.bg.use.apart": "A different picture for the library",
+  "profiles.bg.use.apartSub": "This book keeps this one, and the library takes its own.",
+  // THE PICTURE, BELOW THE EXCHANGE. Named for the chapter whose controls these are, so a reader who
+  // meets the same slider in the other place knows it is the same slider.
+  "profiles.quick.picture": "Background",
+  "profiles.quick.pictureNote": "The picture this design is built around, and how much of it comes through. Sard measures its size and its tone and passes both on in the brief, so choose it before you copy the brief.",
+  "profiles.quick.copyBrief": "Copy the brief",
+  "profiles.quick.copied": "Copied",
+  "profiles.quick.pasteLabel": "The design",
+  "profiles.quick.pastePlaceholder": "Paste what the AI sent back",
+  "profiles.quick.privacy": "Sard sends nothing. You show the picture to your AI yourself.",
+  "profiles.quick.read": "Read the design",
+  "profiles.quick.cancel": "Cancel",
+  "profiles.quick.tryAgain": "Try another design",
+  "rcp.err.notADesign": "That does not look like a Sard appearance.",
+  "rcp.err.unreadable": "The design is there, but its text is damaged. Try copying it again.",
+  "rcp.err.notSard": "That is a document of some other kind.",
+  "rcp.err.newer": "This asks for a newer Sard. If your AI invented the version, change it to 1 and try again.",
+  "rcp.err.tooLarge": "That is much larger than a design — perhaps the whole conversation rather than the block.",
+  "rcp.err.carriesReadingSettings": "This tries to change how your books are read, not how they look.",
   "profiles.import": "Import a profile",
   "profiles.active": "Active",
   "profiles.count": "{n} profiles",
@@ -1879,6 +1982,14 @@ export const en = {
   "profiles.unsaved.what.numbers": "the digits' ink",
   "profiles.unsaved.what.voice": "the read-aloud marks",
   "profiles.unsaved.what.refs": "the reference mark",
+  // A هيئة carries a reading picture and an interface of its own, and both can be changed from
+  // inside a book — so both have to be nameable when the reader is asked what to do with them.
+  "profiles.unsaved.what.picture": "the reading picture",
+  // SESSION-owned, not هيئة-owned — but changed in the same sitting, so the one question has to
+  // name them or it is not telling the reader what leaving would lose.
+  "profiles.unsaved.what.pageColor": "the page colour",
+  "profiles.unsaved.what.textColor": "the text colour",
+  "profiles.unsaved.what.interface": "the interface",
   // The separator between the named values, when more than one changed at once. It is a
   // TRANSLATED string because the comma itself differs by script: Arabic sets «،» (U+060C),
   // English «,». Hardcoding either one puts the wrong script's punctuation in the other's sentence.

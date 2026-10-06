@@ -25,6 +25,7 @@ import {
   LTR_ALIGN_CLASS, // RAWY-253 (addendum): align a kept-LTR paragraph to the book's margin
   TEXT_HOST_CLASS, // the block container that DIRECTLY holds prose, when the book uses none of p/li/div
   PARA_BREAK_CLASS, // the box that gives a <br>-separated run a paragraph gap to be spaced by
+  hiddenBlockSelectors, // the blocks a hide toggle makes invisible — and so removes from the spoken queue
   type BookThemeFlags,
   type ReadingStyle,
   type RevealLabels,
@@ -40,7 +41,9 @@ import { diagAttachDocument, diagNote, diagPublishUnits } from "@diag"; // DIAGN
 import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagReset, renderDiagSurface, renderDiagTheme } from "@renderDiag"; // DIAGNOSTIC BUILD ONLY
 import { sanitiseBookCss, type BookCssMode } from "./cssSanitiser"; // WP-7 stage 3
 import { synthesiseToc, type SectionHeading, type SynthToc } from "./tocSynth"; // WP-6A // → is always the next page; see that file for why
-import { resolveSpotlight, resolvePill, TRACK_SHAPE } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
+import { resolveSpotlight, resolvePill, TRACK_SHAPE, inkBand } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
+import type { TrackGround, TrackMetrics } from "./ttsTrack";
+import { isDarkSurface } from "../lib/contrast";
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
 import { speakableText } from "../lib/ttsText"; // the ONE rewrite that separates spoken text from shown text
@@ -164,6 +167,43 @@ export interface TocEntry {
 // RAWY-88: one in-book search match. `ahead` = the match lies BEYOND the reader's furthest-read
 // position (so spoiler-safe hides its snippet); `frac` (0..1, the match's chapter start) is the
 // location readout; the excerpt is split so the panel can bold the `match` inside pre…post.
+  /**
+ * WHICH SECTION A CFI NAMES. A CFI's first step pair is the spine position, and foliate's own
+ * `resolveNavigation` answers it — but that parses the section to do it. The leading step is enough
+ * here and costs nothing: `epubcfi(/6/14!/4/2...)` is spine child 14, which is index 6. Clamped to
+ * the book, and falling back to the last section, because a boundary we cannot read must never be
+ * read as "section 0" — that would silently search one chapter instead of the book behind the
+ * reader.
+ */
+export function sectionIndexOfCfi(cfi: string, sections: number): number {
+  const last = Math.max(0, sections - 1);
+  // The FIRST step is the package's spine element; the SECOND is the child within it, and that is
+  // the one that names the section: `epubcfi(/6/14!/...)` is spine child 14, which is index 6.
+  const m = /^epubcfi\(\/\d+\/(\d+)/.exec(cfi.trim());
+  if (!m) return last;
+  const step = Number(m[1]);
+  if (!Number.isFinite(step) || step < 2) return last;
+  const idx = Math.floor(step / 2) - 1;
+  return Math.min(Math.max(idx, 0), last);
+}
+
+/**
+ * WHICH SECTIONS A BACKWARD SEARCH VISITS, in the order it visits them: the section the reader is
+ * standing in, then the one before it, down to the first.
+ *
+ * It is a function, not a loop inside the walk, so that "the chapters after the reader are never
+ * opened" is a property something can actually be asked about. Given a reader in chapter 500 of a
+ * thousand, the answer contains 499…0 and nothing else — chapters 501 onward are absent whatever the
+ * reader's furthest-read mark happens to be, because no mark is an input here.
+ *
+ * The caller still checks its abort signal inside the loop; this only decides the itinerary.
+ */
+export function backwardSections(fromCfi: string, sections: number): number[] {
+  const out: number[] = [];
+  for (let i = sectionIndexOfCfi(fromCfi, sections); i >= 0; i--) out.push(i);
+  return out;
+}
+
 export interface SearchHit {
   cfi: string;
   sectionIndex: number;
@@ -516,10 +556,15 @@ function drawReadingSpotlight(rects: Iterable<DOMRect>, options: { dark?: boolea
 // glyphs stay legible (black text × terracotta ≈ dark on terracotta). A SECOND reserved key
 // (WORD_KEY), added AFTER the band so it paints on top; transient, never the annotations map/DB.
 const WORD_KEY = "sard-reading-word";
-function drawReadingPill(rects: Iterable<DOMRect>, options: { dark?: boolean; style?: ReadingStyle } = {}): SVGGElement {
+function drawReadingPill(
+  rects: Iterable<DOMRect>,
+  options: { dark?: boolean; style?: ReadingStyle; ground?: TrackGround } = {},
+): SVGGElement {
   const NS = "http://www.w3.org/2000/svg";
   const g = document.createElementNS(NS, "g");
-  const p = resolvePill(options.style, options.dark ?? false);
+  // `ground` carries the paper and the ink the mark will sit on, so the blend mode is decided against
+  // the surface actually being painted rather than against a per-polarity constant. See `pillBlendFor`.
+  const p = resolvePill(options.style, options.dark ?? false, options.ground);
   g.setAttribute("fill", p.fill);
   g.style.opacity = String(p.op);
   g.style.mixBlendMode = p.blend;
@@ -617,6 +662,104 @@ function emPxForRange(range: Range): number | null {
 }
 
 /**
+ * ONE MEASURING CANVAS PER BOOK DOCUMENT.
+ *
+ * Created inside the BOOK's document deliberately: the reading faces are declared there by the injected
+ * sheet, so a canvas taken from the application's document measures a FALLBACK face and reports metrics
+ * for a font the page is not set in. Cached per document because the marks are re-measured on every
+ * word, and a fresh canvas per word would be the one avoidable cost in this path.
+ */
+const trackCanvases = new WeakMap<Document, CanvasRenderingContext2D>();
+function trackCanvas(doc: Document): CanvasRenderingContext2D | null {
+  const hit = trackCanvases.get(doc);
+  if (hit) return hit;
+  const cx = doc.createElement("canvas").getContext("2d");
+  if (cx) trackCanvases.set(doc, cx);
+  return cx ?? null;
+}
+
+/**
+ * THE FONT'S METRICS AND THE INK'S, for the text a reading mark is about to be painted over.
+ *
+ * See `inkBand` in `ttsTrack.ts` for what these are for and what was measured. Only the RATIO of these
+ * four numbers is used, so they are read in the element's own pre-zoom space and never converted; the
+ * LINE BOX is the one value that has to reach the overlayer's post-zoom space, and it is converted the
+ * way `emPxForRange` above documents — by walking and multiplying the whole `zoom` chain, because
+ * `getComputedStyle().zoom` reports only an element's own.
+ *
+ * Read off the range's START element. A mark spans a sentence or a word of running text, so a mid-range
+ * font change would be pathological, and returning `null` there is safe: the caller keeps the old box.
+ */
+function trackMetricsFor(range: Range): TrackMetrics | null {
+  try {
+    const node = range.startContainer;
+    const el = (node.nodeType === 1 ? node : node.parentElement) as Element | null;
+    const doc = el?.ownerDocument;
+    const win = doc?.defaultView;
+    if (!el || !doc || !win) return null;
+    const text = range.toString();
+    if (!text.trim()) return null; // whitespace has no ink to measure
+    const cx = trackCanvas(doc);
+    if (!cx) return null;
+    const cs = win.getComputedStyle(el);
+    cx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const m = cx.measureText(text);
+    const nums = [m.fontBoundingBoxAscent, m.fontBoundingBoxDescent,
+                  m.actualBoundingBoxAscent, m.actualBoundingBoxDescent];
+    if (!nums.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
+    let z = 1;
+    for (let a: Element | null = el; a; a = a.parentElement) {
+      const v = parseFloat(win.getComputedStyle(a).zoom || "1");
+      if (v > 0 && v !== 1) z *= v;
+    }
+    const lh = parseFloat(cs.lineHeight); // NaN for `normal` — then the box is corrected but unclamped
+    return {
+      fontAscent: m.fontBoundingBoxAscent,
+      fontDescent: m.fontBoundingBoxDescent,
+      inkAscent: m.actualBoundingBoxAscent,
+      inkDescent: m.actualBoundingBoxDescent,
+      lineBoxPx: Number.isFinite(lh) && lh > 0 ? lh * z : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * THE RANGE-LIKE PROXY BOTH READING MARKS ARE DRAWN FROM — one calculation, two marks.
+ *
+ * The overlayer stores whatever `getClientRects()` returns and re-runs it on every redraw, so a proxy
+ * (rather than a snapshot) is what keeps a mark correct across reflow, font load, resize and zoom. The
+ * device is already used twice in this file, for the ink swatch and the reference rule.
+ *
+ * `metricsFrom` is why the word pill does not jump. The correction depends on the INK of the text being
+ * measured, and a word's own ink changes from word to word — a word with no ascender would give a
+ * shorter box than its neighbour, so the pill would visibly grow and shrink as the voice advanced.
+ * Handing it the SENTENCE's range instead means every word of one sentence is painted to one box: the
+ * pill slides along the line at constant height, which is what a reading cursor has to do. It also
+ * means the box can never clip a mark within the sentence, because the sentence's ink bounds every
+ * word's.
+ *
+ * Horizontal geometry is untouched. `left` and `width` come straight from the fragment, so word
+ * boundaries, wrapping, RTL placement and the pill's own padding are exactly what they were.
+ */
+function trackRange(paint: Range, metricsFrom?: Range): { getClientRects: () => DOMRect[]; toString: () => string } {
+  return {
+    getClientRects: () => {
+      const m = trackMetricsFor(metricsFrom ?? paint);
+      const out: DOMRect[] = [];
+      for (const r of Array.from(paint.getClientRects())) {
+        if (!(r.width > 0) || !(r.height > 0)) continue; // zero-size fragments (hyphen columns etc.)
+        const b = inkBand(r.top, r.height, m);
+        out.push(new DOMRect(r.left, b.top, r.width, b.height));
+      }
+      return out;
+    },
+    toString: () => paint.toString(),
+  };
+}
+
+/**
  * RAWY-281: the range-like PROXY handed to the overlayer for a reference mark — the same device RAWY-258
  * introduced (`wordRectRange`), one step further along: it reports the TWO STROKES, not the text.
  *
@@ -698,6 +841,15 @@ interface OpenOptions {
   dir?: string | null;
   /** Reading flow (RAWY-25): "scrolled" (default) or "paged". */
   flow?: "scrolled" | "paged";
+  /**
+   * HOW A FIXED-LAYOUT BOOK (a PDF) IS READ — "scroll" (the default) or "pages".
+   *
+   * It must be decided BEFORE the view opens, because it chooses which renderer the engine builds:
+   * `foliate-fxl-scroll` lays every page out in one continuous scroller, `foliate-fxl` shows one at
+   * a time. Both consume the same sections and emit the same events, so nothing downstream of the
+   * renderer differs. Ignored for a reflowable book, which has neither renderer.
+   */
+  fxlMode?: "scroll" | "pages";
   /** Localized text for the hide-first-line placeholder + reveal (RAWY-70). */
   revealLabels?: RevealLabels;
 }
@@ -1828,6 +1980,24 @@ if (typeof globalThis !== "undefined") {
     (css: string) => sanitiseBookCss(css, bookCssMode);
 }
 
+/**
+ * SHIFT + WHEEL IS SIDEWAYS, as it is everywhere else on this platform. Chromium does that itself for
+ * a wheel it scrolls natively (Scroll mode, over the page), but a wheel Sard forwards arrives with the
+ * delta still on the vertical axis and only `shiftKey` set — MEASURED: at 300% in Pages mode, three
+ * Shift+wheel notches moved the page 0px sideways. A wheel that already carries a horizontal delta
+ * (a trackpad) is left as it is.
+ */
+/** A PDF renderer's zoom range and fits, and where the page on screen sits across the renderer's box. */
+export type PdfZoomBounds = {
+  min: number; max: number; fitPage: number; fitWidth: number; scale: number;
+  /** The page's on-screen width, its centre from the renderer box's left edge, and that box's width. */
+  pageWidth: number; pageCenterX: number; boxWidth: number;
+};
+
+export function wheelAxes(deltaY: number, deltaX: number, shift: boolean): [number, number] {
+  return shift && !deltaX ? [0, deltaY] : [deltaY, deltaX];
+}
+
 export class FoliateController {
   private view: any | null = null;
   /**
@@ -1901,7 +2071,7 @@ export class FoliateController {
   // skips the previous/next SENTENCE (the cb returns true → swallow the key); otherwise arrows keep their
   // normal reader behaviour (page turn). Same reasoning as `spaceCb`: the content frame's keydown never
   // reaches the parent window, so this callback runs the parent's sentence-skip from reading-area focus.
-  private arrowCb: ((key: string) => boolean) | null = null;
+  private arrowCb: ((key: string, repeat: boolean) => boolean) | null = null;
   // RAWY-73: scroll intent (scrolled mode) — accumulate wheel delta and fire a debounced direction
   // so a small jitter doesn't toggle the bar. down = scroll down (hide), up = scroll up (show).
   private scrollIntentCb: ((down: boolean) => void) | null = null;
@@ -1914,11 +2084,15 @@ export class FoliateController {
   private gestureEdge: "top" | "bottom" | null = null;
   private gestureActed = false;
 
-  // RAWY-88: in-book search + spoiler-safe boundary. `furthestCfi` = the FURTHEST-read position (per
-  // the design: not the page currently open — flipping back to re-read never un-hides results); it
-  // only advances (via epubcfi.compare). `cfiCompareFn` is the vendored engine's CFI comparator,
-  // loaded once per open (runtime dynamic import — Vite can't statically import /public).
-  private furthestCfi: string | null = null;
+  // RAWY-88: in-book search. `cfiCompareFn` is the vendored engine's CFI comparator, loaded once per
+  // open (runtime dynamic import — Vite can't statically import /public).
+  //
+  // THE ENGINE HOLDS NO SPOILER BOUNDARY OF ITS OWN ANY MORE. It used to keep a `furthestCfi` — the
+  // deepest point the reader had reached — and seal everything past it. That is now the caller's live
+  // position, handed to `searchBook` as `positionCfi` for the one search that needs it: a reader who
+  // has flipped back from chapter 891 to chapter 500 is reading chapter 500, and 501 onward is not
+  // theirs yet. Removing the field rather than re-pointing it is the point — with nothing here to
+  // consult, the furthest-read mark cannot become the search boundary again by accident.
   private cfiCompareFn: ((a: string, b: string) => number) | null = null;
 
   /** Tear down the current view + listeners. Safe to call repeatedly. */
@@ -1999,6 +2173,10 @@ export class FoliateController {
     await ensureFoliateDefined();
 
     const view = document.createElement("foliate-view") as any;
+    // Read by `view.open()` when it picks the fixed-layout renderer; see the note on `fxlMode`. Set
+    // before `open()` is called, because by then the renderer has already been built.
+    view.fxlMode = opts.fxlMode === "pages" ? "pages" : "scroll";
+    this.fxlMode = view.fxlMode;
     this.view = view; // claim ownership before awaits; a later open() will replace this
     this.navReady = false; // ownership is not readiness — nothing may navigate until this open finishes
     container.replaceChildren(view);
@@ -2106,13 +2284,8 @@ export class FoliateController {
       view.renderer.setAttribute("gap", this.scrolledMode ? "0%" : "7%");
     }
 
-    // RAWY-88: seed the spoiler-safe boundary at the resume position + load the CFI comparator (EPUB
-    // only — a PDF has no CFI/whole-book text search).
-    //
-    // THE SEED IS A FLOOR, NOT THE ANSWER. The application owns the furthest-read mark and pushes it
-    // with `setFurthestBoundary` as soon as the book is open; this only ensures that a search run
-    // before it speaks hides the same matches the old behaviour hid, rather than none.
-    this.furthestCfi = fxl ? null : (opts.resumeCfi ?? null);
+    // RAWY-88: load the CFI comparator (EPUB only — a PDF has no CFI/whole-book text search). There is
+    // no boundary to seed: each search is told where the reader is standing when it runs.
     if (!fxl) await this.ensureCfiCompare();
     if (this.view !== view) return; // superseded during the await
 
@@ -2171,17 +2344,13 @@ export class FoliateController {
         const n = this.pdfPageCount;
         if (n > 0) fraction = (pageIdx + 0.5) / n;
       }
-      // THE SPOILER-SAFE BOUNDARY IS NO LONGER DECIDED HERE.
+      // THE SPOILER-SAFE BOUNDARY IS NOT DECIDED HERE, AND IS NOT KEPT HERE.
       //
-      // It used to advance on EVERY relocate, which made it "the furthest position ever DISPLAYED".
-      // Two consequences, both wrong once the application grew a real furthest-read mark: opening a
-      // search hit or an annotation in chapter 900 moved the boundary to 900 although the reader had
-      // only looked; and the boundary was in-memory, seeded from the resume position, so closing a
-      // book at chapter 320 after reaching 592 un-hid everything between them on the next open.
-      //
-      // The application already answers this question — one mark, advanced only when the reading
-      // position is genuinely written (never behind a return-anchor freeze) and persisted per book. So
-      // it is TOLD to this engine through `setFurthestBoundary` rather than guessed at again here.
+      // It used to advance on EVERY relocate, which made it "the furthest position ever DISPLAYED", so
+      // opening a search hit in chapter 900 moved it to 900 although the reader had only looked. It then
+      // became the application's furthest-read mark, pushed in. It is now neither: the boundary is
+      // simply WHERE THE READER IS, and each search is told that when it runs (`positionCfi`). Nothing
+      // about it is remembered between searches, which is why nothing here has to maintain it.
       const cfi = e.detail?.cfi ?? null;
       // RESILIENCE-1 (NAV-2): refine WHICH TOC entry the reader is inside when a section holds more
       // than one. See `refineTocEntry` — foliate's own answer is kept verbatim for every other book.
@@ -2254,7 +2423,7 @@ export class FoliateController {
       // Capture the page doc (for copy) + keep arrow-key paging + chrome-wake activity; skip the rest.
       if (fxl) {
         this.pdfPageDoc = doc;
-        if (this.pdfTheme) this.setPdfTheme(this.pdfTheme.filter, this.pdfTheme.tint); // RAWY-294
+        if (this.pdfTheme) this.applyPdfThemeTo(doc, this.pdfTheme.filter, this.pdfTheme.tint); // RAWY-294
         // RAWY-295: a page turn is a NEW document, so the previous page's highlight cannot leak here —
         // there is nothing to clear. What is needed is the reverse: the units belong to the page on
         // screen, so the highlight is re-derived for THIS page, and the layer is watched for the
@@ -2266,7 +2435,7 @@ export class FoliateController {
           // RAWY-180 (Part B): Space toggles read-aloud when active; else it pages the PDF (as before).
           if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); else this.view?.next?.(); }
           // WP-4C: the same single owner the EPUB path uses (see handleNavKey).
-          else if (this.handleNavKey(ev.key)) ev.preventDefault();
+          else if (this.handleNavKey(ev.key, ev.repeat)) ev.preventDefault();
         });
         // RAWY-87 (#2): a wheel over the PDF PAGE fires INSIDE this iframe, so it never reaches the
         // reader-desk's onWheel (the frame boundary) — that's why wheeling the page did nothing while
@@ -2279,10 +2448,19 @@ export class FoliateController {
         // the browser's own page-zoom does not also fire; plain paging stays passive as before.
         doc.addEventListener("wheel", (ev: WheelEvent) => {
           if (ev.ctrlKey || ev.metaKey) { ev.preventDefault(); this.zoomIntentCb?.(ev.deltaY); return; }
+          // SCROLL MODE: LET IT GO. The page iframe sits inside a real scroller, so an unprevented
+          // wheel bubbles out of the frame and scrolls the document the way the platform intends —
+          // at its own rate, across page boundaries, with the trackpad and momentum it already
+          // knows about. Calling preventDefault here would swallow the gesture and hand it to the
+          // very code whose whole job has been removed.
+          if (this.fxlMode === "scroll") {
+            if (!ev.shiftKey) this.noteScrollDirection(ev.deltaY);
+            return;
+          }
           // RAWY-293: a wheel over the page must scroll the ZOOMED page first (layer 1), so the
           // in-frame path and the desk path share one behaviour. deltaX rides along for wide pages.
           ev.preventDefault();
-          this.pageByWheel(ev.deltaY, ev.deltaX);
+          this.pageByWheel(ev.deltaY, ev.deltaX, ev.shiftKey);
         }, { passive: false });
         doc.addEventListener("pointerdown", (ev: PointerEvent) => {
           if (this.activityCb) {
@@ -2290,6 +2468,7 @@ export class FoliateController {
             this.activityCb(ev.clientX + off.x, ev.clientY + off.y, true);
           }
         });
+        this.attachPdfPan(doc);
         return;
       }
       this.contentDoc = doc; // RAWY-122: kept so clearSelection() can drop a lingering text selection
@@ -2376,7 +2555,7 @@ export class FoliateController {
         // returns true → swallow); otherwise they keep the normal page-turn (next/prev).
         // WP-4C: routed through the ONE owner (handleNavKey) so a key behaves identically whether
         // focus is inside the book or up in the chrome.
-        if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") { if (this.handleNavKey(ev.key)) ev.preventDefault(); }
+        if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") { if (this.handleNavKey(ev.key, ev.repeat)) ev.preventDefault(); }
         // RAWY-180 (Part B): Space toggles read-aloud when a session is active; otherwise it keeps its
         // normal behaviour (scrolling the content). Only swallow the key when the toggle actually fired.
         else if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); }
@@ -2968,7 +3147,7 @@ export class FoliateController {
    *
    * Returns true when the key was consumed, so the caller knows whether to preventDefault.
    */
-  handleNavKey(key: string): boolean {
+  handleNavKey(key: string, repeat = false): boolean {
     // The intent table lives in `navIntent.ts` — ONE copy, shared with its tests, and taking no
     // direction argument so a script direction cannot re-enter the decision.
     const intent = navIntent(key);
@@ -2977,14 +3156,18 @@ export class FoliateController {
     // RAWY-184: while read-aloud runs, the arrows skip the previous/next SENTENCE instead of turning
     // a page — the callback reports whether it claimed the key. EPUB only; a PDF has no sentences.
     if (!this.isFixedLayout && (key === "ArrowLeft" || key === "ArrowRight")) {
-      if (this.arrowCb?.(key)) return true;
+      // `repeat` is the PLATFORM's own answer to "is this the key repeating, or a fresh press" —
+      // forwarded rather than inferred from timing, because read-aloud paces auto-repeat and a rate
+      // heuristic cannot tell a held key from fast deliberate pressing. Defaults to false, so a caller
+      // that does not know (or does not have the event) behaves exactly as before.
+      if (this.arrowCb?.(key, repeat)) return true;
     }
     if (intent === "forward") this.forward();
     else this.backward();
     return true;
   }
 
-  onArrow(cb: (key: string) => boolean): void {
+  onArrow(cb: (key: string, repeat: boolean) => boolean): void {
     this.arrowCb = cb;
   }
   /** RAWY-74/75: scroll the book by a wheel delta coming from OUTSIDE the content iframe — i.e. the
@@ -3021,6 +3204,21 @@ export class FoliateController {
     // RAWY-128: the single funnel for a MANUAL wheel (both the content-frame and margin paths) — stamp
     // it so the TTS scroll-follow can yield briefly and not fight the user's scroll (see followReadingSentence).
     if (deltaY) this.lastUserScrollTs = performance.now();
+    this.noteScrollDirection(deltaY);
+  }
+  /**
+   * The direction half of the funnel above, on its own: hide the reading chrome on a scroll down,
+   * bring it back on a deliberate scroll up. A PDF's wheel paths call THIS, and only this.
+   *
+   * WHY PDFs NEEDED IT. Scroll direction reached the chrome from exactly two places, both EPUB-only
+   * (the text frame's wheel and the margin wheel of a scrolled book). No PDF wheel path fed it, in
+   * either mode — MEASURED: in a PDF, scrolling down never hid the bars and scrolling up never brought
+   * them back, so the only ways out of the hidden state were the top-edge reach and a click on the
+   * desk, and "immersive" never engaged at all (it keys off a deliberate scroll-down). The same
+   * accumulator and thresholds are used, so a PDF behaves exactly like a scrolled EPUB.
+   * The TTS follow stamp is deliberately NOT taken here: PDF read-aloud keeps its current behaviour.
+   */
+  private noteScrollDirection(deltaY: number): void {
     if (!this.scrollIntentCb || !deltaY) return;
     const now = performance.now();
     if (now - this.scrollIntentTs > SCROLL_GESTURE_GAP_MS) this.scrollAccum = 0;
@@ -3157,6 +3355,38 @@ export class FoliateController {
    *  AND on a book the reader has recoloured, instead of assuming a fixed page. */
   private get inkPaper(): string {
     return this.style?.pageColor || this.theme?.colors?.paperBg || "#000000";
+  }
+
+  /**
+   * THE SURFACE A READING MARK IS PAINTED ONTO — the paper in force and the ink on it.
+   *
+   * The same `inkPaper` the highlight swatch already mixes into, so the two marks agree about what is
+   * underneath them, plus the text colour: a blend that must leave the words readable has to know what
+   * the words are painted in.
+   */
+  private get trackGround(): TrackGround {
+    return { paper: this.inkPaper, text: this.theme?.colors?.text || "#000000" };
+  }
+
+  /**
+   * THE POLARITY A PAINTER MUST USE, and why it is not `this.theme.dark`.
+   *
+   * The stored flag describes the هيئة; it is not maintained against the palette's paper, and measured
+   * on a copy of a real library three هيئات carried a near-black page with `dark: false`. The reading
+   * marks then took the light-paper treatment on a black page — a `multiply` that cannot lift anything
+   * off the page, and a default fill chosen for cream paper. This asks the paper instead.
+   *
+   * NOTHING IS WRITTEN BACK. The هيئة's own flag is left exactly as the reader saved it; this is a
+   * render-time reading of the surface, so no appearance record is rewritten because a mark was drawn.
+   */
+  private get trackDark(): boolean {
+    return isDarkSurface(this.inkPaper);
+  }
+
+  /** The sentence currently being spoken, whose ink sets the box every one of its words is painted to.
+   *  Undefined before a sentence is marked, and `trackRange` then falls back to the word itself. */
+  private get trackSentenceRange(): Range | undefined {
+    return this.ttsReadingIndex >= 0 ? this.ttsUnits[this.ttsReadingIndex]?.range ?? undefined : undefined;
   }
 
   /** Is the reader currently in scrolled mode? */
@@ -4156,8 +4386,8 @@ export class FoliateController {
       const range = this.ttsUnits[i]?.range;
       if (!range || range.collapsed) return;
       try {
-        ov.add(NOTE_READ_KEY, range, drawReadingSpotlight as never,
-          { dark: this.theme?.dark ?? false, style: this.style });
+        ov.add(NOTE_READ_KEY, trackRange(range) as unknown as Range, drawReadingSpotlight as never,
+          { dark: this.trackDark, style: this.style });
       } catch { /* a range whose note has closed — nothing to draw */ }
       return;
     }
@@ -4194,7 +4424,8 @@ export class FoliateController {
     const range = this.ttsUnits[i]?.range;
     if (!range) return; // out of range / whole-body fallback → no highlight (honest)
     try {
-      overlayer.add(READING_KEY, range, drawReadingSpotlight, { dark: this.theme?.dark ?? false, style: this.style });
+      overlayer.add(READING_KEY, trackRange(range) as unknown as Range, drawReadingSpotlight,
+        { dark: this.trackDark, style: this.style });
     } catch {
       /* stale/detached range (chapter navigated mid-play) — skip silently */
     }
@@ -4295,7 +4526,11 @@ export class FoliateController {
       const r = w >= 0 ? this.wordRanges[w] : null;
       if (!r || r.collapsed) return;
       try {
-        ov.add(NOTE_WORD_KEY, r, drawReadingPill as never, { dark: this.theme?.dark ?? false, style: this.style });
+        // The SENTENCE's metrics, not the word's — see `trackRange`: a per-word ink box would make the
+        // pill grow and shrink from word to word.
+        ov.add(NOTE_WORD_KEY, trackRange(r, this.trackSentenceRange) as unknown as Range,
+          drawReadingPill as never,
+          { dark: this.trackDark, style: this.style, ground: this.trackGround });
       } catch { /* a stale range — the note has closed */ }
       return;
     }
@@ -4317,7 +4552,8 @@ export class FoliateController {
     const range = w >= 0 ? this.wordRanges[w] : null;
     if (!range) return; // no word / unmapped → no pill (the sentence band still shows)
     try {
-      overlayer.add(WORD_KEY, range, drawReadingPill, { dark: this.theme?.dark ?? false, style: this.style });
+      overlayer.add(WORD_KEY, trackRange(range, this.trackSentenceRange) as unknown as Range, drawReadingPill,
+        { dark: this.trackDark, style: this.style, ground: this.trackGround });
     } catch {
       /* stale/detached range — skip */
     }
@@ -4516,6 +4752,56 @@ export class FoliateController {
   private ttsAnchorSection(): number {
     return this.ttsUnitsIndex >= 0 ? this.ttsUnitsIndex : this.currentSectionIndex();
   }
+  /**
+   * THE FIRST `n` READ-ALOUD UNITS OF THE SECTION AFTER THE TTS
+   * chapter, segmented from its RAW document (`createDocument()`, never rendered) by the same walk the
+   * rendered chapter uses.
+   *
+   * WHAT A CALLER MAY DO WITH THEM. Treat them as a CONTENT KEY, never as the queue itself: a rendered
+   * chapter can differ, because exclusions that depend on rendering cannot apply to a document that was
+   * never laid out. MEASURED over 12 books (289 sections) and a fixture built out of the awkward cases
+   * — hidden and invisible blocks, empty and whitespace-only ones, nested inline markup, heading-only
+   * and title-plus-subtitle openings, lists: the first two units matched the rendered ones exactly in
+   * every case, and with the reader's "hide the first line" setting on as well. With "hide chapter
+   * titles" on they differ by design (the heading is replaced in the rendered document), which is why
+   * this is a key and not a queue — the caller misses and synthesizes normally.
+   *
+   * Null when there is no next section, or the section cannot be read.
+   */
+  async nextSectionFirstUnits(lang: string | undefined, n: number): Promise<string[] | null> {
+    const count = this.view?.book?.sections?.length ?? 0;
+    const next = this.ttsAnchorSection() + 1;
+    if (next <= 0 || next >= count) return null;
+    return this.rawSectionFirstUnits(next, lang, n);
+  }
+  async rawSectionFirstUnits(index: number, lang: string | undefined, n: number): Promise<string[] | null> {
+    const sections: { createDocument?: () => Promise<Document> }[] | undefined = this.view?.book?.sections;
+    const sec = sections?.[index];
+    if (!sec?.createDocument) return null;
+    let doc: Document;
+    try { doc = await sec.createDocument(); } catch { return null; }
+    if (!doc?.body) return null;
+    // THE SAME TWO STEPS THE RENDERED SECTION GOES THROUGH, so the sequence this returns is the one
+    // the reader will actually speak.
+    //
+    //   1. The heading detector, with the same input it gets when the section renders (the section's
+    //      own TOC label). It is what tags `.sard-chapter-heading`; without it that class never
+    //      exists here and the hide below could not see anything.
+    //   2. The hide toggles. In the rendered section these blocks are made invisible by the reading
+    //      CSS, and segmentation skips them because they compute as invisible. THIS document was
+    //      parsed, never rendered — `defaultView` is null, so no style computes and that test cannot
+    //      fire. The blocks are therefore dropped outright, from the same selector list the CSS rule
+    //      is built from (`hiddenBlockSelectors`), which is what keeps the two from drifting. The
+    //      document is a throwaway parsed for this purpose and is never shown to anyone.
+    try {
+      markInBodyHeading(doc, sectionTocLabel(this.view, index));
+      for (const sel of hiddenBlockSelectors(this.flags)) {
+        for (const el of Array.from(doc.querySelectorAll(sel))) el.remove();
+      }
+    } catch { /* a section we cannot mark is simply segmented as it is — a miss, never wrong audio */ }
+    const units = await this.unitsForRoot(doc.body, doc, lang);
+    return units.map((u) => u.text.trim()).filter(Boolean).slice(0, n);
+  }
   /** RAWY-184 (Part B): is there a chapter AFTER the one that just finished? (for the end-of-chapter "next"
    *  control). RAWY-227: anchored on the TTS chapter, not the displayed section. */
   hasNextSection(): boolean {
@@ -4539,9 +4825,6 @@ export class FoliateController {
     }
   }
 
-  // RAWY-86: PDF (fixed-layout) paging by wheel — one page per gesture, throttled. Uses LOGICAL
-  // forward/back (view.next/prev), so scroll-down advances in reading order regardless of dir.
-  private lastPageWheel = 0;
   /**
    * RAWY-293: TWO NAVIGATION LAYERS for a fixed-layout page.
    *
@@ -4553,8 +4836,40 @@ export class FoliateController {
    * At fit-page there is nothing to scroll, so layer 1 never fires and paging behaves exactly as it
    * always did — the normal-zoom behaviour is preserved by construction, not by a separate branch.
    */
-  pageByWheel(deltaY: number, deltaX = 0): void {
+  /** Which fixed-layout renderer this view was opened with. Meaningless for a reflowable book. */
+  fxlMode: "scroll" | "pages" = "scroll";
+
+  /**
+   * SCROLL MODE ONLY: hand the scroller a wheel delta that fired outside it.
+   *
+   * A wheel over the READING MARGINS does not reach the scroller on its own — the scroller lives in
+   * the engine's shadow root, and the margin is outside it. This forwards the platform's own delta
+   * unchanged, which is the same thing the browser would have done had the pointer been two
+   * centimetres to the right. It interprets nothing: no threshold, no accumulation, no page turn.
+   *
+   * Returns true when it consumed the gesture, so the caller knows whether to preventDefault.
+   */
+  scrollPdfBy(deltaY: number, deltaX = 0, shift = false): boolean {
+    if (this.fxlMode !== "scroll" || !this.isFixedLayout) return false;
+    [deltaY, deltaX] = wheelAxes(deltaY, deltaX, shift);
+    this.noteScrollDirection(deltaY);
+    const r = this.view?.renderer as { scrollTop?: number; scrollLeft?: number } | undefined;
+    if (!r || typeof r.scrollTop !== "number") return false;
+    if (deltaY) r.scrollTop = r.scrollTop + deltaY;
+    if (deltaX && typeof r.scrollLeft === "number") r.scrollLeft = r.scrollLeft + deltaX;
+    return true;
+  }
+
+  pageByWheel(deltaY: number, deltaX = 0, shift = false): void {
+    // IN SCROLL MODE THERE IS NOTHING FOR THIS TO DO, and doing it would be the defect coming back.
+    // The scroll renderer's container is a real scroller in the ordinary flow, so the wheel is the
+    // browser's: it scrolls, at the platform's own rate, across page boundaries, without any delta
+    // arithmetic here. A handler that also moved it would double every gesture.
+    if (this.fxlMode === "scroll") return;
+    [deltaY, deltaX] = wheelAxes(deltaY, deltaX, shift);
     if (!this.isFixedLayout || (!deltaY && !deltaX)) return;
+    // Down hides the reading chrome, up brings it back — the same rule as every scrolled view.
+    this.noteScrollDirection(deltaY);
     const r = this.view?.renderer as HTMLElement | undefined;
     if (r) {
       // Layer 1. `foliate-fxl`'s host is the scroll container (`:host { overflow: auto }`), so when the
@@ -4566,30 +4881,24 @@ export class FoliateController {
         const next = Math.max(0, Math.min(maxY, before + deltaY));
         if (Math.abs(next - before) > 0.5) { r.scrollTop = next; return; }
       }
-      // A horizontal wheel (or a wide page at high zoom) moves across before it turns a page.
+      // A horizontal wheel on a page wider than the viewport moves across it.
       if (deltaX && maxX > 1) {
         const before = r.scrollLeft;
         const next = Math.max(0, Math.min(maxX, before + deltaX));
         if (Math.abs(next - before) > 0.5) { r.scrollLeft = next; return; }
       }
-      // Reaching here means the page is at its edge in the requested direction: fall through to a turn.
-      if (!deltaY) return; // a purely horizontal gesture must never turn the page
     }
-    const now = performance.now();
-    if (now - this.lastPageWheel < 280) return; // ~one page per wheel notch/gesture
-    this.lastPageWheel = now;
-    const forward = deltaY > 0;
-    if (forward) this.view?.next?.();
-    else this.view?.prev?.();
-    // Land where reading continues: the top of the next page, the BOTTOM of the previous one, so
-    // paging backwards through a zoomed document does not skip the part just left behind.
-    const host = r;
-    if (host) {
-      window.setTimeout(() => {
-        const max = host.scrollHeight - host.clientHeight;
-        if (max > 1) host.scrollTop = forward ? 0 : max;
-      }, 120);
-    }
+    // AND THAT IS ALL THE WHEEL DOES IN PAGES MODE. It used to fall through to a page turn once the
+    // page reached its edge — and because at the default fit a page has no scrollable extent at all,
+    // "at the edge" was every wheel notch. MEASURED on a 567-page PDF: fit-page 0 px of travel, so the
+    // first notch of an ordinary gesture turned the page; fit-width 314 px, so four notches crossed it
+    // and the fifth turned it. A reader moving down a page could not stop at its bottom without
+    // silently arriving on the next one.
+    //
+    // Pages mode is now what its name says: the page changes when the reader ASKS — the page-turn
+    // controls, the arrow keys, the contents, a search result. The wheel moves within the page and
+    // stops at its top and bottom. A reader who wants the wheel to flow from page to page has Scroll
+    // mode, which is built for exactly that and is the default.
   }
 
   /**
@@ -4784,14 +5093,31 @@ export class FoliateController {
    */
   setPdfTheme(filter: string, tint: string): void {
     this.pdfTheme = { filter, tint };
-    const doc = this.pdfPageDoc;
-    if (!doc) return;
+    // EVERY PAGE ON THE DESK, not the last one loaded. Pages mode shows one page document, so styling
+    // `pdfPageDoc` covered it; Scroll mode keeps up to three mounted at once, and `pdfPageDoc` is simply
+    // whichever loaded LAST — usually the page below or above the one being read. MEASURED: choosing
+    // "night" in Scroll mode filtered page 4 (off-screen) and left the page on screen, and the one
+    // above it, untouched. A page mounted later still gets the theme from the load handler.
+    const r = this.view?.renderer as { getContents?: () => { doc?: Document }[] } | undefined;
+    const docs = new Set<Document>();
+    for (const x of r?.getContents?.() ?? []) if (x.doc) docs.add(x.doc);
+    if (this.pdfPageDoc) docs.add(this.pdfPageDoc);
+    for (const doc of docs) this.applyPdfThemeTo(doc, filter, tint);
+  }
+
+  /** Write the appearance into ONE page document. The page raster itself is never touched. */
+  private applyPdfThemeTo(doc: Document, filter: string, tint: string): void {
     const ID = 'sard-pdf-theme';
     let el = doc.getElementById(ID) as HTMLStyleElement | null;
     if (!el) {
+      // A mounted frame whose page has not loaded yet has no document element. MEASURED: styling every
+      // mounted page met one on opening, and the throw stopped the pages after it. It is styled by the
+      // load handler when its page arrives.
+      const host = doc.head ?? doc.documentElement;
+      if (!host) return;
       el = doc.createElement('style');
       el.id = ID;
-      doc.head?.appendChild(el) ?? doc.documentElement.appendChild(el);
+      host.appendChild(el);
     }
     const hasTint = !!tint && tint !== "transparent";
     const f = filter && filter !== "none" ? filter : "none";
@@ -4847,7 +5173,108 @@ export class FoliateController {
   setPdfZoom(zoom: number | "fit-width" | "fit-page"): void {
     if (!this.isFixedLayout) return;
     const r = this.view?.renderer as HTMLElement | undefined;
-    r?.setAttribute("zoom", String(zoom));
+    if (!r) return;
+    // A ZOOM KEEPS WHAT IS IN THE MIDDLE OF THE VIEW IN THE MIDDLE. Both renderers re-lay out
+    // synchronously on the attribute, but neither moved horizontally, so a zoom always opened the
+    // page at its LEFT edge — for an Arabic page, the END of every line. The fraction of the scroll
+    // extent under the centre is carried across instead: direction-neutral, and exactly what a
+    // reader expects to still be looking at. Scroll mode already holds its vertical place itself
+    // (`keepCurrentPage`), so only Pages mode carries the vertical centre here.
+    const sc = this.pdfScroller();
+    const fx = sc && sc.scrollWidth ? (sc.scrollLeft + sc.clientWidth / 2) / sc.scrollWidth : null;
+    const fy = sc && sc.scrollHeight ? (sc.scrollTop + sc.clientHeight / 2) / sc.scrollHeight : null;
+    r.setAttribute("zoom", String(zoom));
+    if (!sc) return;
+    if (fx != null) sc.scrollLeft = fx * sc.scrollWidth - sc.clientWidth / 2;
+    if (fy != null && this.fxlMode === "pages") sc.scrollTop = fy * sc.scrollHeight - sc.clientHeight / 2;
+  }
+
+  /** The element that scrolls a PDF: the Scroll renderer's own scroller, or the paged renderer's host. */
+  private pdfScroller(): HTMLElement | null {
+    const r = this.view?.renderer as (HTMLElement & { scrollElement?: HTMLElement }) | undefined;
+    return r ? (r.scrollElement ?? r) : null;
+  }
+
+  /**
+   * The zoom range for the PDF page being read, and what the two fits resolve to — the renderer's
+   * own numbers (see public/foliate-js/sard-zoom.js), so the controls never disagree with the page.
+   */
+  pdfZoomBounds(): PdfZoomBounds | null {
+    if (!this.isFixedLayout) return null;
+    const r = this.view?.renderer as { zoomBounds?: PdfZoomBounds | null } | undefined;
+    return r?.zoomBounds ?? null;
+  }
+
+  /**
+   * DRAG TO PAN a PDF page that is larger than the reading area.
+   *
+   * WHAT ALREADY WORKED, AND WAS KEPT. The page sits in a real scroller, so the wheel, a trackpad and
+   * a touch screen all move a large page (Shift+wheel sideways too — see `wheelAxes`), and nothing here
+   * touches them. What a
+   * MOUSE could not do is grab the page: a drag started a text selection instead, so at 300% the only
+   * way across a page was the scrollbar. MEASURED before this: a press-and-drag moved nothing.
+   *
+   * WHEN IT APPLIES. Only when the page is actually bigger than the area it is read in — in Scroll
+   * mode, WIDER (a page taller than the screen is just the document, and the wheel already moves
+   * it); in Pages mode, larger in either direction. At the fits nothing changes: no grab cursor, no
+   * captured press, ordinary reading.
+   *
+   * WHAT IT NEVER TAKES. A press on a word or a link is left alone, so selecting text and following a
+   * link work exactly as before at every zoom; only a press on the page's blank ground pans. A touch
+   * is left to the platform, which already pans (and flings) natively. The movement is the pointer's
+   * own, 1:1, in screen coordinates — the frame moves under the pointer while it pans, so its own
+   * coordinates would feed back on themselves. Horizontal is physical in both scripts: the reading
+   * area is pinned LTR, so dragging right always reveals what is to the left.
+   */
+  private attachPdfPan(doc: Document): void {
+    const root = doc.documentElement;
+    const style = doc.createElement("style");
+    style.textContent =
+      "html.sard-pan .textLayer, html.sard-pan #canvas { cursor: grab; }" +
+      " html.sard-panning, html.sard-panning * { cursor: grabbing !important; user-select: none !important; }";
+    (doc.head ?? root).append(style);
+    const pannable = (sc: HTMLElement): boolean => {
+      const wide = sc.scrollWidth - sc.clientWidth > 1;
+      if (this.fxlMode === "scroll") return wide;
+      return wide || sc.scrollHeight - sc.clientHeight > 1;
+    };
+    const onContent = (t: EventTarget | null): boolean =>
+      !!(t as Element | null)?.closest?.(".textLayer span, .textLayer br, .annotationLayer a, .annotationLayer section, a, button, input, textarea, select");
+    let drag: { id: number; x: number; y: number; left: number; top: number; moved: boolean; sc: HTMLElement } | null = null;
+    const end = (): void => {
+      if (!drag) return;
+      if (!drag.moved) doc.getSelection()?.removeAllRanges(); // a plain click still clears a selection
+      try { root.releasePointerCapture(drag.id); } catch { /* already released */ }
+      root.classList.remove("sard-panning");
+      drag = null;
+    };
+    doc.addEventListener("pointerdown", (ev: PointerEvent) => {
+      if (ev.button !== 0 || ev.pointerType === "touch") return;
+      const sc = this.pdfScroller();
+      if (!sc || !pannable(sc) || onContent(ev.target)) return;
+      ev.preventDefault(); // no selection, no image drag — this press is a grab
+      drag = { id: ev.pointerId, x: ev.screenX, y: ev.screenY, left: sc.scrollLeft, top: sc.scrollTop, moved: false, sc };
+      try { root.setPointerCapture(ev.pointerId); } catch { /* the drag still works inside the frame */ }
+    });
+    doc.addEventListener("pointermove", (ev: PointerEvent) => {
+      if (!drag) {
+        // The grab cursor says "this can be moved" exactly when a press would move it.
+        const sc = ev.pointerType === "touch" ? null : this.pdfScroller();
+        root.classList.toggle("sard-pan", !!sc && pannable(sc));
+        return;
+      }
+      if (ev.pointerId !== drag.id) return;
+      const dx = ev.screenX - drag.x;
+      const dy = ev.screenY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+      drag.moved = true;
+      root.classList.add("sard-panning");
+      drag.sc.scrollLeft = drag.left - dx;
+      drag.sc.scrollTop = drag.top - dy;
+    });
+    doc.addEventListener("pointerup", end);
+    doc.addEventListener("pointercancel", end);
+    doc.addEventListener("lostpointercapture", end);
   }
 
   /**
@@ -4861,13 +5288,24 @@ export class FoliateController {
   pdfRenderedScale(): number {
     try {
       const doc = this.pdfPageDoc;
-      const img = doc?.querySelector("img") as HTMLImageElement | null;
-      const host = this.view?.renderer as HTMLElement | undefined;
-      if (!img || !host) return 1;
-      // The <img> is sized in CSS pixels by pdf.js at `zoom * devicePixelRatio`, then the document is
-      // scaled back down by 1/dpr — so the on-screen scale is the CSS width over the intrinsic width.
-      const shown = img.getBoundingClientRect().width;
-      const intrinsic = img.naturalWidth / (globalThis.devicePixelRatio || 1);
+      const frame = doc?.defaultView?.frameElement as HTMLElement | null | undefined;
+      if (!doc || !frame) return 1;
+      // WHAT IS ON SCREEN, OVER WHAT THE PAGE IS.
+      //
+      // This used to divide the <img>'s CSS width by its natural width. That held while the page was a
+      // bitmap magnified by a transform; it stopped holding once pdf.js re-rendered the page AT the zoom
+      // scale, because then the image's natural and CSS sizes grow together and the ratio is always 1.
+      // MEASURED on a real PDF: true scale 1.38 at "whole page", 2.23 at "fit width", 2.00 at 200% —
+      // and this returned 1.000 for all three. So stepping out of a fit mode always restarted from
+      // 100%: pressing "+" at fit width (2.23) went to 125% and the page SHRANK.
+      //
+      // The page document states its own intrinsic size — pdf.js writes the scale-1 viewport into its
+      // `<meta name="viewport">` — and the frame's on-screen box is what the reader actually sees,
+      // including any transform. Their ratio is the scale, in either renderer, for a page that
+      // re-renders and for one that is magnified.
+      const content = doc.querySelector('meta[name="viewport"]')?.getAttribute("content") ?? "";
+      const intrinsic = Number(content.match(/width=([0-9.]+)/)?.[1]);
+      const shown = frame.getBoundingClientRect().width;
       if (!shown || !intrinsic) return 1;
       return Math.max(0.05, Math.min(12, shown / intrinsic));
     } catch {
@@ -4928,18 +5366,6 @@ export class FoliateController {
     }
     this.cfiCompareFn = typeof w.__sardCfiCompare === "function" ? w.__sardCfiCompare : null;
   }
-  /** The furthest-read CFI (spoiler-safe boundary) — null for a PDF / before any relocate. */
-  get furthestPosition(): string | null {
-    return this.furthestCfi;
-  }
-
-  /** Tell the engine how far the reader has actually read, so `searchBook` can seal what lies past it.
-   *  The application owns this — see the relocate handler for why the engine stopped deciding it. */
-  setFurthestBoundary(cfi: string | null): void {
-    if (this.isFixedLayout) return; // a PDF has no cfi and no whole-book search to seal
-    this.furthestCfi = cfi && cfi.length > 0 ? cfi : null;
-  }
-
   /** Where `a` stands relative to `b` in the book's own order: negative before, positive after, 0 the
    *  same place. Null when the engine's comparator is unavailable, so a caller can fall back rather
    *  than guess.
@@ -4967,7 +5393,47 @@ export class FoliateController {
    *  long book — instead of a static "Searching…". */
   async searchBook(
     query: string,
-    opts: { signal?: AbortSignal; onProgress?: (frac: number) => void; onBatch?: (hits: SearchHit[]) => void } = {},
+    opts: {
+      signal?: AbortSignal; onProgress?: (frac: number) => void; onBatch?: (hits: SearchHit[]) => void;
+      /**
+       * WHOLE WORD. Off (the default, and what every caller that omits it gets) the search is the
+       * substring search it has always been: «أودر» finds «أودري». On, a hit counts only where the
+       * query stands as a word of its own. It is passed straight through to the engine, which applies
+       * it INSIDE the matcher (public/foliate-js/sard-wordmatch.js, VENDOR.txt patch 15) — so the hits
+       * that stream out of here are already the only ones there are, and the count, the snippets, the
+       * highlight and the jump all describe the same list. Nothing else about the search changes:
+       * same matcher, same collator, same folding, so tashkīl and case are ignored in both modes.
+       */
+      wholeWord?: boolean;
+      /**
+       * WHERE THE READER IS STANDING — the one position this search measures everything from.
+       *
+       * BOTH things that care about a boundary read this, and NEITHER reads the furthest-read mark:
+       * the seal tags a match `ahead` when it lies past this point, and a backward walk begins here.
+       *
+       * IT IS THE CURRENT POSITION, NOT THE FRONTIER. A reader who reached chapter 891 and has flipped
+       * back to chapter 500 is reading chapter 500; 501 onward is not theirs yet, so it is sealed, and
+       * backward never opens it. The furthest-read mark stays what it always was — a reading-progress
+       * fact offering the way back to the deepest point reached — and has nothing to say about search.
+       *
+       * Null or absent means no boundary at all: nothing is tagged `ahead` and a backward walk has
+       * nowhere to start, so the scan is the plain forward scan of the whole book.
+       */
+      positionCfi?: string | null;
+      /**
+       * WHICH WAY THE SCAN READS THE BOOK.
+       *
+       * Off (the default, and what every caller that omits it gets) this method is exactly what it
+       * was: foliate scans from the first section to the last and every match is kept, tagged `ahead`
+       * or not, for the panel to seal or show.
+       *
+       * On, the scan stops being a scan of the book. It walks the reader's OWN section first, then the
+       * section before it, and so on to the first — so the sections after them are never opened, never
+       * parsed and never matched. Nothing about them is learned, which is the only way a count of them
+       * cannot leak: there is no count to leak.
+       */
+      backward?: boolean;
+    } = {},
   ): Promise<SearchHit[]> {
     const view = this.view;
     const q = query.trim();
@@ -4975,7 +5441,8 @@ export class FoliateController {
     const n = view.book?.sections?.length ?? 0;
     const fractions: number[] = view.getSectionFractions?.() ?? [];
     const compare = this.cfiCompareFn;
-    const boundary = this.furthestCfi;
+    // The reader's live position, and the only boundary this method knows about.
+    const boundary = opts.positionCfi && opts.positionCfi.length > 0 ? opts.positionCfi : null;
     const hits: SearchHit[] = [];
     // THE DE-DUPLICATION SET. Two expanded terms can reach the same passage, so a cfi already taken is
     // skipped — but the test used to be `hits.some(h => h.cfi === s.cfi)`, a linear scan of everything
@@ -5045,8 +5512,73 @@ export class FoliateController {
       // query is expanded to include the author's phrase for any rule whose replacement it matches.
       // With no rule in force `expandQuery` returns the single original term and this loop runs once,
       // which is exactly the code path that existed before.
-      for (const term of expandQuery(q, this.reps, foldPhrase)) {
-        for await (const r of view.search({ query: term, draw: drawNothing })) {
+      const terms = expandQuery(q, this.reps, foldPhrase);
+      /**
+       * THE BACKWARD WALK — the reader's own section, then the one before it, then the one before.
+       *
+       * `view.search({ index })` scans ONE section (view.js `#searchSection`), which is what makes
+       * this possible without touching the engine: the sections after the reader are never handed to
+       * it. The per-section path yields no chapter label — only the whole-book path does — so the
+       * label is taken from `getProgressOf`, which is the same `TOCProgress.getProgress(index)` that
+       * whole-book scan reads it from. Same source, same answer.
+       *
+       * WITHIN the reader's own section the walk keeps only what lies at or before where they are
+       * standing, so a match further down their own page is not reached either.
+       */
+      const from = opts.backward ? boundary : null;
+      if (from && compare) {
+        const end = sectionIndexOfCfi(from, n);
+        for (const i of backwardSections(from, n)) {
+          if (opts.signal?.aborted) break;
+          const label = this.sectionLabel(i);
+          for (const term of terms) {
+            if (opts.signal?.aborted) break;
+            try {
+              for await (const r of view.search({ query: term, draw: drawNothing, sardWholeWords: !!opts.wholeWord, index: i })) {
+                if (opts.signal?.aborted) break;
+                if (r === "done") break;
+                const now = performance.now();
+                if (now - lastYield > 30) {
+                  await new Promise<void>((res) => setTimeout(res, 0));
+                  lastYield = performance.now();
+                }
+                const one = r as { cfi?: string; excerpt?: { pre?: string; match?: string; post?: string } };
+                if (!one?.cfi) continue;
+                // EVERY section, not only the one the walk started in. `end` is an estimate read
+                // off the boundary's own CFI, and an estimate that came out too high would otherwise
+                // let a whole section of unread text through — the one thing this walk exists to
+                // prevent. Comparing every match costs one comparison and removes that possibility,
+                // so where the walk STARTS is only ever an optimisation.
+                if (compare(one.cfi, from) > 0) continue;
+                if (seen.has(one.cfi)) continue; // two terms can reach the same passage
+                seen.add(one.cfi);
+                hits.push({
+                  cfi: one.cfi,
+                  sectionIndex: i,
+                  chapterLabel: label,
+                  pre: one.excerpt?.pre ?? "",
+                  match: one.excerpt?.match ?? "",
+                  post: one.excerpt?.post ?? "",
+                  frac: fractions[i] ?? 0,
+                  // Nothing found this way can be ahead of the SPOILER boundary either: the walk
+                  // stops at the reader, and the furthest-read point is never behind where they
+                  // stand — so everything it finds is text they have already passed.
+                  ahead: false,
+                });
+              }
+            } catch { /* one section that will not parse must not end the walk */ }
+          }
+          curIndex = i;
+          // Backwards, so "scanned" counts the sections behind us out of the sections there are.
+          scanFrac = end > 0 ? (end - i + 1) / (end + 1) : 1;
+          emit(false);
+        }
+        emit(true);
+        return hits;
+      }
+
+      for (const term of terms) {
+        for await (const r of view.search({ query: term, draw: drawNothing, sardWholeWords: !!opts.wholeWord })) {
           if (opts.signal?.aborted) break;
           if (r === "done") break;
           const now = performance.now();
@@ -5087,6 +5619,19 @@ export class FoliateController {
       try { view.clearSearch?.(); } catch { /* ignore */ }
     }
     return hits;
+  }
+
+  /** A section's contents label — the same `TOCProgress.getProgress(index)` the whole-book scan reads
+   *  its labels from, reached through the public `getProgressOf` so both paths agree. */
+  private sectionLabel(index: number): string {
+    try {
+      const v = this.view as unknown as {
+        getProgressOf?: (i: number, r?: Range) => { tocItem?: { label?: string } } | undefined;
+      } | null;
+      return v?.getProgressOf?.(index)?.tocItem?.label?.trim() ?? "";
+    } catch {
+      return "";
+    }
   }
 
   /** RAWY-88: jump to a search hit and flash it (gold highlight for ~2s, then fade) — the panel stays

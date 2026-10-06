@@ -49,6 +49,11 @@ export function useBookPickup(h: PickupHandlers) {
   const orderable = h.orderable !== false;
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
+    // THE PRIMARY BUTTON ONLY. A right-click opens the book's menu (`useBookContextMenu`) and must
+    // not also arm the press-and-hold: held a third of a second — which a right-press easily is —
+    // the book was lifted into manual movement behind the menu it had just opened. Nothing about
+    // the left button's behaviour changes; a middle press was never meant to lift a book either.
+    if (e.button !== 0) return;
     if (h.selectOn) return;
     if (h.arrangeOn) {
       e.preventDefault(); // no text selection, and no click reaching what is underneath

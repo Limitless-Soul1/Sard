@@ -11,11 +11,12 @@
 import { Fragment } from "react";
 import type { BookRow, CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
+import { WrapBand } from "./wrapWindow";
 import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
 import type { BookActionsProps } from "./BookActions";
 import { ShelfOrderMenu } from "./Menus";
-import { atDensity, type BookGroup, type DesignView, isVirtualShelf, itemWidth, sortKey, UNFILED_CASE_ID } from "./model";
+import { atDensity, type BookGroup, type DesignView, isVirtualShelf, itemWidth, sortKey, spineWidth, UNFILED_CASE_ID } from "./model";
 import type { CoverMode } from "./coverPresentation";
 import { Icon } from "../../../components/Icon";
 import { displayFaceFor, isArabicText, labelFaceFor } from "../../../lib/typography";
@@ -85,6 +86,13 @@ export interface GroupedProps {
   /** True when the book in hand came from the unshelved run, which it cannot be dropped back into. */
   /** The library Crop/Fit default, passed through to each tile. */
   libraryCoverMode: CoverMode;
+  /**
+   * THE ELEMENT THIS VIEW SCROLLS IN — the stage, which every band shares.
+   *
+   * A grouped view does not own its scroll, so a band that wants to know which of its rows a reader can
+   * reach has to be told where to look. Without one, every band renders whole, exactly as before.
+   */
+  scrollerRef?: React.RefObject<HTMLElement | null>;
   onPlace: (gap: { container: string; before: string | null }, categoryId: string | null) => void;
   /** The one ordering-gap renderer. A view says how a gap LOOKS; it never says what it means. */
   orderGap: (o: { section: string; before: string | null; key: string; className?: string;
@@ -93,6 +101,11 @@ export interface GroupedProps {
 
 /** Spine heights per density step — the reference's numbers. */
 const SPINE_HEIGHTS = [104, 132, 168, 208];
+/** The gap between spines, in both axes. Named because the window has to pack a row with it, and a
+ * packed row that disagreed with the rendered one by six pixels would be a shelf that does not line up. */
+const SPINE_GAP = 6;
+/** A grouped view rendered without a scroller does not window: there is nothing to measure against. */
+const NO_SCROLLER: React.RefObject<HTMLElement | null> = { current: null };
 
 export function ViewGrouped(props: GroupedProps) {
   const { t, lang } = useI18n();
@@ -625,67 +638,93 @@ export function ViewGrouped(props: GroupedProps) {
                                 <span style={{ color: "var(--faint)" }}>{num(g.books.length)}</span>
                               </div>
                             )}
-                            <div
-                              style={
-                                spines
-                                  ? {
-                                      display: "flex",
-                                      alignItems: "flex-end",
-                                      flexWrap: "wrap",
-                                      gap: 6,
-                                      minHeight: Math.round(atDensity(SPINE_HEIGHTS, props.density)),
-                                      ...(g.name ? { marginBottom: 16 } : {}),
-                                    }
-                                  : {
-                                      display: "grid",
-                                      gridTemplateColumns: `repeat(auto-fill, minmax(${iw}px, 1fr))`,
-                                      gap: 20,
-                                      ...(g.name ? { marginBottom: 16 } : {}),
-                                    }
-                              }
-                            >
-                              {shownBooks.map((b) => (
-                                <Fragment key={b.id}>
-                                  {gap(shelf, g.categoryId, b.id, `gap-${b.id}`)}
-                                  <BookTile
-                                    book={b}
-                                    view={props.view}
-                                    density={props.density}
-                                    hideTitles={props.hideTitles}
-                                    itemW={iw}
-                                    selected={props.selected.has(b.id)}
-                                    inHand={props.carryId === b.id}
-                                    arrangeOn={props.mode === "arrange"}
-                                    // The tile is a landing place too: it names the shelf it is
-                                    // drawn under and its index there, so a release ON A COVER
-                                    // resolves to a real position instead of finding nothing.
-                                    srcShelfId={shelf.id}
-                                    // NOT `i`: that is the tile's place in a capped slice of one
-                                    // category run, which is not where the book sits on the shelf.
-                                    srcIndex={props.positionIn(shelf.id, b.id)}
-                                    selectOn={props.mode === "select"}
-                                    onOpen={() => props.onOpenBook(b)}
-                                    onEdit={() => props.onEditBook(b, shelf.id)}
-                                    onToggleSelect={() => props.onToggleSelect(b.id)}
-                                    onPickUp={(x, y) => props.onPickUp(b, shelf.id, x, y)}
-                                    onArrangeDown={(x, y, el) => props.onArrangeDown(b, shelf.id, x, y, el)}
-                                    onRemoveFromShelf={
-                                      // A rule shelf fills itself, and the unshelved run is not a
-                                      // collection — offering "remove from shelf" on either is a
-                                      // control that would look real and do nothing.
-                                      shelf.auto_rule || isVirtualShelf(shelf.id)
-                                        ? null
-                                        : () => props.onRemoveFromShelf(b.id, shelf.id)
-                                    }
-                                    actions={props.actions(b)}
-                                    onDelete={() => props.onDeleteBook(b)}
-                                    onSetFinished={(f) => props.onSetFinished(b, f)}
-                                    libraryCoverMode={props.libraryCoverMode}
-                                  />
-                                </Fragment>
-                              ))}
-                              {gap(shelf, g.categoryId, null, "gap-end")}
-                            </div>
+                            {/* ONE TILE, ONE PLACE. A spine and its landing place are built here and
+                                handed to whichever container is drawing this run, so a windowed band and a
+                                plain one cannot drift apart. */}
+                            {(() => {
+                              const tileOf = (b: BookRow) => (
+                                <>
+                                {gap(shelf, g.categoryId, b.id, `gap-${b.id}`)}
+                                <BookTile
+                                  book={b}
+                                  view={props.view}
+                                  density={props.density}
+                                  hideTitles={props.hideTitles}
+                                  itemW={iw}
+                                  selected={props.selected.has(b.id)}
+                                  inHand={props.carryId === b.id}
+                                  arrangeOn={props.mode === "arrange"}
+                                  // The tile is a landing place too: it names the shelf it is
+                                  // drawn under and its index there, so a release ON A COVER
+                                  // resolves to a real position instead of finding nothing.
+                                  srcShelfId={shelf.id}
+                                  // NOT `i`: that is the tile's place in a capped slice of one
+                                  // category run, which is not where the book sits on the shelf.
+                                  srcIndex={props.positionIn(shelf.id, b.id)}
+                                  selectOn={props.mode === "select"}
+                                  onOpen={() => props.onOpenBook(b)}
+                                  onEdit={() => props.onEditBook(b, shelf.id)}
+                                  onToggleSelect={() => props.onToggleSelect(b.id)}
+                                  onPickUp={(x, y) => props.onPickUp(b, shelf.id, x, y)}
+                                  onArrangeDown={(x, y, el) => props.onArrangeDown(b, shelf.id, x, y, el)}
+                                  onRemoveFromShelf={
+                                    // A rule shelf fills itself, and the unshelved run is not a
+                                    // collection — offering "remove from shelf" on either is a
+                                    // control that would look real and do nothing.
+                                    shelf.auto_rule || isVirtualShelf(shelf.id)
+                                      ? null
+                                      : () => props.onRemoveFromShelf(b.id, shelf.id)
+                                  }
+                                  actions={props.actions(b)}
+                                  onDelete={() => props.onDeleteBook(b)}
+                                  onSetFinished={(f) => props.onSetFinished(b, f)}
+                                  libraryCoverMode={props.libraryCoverMode}
+                                />
+                                </>
+                              );
+                              const bandStyle: React.CSSProperties = spines
+                                ? {
+                                    display: "flex",
+                                    alignItems: "flex-end",
+                                    flexWrap: "wrap",
+                                    gap: SPINE_GAP,
+                                    minHeight: Math.round(atDensity(SPINE_HEIGHTS, props.density)),
+                                    ...(g.name ? { marginBottom: 16 } : {}),
+                                  }
+                                : {
+                                    display: "grid",
+                                    gridTemplateColumns: `repeat(auto-fill, minmax(${iw}px, 1fr))`,
+                                    gap: 20,
+                                    ...(g.name ? { marginBottom: 16 } : {}),
+                                  };
+                              // A SHELF OF SPINES IS THE ONE RUN WITH NO CAP. Covers stops at two rows and
+                              // offers «Show all»; spines shows every book, because a shelf that hid half of
+                              // itself would not read as a shelf. That is why this is the run that needs a
+                              // window — measured at 3,000 books: 4,230 spines mounted, 34,124 nodes, and a
+                              // scroll spending 43 of 140 frames over 50 ms.
+                              return spines ? (
+                                <WrapBand
+                                  scrollerRef={props.scrollerRef ?? NO_SCROLLER}
+                                  items={shownBooks}
+                                  keyOf={(b) => b.id}
+                                  widthOf={(b) => spineWidth(b, props.density)}
+                                  rowHeight={Math.round(atDensity(SPINE_HEIGHTS, props.density))}
+                                  gap={SPINE_GAP}
+                                  carrying={carrying}
+                                  style={bandStyle}
+                                  deps={[props.density, props.paneWidth, props.hideTitles]}
+                                  renderItem={tileOf}
+                                  trailing={gap(shelf, g.categoryId, null, "gap-end")}
+                                />
+                              ) : (
+                                <div style={bandStyle}>
+                                  {shownBooks.map((b) => (
+                                    <Fragment key={b.id}>{tileOf(b)}</Fragment>
+                                  ))}
+                                  {gap(shelf, g.categoryId, null, "gap-end")}
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       });

@@ -48,7 +48,7 @@
 //   4. COUNTERS WERE CUMULATIVE. `underruns`/`abandoned` are reset by `stop()` only, so they survive a
 //      chapter change: all four Baseline 2 records showed `1`, which was ONE underrun carried forward, not
 //      four. v3 stores the per-session DELTA under the same name and the running total separately.
-import { useTts } from "./tts";
+import { cursorEpoch, useTts } from "./tts";
 import { useReader } from "../reader-engine/store";
 import { settingsGet, settingsSet } from "./ipc";
 
@@ -175,6 +175,8 @@ interface Snap {
   active: boolean; status: string; index: number; total: number;
   engine: string; voice: string; speed: number; chapterLabel: string;
   retryAttempt: number; underruns: number; abandoned: number;
+  /** The reader's own cursor-move counter (`cursorEpoch()` in `lib/tts`) — see defect 4 below. */
+  userEpoch: number;
   /** The STORE holds a formatted SUMMARY STRING (`len=N kind …`) — it is what the pill renders. The
    *  structured record (kind / detail / unit / len) lives only behind `ttsStats()`. So the string is used to
    *  DETECT a new failure and the structured one is read at that moment. Measured: assuming the store held
@@ -187,7 +189,7 @@ interface Snap {
 let lastSnap: Snap = {
   active: false, status: "idle", index: 0, total: 0,
   engine: "", voice: "", speed: 1, chapterLabel: "",
-  retryAttempt: 0, underruns: 0, abandoned: 0, lastFailure: null,
+  retryAttempt: 0, underruns: 0, abandoned: 0, lastFailure: null, userEpoch: 0,
 };
 
 /** The structured failure record, read at the moment the store's summary string changes. */
@@ -362,12 +364,19 @@ function onChange(s: Snap, p: Snap): void {
 
   // ---- cursor movement ----
   if (s.index !== p.index) {
+    const byReader = s.userEpoch !== p.userEpoch;
     lastCursorDelta = s.index - p.index;
     lastCursorMoveAt = t;
     lastIndex = s.index;
     // Count only NATURAL advances, inside this session. Differencing the index against a session-start
     // baseline was defect 2: across a chapter change that baseline belongs to the chapter just left.
-    if (lastCursorDelta === 1) cur.unitsAdvanced++;
+    //
+    // DEFECT 4, and the same one the resilience recorder carried: `delta === 1` is not "the sentence
+    // finished", it is "the cursor moved by one" — which a single-step SKIP also does. So every skip
+    // of one sentence was counted as a sentence listened through, and `meanUnitSeconds` (which divides
+    // sounding time by this) was diluted by sentences nobody heard. The store now reports who moved
+    // the cursor, so the count no longer has to infer it from the step size.
+    if (lastCursorDelta === 1 && !byReader) cur.unitsAdvanced++;
     // Read the source instrument WHILE the session is alive: `stop()` resets it before this observer learns
     // the session ended, so reading it at the end always returned empty. Measured.
     sourceSnapshot();
@@ -553,6 +562,7 @@ export function registerOutcomeRecorder(): void {
       engine: s.engine, voice: s.voice, speed: s.speed, chapterLabel: s.chapterLabel,
       retryAttempt: s.retryAttempt, underruns: s.underruns, abandoned: s.abandoned,
       lastFailure: s.lastFailure ?? null,
+      userEpoch: cursorEpoch(),
     });
     let prev = pick(useTts.getState());
     lastSnap = prev;

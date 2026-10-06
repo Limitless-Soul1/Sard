@@ -416,3 +416,62 @@ a version number.)
                             the replacement CFI probe in the private harness
                           Must report the same text node for every annotation, every annotation exact
                           with the rule active, and the baseline restored when it is switched off.
+
+ 14. fixed-layout.js    — PDF ZOOM RANGE AND REACHABLE OVERFLOW (Pages mode). Two marked changes, plus
+     sard-zoom.js         one Sard-owned module both fixed-layout renderers import.
+
+                         14a  `#render` names the two fits (`fitWidth`, `fitPage`) instead of computing
+                              them inline — upstream's arithmetic, unchanged — and holds a NUMERIC zoom
+                              to `zoomBounds()` from sard-zoom.js. A `zoomBounds` getter reports the
+                              range and the fits so the interface shows the same numbers. The fit modes
+                              are never clamped. Sard's own fixed-layout-scroll.js applies the same
+                              module the same way. The getter also reports where the page sits
+                              (`pageWidth`, `pageCenterX`, `boxWidth`), read-only, so the "around the
+                              page" frame can follow the page at every zoom; it moves nothing.
+
+                              WHY: the zoom range used to live only in the interface, as 0.5x-6x of the
+                              PDF's own size. MEASURED: 0.5x was 64% of "whole page" in an 1100x720
+                              window and ~32% on a 2560x1440 screen, and the renderer accepted anything
+                              (0.25x drew a 149px page). The floor is now half of "whole page"; the
+                              ceiling is a 2^24-device-pixel bitmap per page (measured 263 ms for 18 Mpx,
+                              428 ms for 32 Mpx on an A4 text page, four bytes a pixel).
+
+                         14b  The host's flex centring is `safe center` on both axes. Plain `center`
+                              centres a page LARGER than the viewport too, so it overflowed past the
+                              scroll origin: MEASURED at 300%, the left 384px of an A4 page could never
+                              be scrolled to. `safe` centres a page that fits and starts one that does
+                              not at the origin. Needs Chromium >= 115, inside the EPUB floor above.
+
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: zoom still works, but Pages mode cuts off
+                         the left of any zoomed page, and a zoom remembered from another window may open
+                         absurdly small or paint a bitmap large enough to stall the page.
+                         Regression test: tests/unit/pdfZoomPan.test.ts
+
+ 15. search.js:1,111,118 — WHOLE-WORD IN-BOOK SEARCH. Three marked lines, plus one Sard-owned module
+     sard-wordmatch.js   the vendored file imports.
+
+                         `searchMatcher` takes one more option, `sardWholeWords`. When it is absent or
+                         false — which is the default, and what every existing search does — the matcher
+                         runs exactly as upstream wrote it and returns exactly what it always returned.
+                         When it is true, a hit whose neighbouring characters are themselves word
+                         characters is skipped before its DOM Range is built.
+
+                         WHY NOT upstream's own `matchWholeWords`, which is still here and still
+                         untouched: it re-selects the whole matching algorithm (Intl.Segmenter at word
+                         granularity) and with it the folding contract that decides what counts as the
+                         same letter. MEASURED on 34 Arabic, Latin, mixed-script, punctuation and digit
+                         cases: upstream's option was wrong on one that matters — a word followed by
+                         U+200F RIGHT-TO-LEFT MARK, ordinary in Arabic EPUB text, was not found at all.
+                         The filter above was right on all 34 and leaves the matcher, the collator and
+                         the sensitivity exactly as they are, so whole-word mode differs from the default
+                         in where a match may begin and end and in nothing else.
+
+                         The test needs the SECTION'S STRINGS, not the hit's excerpt: an excerpt is built
+                         from the matched text node alone, so a word split by inline markup arrives with
+                         both sides empty — MEASURED, ["bob","cat"] searching «cat» gives pre="" post="".
+                         `searchMatcher` is the one place that holds both the strings and the offsets.
+
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: search still works and still finds
+                         everything it finds today; the "whole word" switch in the search panel silently
+                         stops narrowing anything, so «أودر» begins finding «أودري» again with the switch
+                         on. Regression test: tests/unit/searchWholeWord.test.ts

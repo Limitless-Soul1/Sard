@@ -11,12 +11,15 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  createContext,
+  useContext,
   type RefObject,
 } from "react";
 
 import { useI18n } from "../../i18n";
 import { ColorPicker } from "../../components/ColorPicker";
 import { resolveTheme, useTheme } from "../../theme";
+import type { Theme } from "../../theme/tokens";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
 import { useAnnotations } from "./annotationsStore";
 import { useReader } from "../../reader-engine/store"; // RAWY-259: the book title for the metadata block
@@ -42,9 +45,36 @@ import {
 } from "../../lib/highlightInk";
 import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow, type RefRow, type RepRow } from "../../lib/ipc";
 
-function useHl() {
-  const id = useTheme((s) => s.themeId);
-  return resolveTheme(id).colors.highlight;
+/**
+ * THE PALETTE THESE MARKS ARE DRAWN IN — the BOOK's, never the Library's.
+ *
+ * ROOT CAUSE OF "the swatch is not the colour I get". This used to read `useTheme.themeId`, which is
+ * the LIBRARY (app chrome) theme by its own definition. The mark on the page is painted by
+ * `FoliateController` from `this.theme.colors.highlight`, and `this.theme` is the READING theme the
+ * Reader hands it. So the eight swatches and the eight pens came from two different palettes, and a
+ * هيئة whose two halves carry different pens — which `SARD-THEME/1` allows and a designed one often
+ * does — showed one colour and drew another. MEASURED: library `ivory`, book `ink`; the swatch
+ * rendered #E8C36A while the page painted #F4C430.
+ *
+ * THE VALUE IS NOT RESOLVED HERE, it is handed in. The Reader already computes `readingTheme` — a
+ * draft in progress included — and passes the SAME object to `ctrl.applyTheme`, so the swatch and
+ * the mark cannot disagree: they are the one palette. It travels as a context because `ColorRow` is
+ * shared with the annotations panel and neither wants a prop threaded through three components.
+ *
+ * WITHOUT A PROVIDER the shared BOOK theme answers. That is the value the Reader itself falls back
+ * to when no draft is in force, and it is a READING palette either way — this default can never be
+ * the Library's, which is the whole point of the change.
+ */
+export const ReadingPalette = createContext<Theme | null>(null);
+
+export function useReadingTheme(): Theme {
+  const given = useContext(ReadingPalette);
+  const shared = useTheme((s) => s.bookThemeId);
+  return given ?? resolveTheme(shared);
+}
+
+export function useHl() {
+  return useReadingTheme().colors.highlight;
 }
 
 // The "+" affordance (an SVG, perfectly centred — RAWY-122 ISSUE C) and the back chevron.
@@ -354,11 +384,34 @@ const PenIcon = () => (
     <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 );
+// A second sheet behind the first: the passage is taken, and the page it came from is still there.
+// Drawn at this row's own size and weight rather than borrowed from the chrome's icon set, because
+// every mark beside it is. Symmetric about its own centre, so it needs no mirroring in RTL.
+const CopyIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="9" y="9" width="10.4" height="10.4" rx="1.8" />
+    <path d="M15.2 6.4V6a1.8 1.8 0 0 0-1.8-1.8H6a1.8 1.8 0 0 0-1.8 1.8v7.4A1.8 1.8 0 0 0 6 15h.4" />
+  </svg>
+);
+// The confirmation mark, for the moment after a copy: the same tick the rest of Sard uses for "done".
+const CopiedIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="m5.2 12.6 4.5 4.5L18.8 7.4" />
+  </svg>
+);
 // Two arrows exchanging places — the same "one thing stands in for another" the design's ⟵ says in the
 // list. Not a pencil: a replacement does not edit the book, it reads it differently.
 const ReplaceIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M4 8h13l-3.2-3.2M20 16H7l3.2 3.2" />
+  </svg>
+);
+/** The note editor's delete. The same lid-and-body the saved-cards viewer uses for its own delete,
+ *  so the one destructive act in each surface is drawn by the same hand. */
+const TrashIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
   </svg>
 );
 const PhotoIcon = () => (
@@ -389,6 +442,7 @@ function SelectionToolbar({
   onListen,
   onReference,
   onNote,
+  onCopy,
   onReplace,
   onAddToCard,
   onPhotoCard,
@@ -398,6 +452,9 @@ function SelectionToolbar({
   onListen: () => void;
   onReference: () => void;
   onNote: () => void;
+  /** Take the passage. Answers whether it really reached the clipboard, so the row only confirms a
+   *  copy that happened — a clipboard can refuse on focus or permissions. */
+  onCopy: () => Promise<boolean>;
   onReplace: () => void;
   onAddToCard: () => void;
   onPhotoCard: () => void;
@@ -418,6 +475,23 @@ function SelectionToolbar({
   // renders that scrolling causes, and keyed on the selection so a new selection is placed afresh.
   const key = sel.cfi + "\u0000" + sel.text;
   if (attached.current && attached.current.key !== key) attached.current = null;
+  // THE COPY CONFIRMATION, and it belongs to THIS passage. Keyed on the same `key` the placement uses,
+  // so selecting something else does not inherit the tick from the passage before it — and so a scroll,
+  // which re-renders this toolbar constantly, cannot cut the confirmation short.
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
+  useEffect(() => {
+    setCopied(false);
+    return () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); };
+  }, [key]);
+  const pressCopy = () => {
+    void onCopy().then((ok) => {
+      if (!ok) return; // nothing was written — so nothing is claimed
+      setCopied(true);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCopied(false), 1600);
+    });
+  };
   let below: boolean;
   let place: { left: number; top: number };
   if (attached.current) {
@@ -455,22 +529,38 @@ function SelectionToolbar({
           </div>
           {/* hairline */}
           <div className="hl-pop-line" />
-          {/* tier 2 — actions. RAWY-124: the FULL set is FIVE — Listen · Note · Copy · Add-to-card ·
-              Create-photo-card. Do NOT drop one (listen-from-selection was long missing because it was
-              never wired here — it is EPUB-only, and the selection toolbar is EPUB-only, so it always shows). */}
+          {/* tier 2 — actions. RAWY-124 named FIVE (Listen · Note · Copy · Add-to-card · Create-photo-card)
+              and the set has since grown to SEVEN, with Reference and Replace added beside them. Do NOT
+              drop one (listen-from-selection was long missing because it was never wired here — it is
+              EPUB-only, and the selection toolbar is EPUB-only, so it always shows). */}
           <div className="hl-pop-actions">
             <button className="hl-pop-act" onClick={onListen}><ListenIcon />{t("tts.listen")}</button>
             <button className="hl-pop-act" onClick={onNote}><PenIcon />{t("hl.note")}</button>
+            {/* COPY IS BACK, AT THE OWNER'S DECISION, and in the place RAWY-124 gave it — third, after
+                Note. It was removed once (the note below Replace used to record that removal) on the
+                reasoning that the row was full and Ctrl+C still worked; the answer now is that a reader
+                who has just selected a passage should be able to take it from the same row that offers
+                to do everything else with it, without knowing a keyboard gesture.
+
+                It confirms itself in place: the mark becomes the tick and the label says so, for a
+                moment. The row does not change shape while it does that — the label is the same width
+                class as its neighbours — so nothing beside it moves. */}
+            <button className="hl-pop-act" onClick={pressCopy} aria-label={copied ? t("reader.copied") : t("reader.copyAria")}>
+              {copied ? <CopiedIcon /> : <CopyIcon />}
+              {copied ? t("reader.copied") : t("reader.copy")}
+            </button>
             {/* RAWY-260: ONE new action added to the existing toolbar — the toolbar itself is untouched,
                 and RAWY-124's warning still holds: never drop one of the other five. */}
             <button className="hl-pop-act" onClick={onReference}><RefIcon />{t("ref.add")}</button>
-            {/* RAWY-124's warning still holds — never DROP one of these silently. Copy is not dropped
-                here by accident, it is REPLACED by Replace at the owner's decision: the selection is the
-                natural place to say "read this word as something else", and the toolbar is already full.
-                The system copy gesture (Ctrl+C and the context menu) is untouched and still copies. */}
+            {/* RAWY-124's warning still holds — never DROP one of these silently. Replace earned its
+                place here: the selection is the natural place to say "read this word as something
+                else". It once stood in Copy's slot; Copy now has its own again, above. */}
             <button className="hl-pop-act" onClick={onReplace}><ReplaceIcon />{t("rep.action")}</button>
             <button className="hl-pop-act" onClick={onAddToCard}><AddCardIcon />{t("photo.addToCard")}</button>
             <button className="hl-pop-act primary" onClick={onPhotoCard}><PhotoIcon />{t("photo.card")}</button>
+            {/* Said once, for anyone who cannot see the tick. Empty until a copy actually happens, so
+                it never narrates the row. */}
+            <span className="sr-live" role="status" aria-live="polite">{copied ? t("reader.copied") : ""}</span>
           </div>
         </>
       )}
@@ -513,11 +603,14 @@ function NoteEditorModal({
   // The design's quote is collapsible (`qClamp` / `quoteToggleLabel`) — compact by default, expandable when
   // the reader wants the whole passage. Two lines collapsed, per the design's clamp.
   const [quoteOpen, setQuoteOpen] = useState(false);
+  /** The delete has been asked for but not yet answered. Reset whenever the editor changes mark. */
+  const [confirmDel, setConfirmDel] = useState(false);
   const barsRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     setBody(note?.body ?? "");
     setTitle(note?.title ?? ""); // RAWY-282: reset with the body, on the same note/highlight identity
     setAlpha(hi.alpha ?? DEFAULT_INK);
+    setConfirmDel(false); // a question asked about one mark must not still be open on the next
     if (note?.id) noteTagsFor(note.id).then((ts) => setTagIds(ts.map((x) => x.id))).catch(() => setTagIds([]));
     else setTagIds([]);
   }, [note?.id, hi.id, hi.alpha]);
@@ -528,9 +621,11 @@ function NoteEditorModal({
   }, [onClose]);
 
   const hl = useHl();
-  const themeId = useTheme((s) => s.themeId);
-  const themeDark = resolveTheme(themeId).dark;
-  const themePaper = resolveTheme(themeId).colors.paperBg;
+  // THE SAME PALETTE, for the same reason: this preview is the mark itself, composited against the
+  // paper it will be drawn on. The Library's paper is not that paper.
+  const reading = useReadingTheme();
+  const themeDark = reading.dark;
+  const themePaper = reading.colors.paperBg;
   const inkHex = isHex(hi.color) ? hi.color : (hl[hi.color as keyof typeof hl] ?? hi.color);
   // The preview ink comes from the SHARED resolver the page renderer uses, with the density being dragged —
   // so this is the mark itself, not a representation of it.
@@ -711,10 +806,44 @@ function NoteEditorModal({
             {edited && <div><div className="nec-meta-k">{t("ne.updated")}</div><div className="nec-meta-v">{edited}</div></div>}
           </div>
 
+          {/* THE ROW READS AS IT DECIDES: what removes this, kept apart at the start, then the two
+              safe answers grouped at the end. Delete used to be a bare 🗑 glyph in a 2.35rem square
+              AFTER Cancel — the smallest and least explained control in the editor, and the only
+              destructive one.
+
+              ASKING FIRST. It is now a real button, which makes it far easier to hit than the glyph
+              was, and the act behind it is immediate and cannot be undone. So the row swaps to the
+              question instead of deleting on the press — the same swap the saved-cards viewer makes,
+              rather than a second pattern for the same decision. `onRemove` itself is untouched.
+
+              THE GROUP IS WHY IT FITS. All three used to be siblings that could not shrink, so on a
+              narrow rail their widths simply exceeded it — and `.nec-rail` is `overflow-y: auto`,
+              which makes overflow-x compute to `auto` as well, so the row grew a horizontal
+              scrollbar and Save was pushed out of sight. */}
           <div className="nec-actions">
-            <button type="button" className="nec-save" onClick={() => onSaveNote(body, tagIds, title)}>{t("hl.save")}</button>
-            <button type="button" className="nec-cancel" onClick={onClose}>{t("ne.cancel")}</button>
-            <button type="button" className="nec-del" onClick={onRemove} aria-label={t("ne.delete")} title={t("ne.delete")}>🗑</button>
+            {confirmDel ? (
+              <>
+                <span className="nec-del-ask">{t("ne.deleteConfirm")}</span>
+                <div className="nec-actions-end">
+                  <button type="button" className="nec-cancel" onClick={() => setConfirmDel(false)}>{t("ne.deleteKeep")}</button>
+                  <button type="button" className="nec-del confirm" onClick={onRemove}>
+                    <TrashIcon />
+                    <span>{t("ne.delete")}</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <button type="button" className="nec-del" onClick={() => setConfirmDel(true)} title={t("ne.delete")}>
+                  <TrashIcon />
+                  <span>{t("ne.delete")}</span>
+                </button>
+                <div className="nec-actions-end">
+                  <button type="button" className="nec-cancel" onClick={onClose}>{t("ne.cancel")}</button>
+                  <button type="button" className="nec-save" onClick={() => onSaveNote(body, tagIds, title)}>{t("hl.save")}</button>
+                </div>
+              </>
+            )}
           </div>
         </aside>
       </div>
@@ -724,11 +853,17 @@ function NoteEditorModal({
 
 export function AnnotationLayer({
   ctrlRef,
+  readingTheme,
   onPhotoCard,
   onAddToCard,
   onListen,
 }: {
   ctrlRef: RefObject<FoliateController | null>;
+  /**
+   * The palette this book is READ in — the very object the Reader hands `ctrl.applyTheme`, so the
+   * swatches below and the mark the controller paints are the one palette rather than two.
+   */
+  readingTheme: Theme;
   onPhotoCard?: (sel: SelectionInfo) => void;
   onAddToCard?: (sel: SelectionInfo) => void;
   onListen?: (sel: SelectionInfo) => void; // RAWY-124: listen-from-selection (start TTS from here)
@@ -799,6 +934,31 @@ export function AnnotationLayer({
     setSelection(null);
     clearSel();
     if (row) setActive({ cfi: row.cfi, rect }); // open the popover to type
+  };
+  /**
+   * COPY THE PASSAGE — the one action in this row that leaves everything as it found it.
+   *
+   * Every sibling here dismisses the toolbar and clears the selection, because each of them takes the
+   * reader somewhere: a note opens, a card is filled, read-aloud starts. Copying goes nowhere. The
+   * passage stays selected and the row stays up, so the same selection can then be highlighted or
+   * turned into a note without being made twice — and so the confirmation has somewhere to appear.
+   *
+   * The text is `selection.text`, which is the same text every other action here works from, so what
+   * lands on the clipboard is exactly what the row is acting on. Nothing is read back out of the DOM.
+   *
+   * It answers whether the write actually happened: a clipboard can refuse on focus or permissions,
+   * and a row that ticked anyway would be claiming something untrue.
+   */
+  const onCopySel = async (): Promise<boolean> => {
+    const text = selection?.text.trim() ?? "";
+    const cb = navigator.clipboard;
+    if (!text || !cb) return false;
+    try {
+      await cb.writeText(text);
+      return true;
+    } catch {
+      return false; // refused — the row says nothing rather than claiming a copy
+    }
   };
   const onReplace = () => {
     const s = selection;
@@ -885,6 +1045,9 @@ export function AnnotationLayer({
   };
 
   return (
+    // ONE PROVIDER FOR THE WHOLE LAYER. The swatches, the custom picker's preview and the note
+    // editor all read the book's palette from here rather than resolving one of their own.
+    <ReadingPalette.Provider value={readingTheme}>
     <>
       {/* RAWY-260: the reference popup — display only, per the design. Any tap outside closes it; a tap
           ON it opens the dialog for editing. */}
@@ -926,6 +1089,7 @@ export function AnnotationLayer({
           onListen={onListenSel}
           onReference={onReference}
           onNote={onNote}
+          onCopy={onCopySel}
           onReplace={onReplace}
           onAddToCard={onAdd}
           onPhotoCard={() => {
@@ -948,5 +1112,6 @@ export function AnnotationLayer({
         />
       )}
     </>
+    </ReadingPalette.Provider>
   );
 }

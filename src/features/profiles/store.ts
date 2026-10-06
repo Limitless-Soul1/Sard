@@ -29,7 +29,7 @@ import {
   BOOKMARK_DEFAULT_COLOR, BOOKMARK_DEFAULT_POS, BOOKMARK_DEFAULT_SHAPE, BOOKMARK_DEFAULT_SIZE,
   initBookmarkStyle, useBookmarkStyle,
 } from "../../lib/bookmarkStyle";
-import { BG_DEFAULT_PARAMS, applyBackgrounds, initBackground, useBackground } from "../../lib/background";
+import { BG_NO_OVERLAY, applyBackgrounds, bgDefaultsFor, initBackground, useBackground } from "../../lib/background";
 import { applyTexture } from "../../lib/texture";
 import { applyUiFontVar, initFonts, useFonts } from "../../lib/fonts";
 import { READ_MARKER_DEFAULT, initReadMarkerStyle, useReadMarkerStyle } from "../../lib/readMarkerStyle";
@@ -407,7 +407,17 @@ function snapshotPalette(theme: Theme, id: string, bookmark: string): ProfileThe
   return {
     base: typeof id === "string" && !id.startsWith("u:") ? (id as never) : null,
     dark: theme.dark,
-    colors: theme.colors,
+    // COPIED, NOT ALIASED. `theme` is usually a SHIPPED entry out of `THEMES`, and holding its
+    // `colors` by reference put that shared object inside every هيئة this function builds: two
+    // `defaultProfileData()` calls handed back the same palette, and one in-place write through
+    // either — `data.theme.reading.colors.paperBg = …` — edited the shipped theme itself, for the
+    // whole process and every هيئة built after it.
+    //
+    // Latent rather than live: every production path clones or serialises before it mutates, so
+    // nothing has been seen to trip it. It was found by a test that DID write in place, which is one
+    // careless line away from being the real thing. A copy costs nine strings and removes the class.
+    // `highlight` is a nested object of its own, so it is copied too or the alias simply moves down.
+    colors: { ...theme.colors, highlight: { ...theme.colors.highlight } },
     highlightAlpha: theme.highlightAlpha,
     bookmark,
     separator: null,
@@ -527,8 +537,13 @@ export function defaultProfileData(): ProfileData {
     // No picture on either surface: a new هيئة is a sheet of Sard's own paper, not a copy of the
     // reader's desk. They add one from the editor's own background chapter.
     bg: {
-      library: { ref: null, params: { ...BG_DEFAULT_PARAMS } },
-      reading: { ref: null, params: { ...BG_DEFAULT_PARAMS }, sameAsLibrary: false, overlay: null },
+      library: { ref: null, params: bgDefaultsFor("library") },
+      // `overlay` is the colour laid between the picture and the page, and a new هيئة lays none: the
+      // picture shows as it is until the reader decides otherwise. `null` would have meant "the
+      // theme's own colour", which is a decision this هيئة has not made. Nothing already saved is
+      // touched — `parseProfileData` still reads an absent overlay as it always did, so an
+      // appearance written before this keeps exactly the colour it has been wearing.
+      reading: { ref: null, params: bgDefaultsFor("reading"), sameAsLibrary: false, overlay: BG_NO_OVERLAY },
     },
     voice: null,
     // Sard's own reference mark: the design exactly, in whatever accent the theme carries.

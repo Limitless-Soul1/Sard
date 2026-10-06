@@ -24,6 +24,7 @@ import { useReader } from "../../reader-engine/store";
 // The same stand-in `liveValues` uses when no book is open, so the drift that is REPORTED and the
 // drift that is SAVED are read from one source.
 import { peekGlobalStyle } from "../reader/perBookSettings";
+import { bookAppearanceInForce } from "../reader/bookAppearance";
 import { REF_RULE_KEYS, TTS_TRACKING_KEYS } from "../../reader-engine/injectedCss";
 import { TYPOGRAPHY_KEYS, type ProfileRefs } from "./model/profile";
 import { useDialog } from "../../components/useDialog";
@@ -65,6 +66,15 @@ export function describe(keys: SessionKey[], t: (k: TKey) => string): string {
     refRuleColor: "profiles.unsaved.what.refs",
     refRuleWeight: "profiles.unsaved.what.refs",
     refRuleOffset: "profiles.unsaved.what.refs",
+    // The two a هيئة carries that the session rows do not — reported only by `changesBetween`, which
+    // compares one هيئة against another. `describe` skips a key it has no word for, so an older
+    // caller that never emits these is unaffected.
+    ["bg_reading" as SessionKey]: "profiles.unsaved.what.picture",
+    // The session half of a reader's sitting. They are NOT هيئة fields and are not being moved into
+    // one; the dialog simply has to be able to say what it is offering to discard.
+    ["pageColor" as SessionKey]: "profiles.unsaved.what.pageColor",
+    ["textColor" as SessionKey]: "profiles.unsaved.what.textColor",
+    ["ui" as SessionKey]: "profiles.unsaved.what.interface",
   };
   // The seven marks are ONE thing to a reader, so they are named once however many of them moved.
   const seen = new Set<string>();
@@ -158,7 +168,13 @@ export function UnsavedChange() {
     // هيئات are switched from the LIBRARY — the switcher is in the library's own foot — so a reader
     // who changes their reading inside a book and then switches took that path every single time.
     // One source for both, resolved the same way, so what the dialog names is what the save writes.
-    const liveStyle = useReader.getState().style ?? peekGlobalStyle();
+    // THE SAME RULE `liveValues` APPLIES, and here it is not a false prompt but a silent overwrite: a
+    // book wearing هيئة C makes `useReader.style` C's values, and folding those into the هيئة being
+    // saved would write C's measure into it. What is being saved is the SESSION's look, so the session
+    // row is what it is read from whenever a book has departed from it.
+    const liveStyle = bookAppearanceInForce()
+      ? peekGlobalStyle()
+      : useReader.getState().style ?? peekGlobalStyle();
     if (liveStyle && active) {
       const asserted = profileValues(active);
       // THE MARKS BECOME AN OPINION ONLY ONCE ONE HAS MOVED. Writing all seven whenever anything else

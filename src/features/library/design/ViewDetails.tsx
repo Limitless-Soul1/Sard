@@ -7,6 +7,7 @@
 import { Fragment } from "react";
 import type { BookRow } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
+import { useRowWindow } from "./rowWindow";
 import { localeNum } from "../../../lib/format";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
@@ -14,6 +15,7 @@ import { coverSrc } from "../coverSrc";
 import { fieldScript, fieldStyle } from "./bidi";
 import { useBookPickup } from "./bookPickup";
 import { BookActions, type BookActionsProps } from "./BookActions";
+import { useBookContextMenu } from "./bookContextMenu";
 import type { CardOrder } from "../Library";
 import { daysAgo, isFinished, pctText, progressPct, type DesignSort } from "./model";
 import { labelFace } from "../../../lib/typography";
@@ -33,6 +35,16 @@ const COLUMNS = "44px minmax(0,1.6fr) minmax(0,1fr) 54px 118px 68px 34px";
 export interface DetailsProps {
   /** Already ordered and filtered by the caller. */
   books: BookRow[];
+  /**
+   * THE ELEMENT THIS VIEW SCROLLS IN.
+   *
+   * Details does not own its scroll: the stage does, with the column rail sticky inside it. The window
+   * below therefore measures against that element rather than against this component's own box, and a
+   * view rendered without one simply renders every row, exactly as it always did.
+   */
+  scrollerRef?: React.RefObject<HTMLElement | null>;
+  /** True while a book is in hand: the run then renders whole (see `useRowWindow`). */
+  carrying?: boolean;
   /** Where each book lives, for the second line under the title. */
   placeOf: (bookId: string) => string;
   sort: DesignSort;
@@ -104,8 +116,12 @@ function DetailsRow(props: {
   // shelf to be lifted from, and a hold SPENDS the press: it swallows the click that follows, so a
   // slightly slow press on an ordinary row would quietly stop opening the book.
   const wantsPress = orderable || props.arrangeOn;
+  // Right-click the row, get the row's own ⋯ menu at the pointer — the same gesture the four
+  // cover formats carry, so Details does not become the one place a book answers differently.
+  const ctx = useBookContextMenu({ onOpen: pickup.cancelHold, enabled: !props.selectOn });
   return (
     <div
+      onContextMenu={ctx.onContextMenu}
       // The row names the book it draws, exactly as a tile does, so a reorder and a check can both
       // address it by identity. Details rows carried no identity at all before this.
       // The row names the book it draws, and where that book is filed — the shelf and index are
@@ -133,6 +149,7 @@ function DetailsRow(props: {
       {!props.selectOn && (
         <BookActions
           {...props.actions}
+          ref={ctx.ref}
           // `.libd-dots` is hidden until `.libd-tile:hover`, and a row is not a tile — so without
           // this the control exists, occupies space and can never be clicked. Rows are sparse
           // enough to carry it openly.
@@ -154,8 +171,26 @@ function DetailsRow(props: {
   );
 }
 
+/** A stable ref for a Details rendered without a scroller: the window is then disabled entirely. */
+const EMPTY_REF: React.RefObject<HTMLElement | null> = { current: null };
+
 export function ViewDetails(props: DetailsProps) {
   const { t, lang } = useI18n();
+  /**
+   * ONLY THE ROWS THE READER CAN SEE ARE MOUNTED.
+   *
+   * `props.books` is untouched: the run keeps its order, and each row still receives the same book, so
+   * `props.order(b)` carries the same index and the same shelf it always did — which is what the drop
+   * protocol, selection and ordering read. Below `WINDOW_MIN_ITEMS` the whole run is rendered, so an
+   * ordinary library behaves exactly as before.
+   */
+  const win = useRowWindow(props.scrollerRef ?? EMPTY_REF, props.books.length, {
+    itemSelector: "[data-book]",
+    columns: 1,
+    enabled: !!props.scrollerRef,
+    deps: [props.selectOn, props.arrangeOn],
+    whole: props.carrying,
+  });
   const num = (n: number) => localeNum(n, lang);
 
 
@@ -220,7 +255,10 @@ export function ViewDetails(props: DetailsProps) {
         ))}
       </div>
 
-      {props.books.map((b) => {
+      {/* THE ROWS ABOVE THE WINDOW, as height. A plain block: Details is a vertical list, so a spacer
+          needs no grid placement — and the sticky rail above is outside this run, where it belongs. */}
+      {win.topPx > 0 && <div aria-hidden style={{ height: win.topPx }} />}
+      {props.books.slice(win.start, win.end).map((b) => {
         const meta = resolveBookMeta(b);
         const title = displayTitle(meta, t);
         // Each field is judged on its OWN script. One flag taken from the title used to set the
@@ -270,6 +308,7 @@ export function ViewDetails(props: DetailsProps) {
                 <img
                   src={src}
                   alt=""
+                  loading="lazy"
                   draggable={false}
                   style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                 />
@@ -371,6 +410,8 @@ export function ViewDetails(props: DetailsProps) {
           </Fragment>
         );
       })}
+      {/* …and the rows below it. */}
+      {win.bottomPx > 0 && <div aria-hidden style={{ height: win.bottomPx }} />}
     </div>
   );
 }

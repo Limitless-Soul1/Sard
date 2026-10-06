@@ -15,9 +15,20 @@ import { useI18n } from "../../i18n";
 // offers the furthest point they have ever read to. Nothing is shared between them but the idea of
 // going somewhere, and they must be able to appear at the same time without either explaining the
 // other away.
-export function FurthestReturn({ label, onGo }: { label: string; onGo: () => void }) {
+// RESET SITS BESIDE IT, IN A ROW, because it cannot sit inside it: a button within a button is not
+// something HTML allows, and the way back was a single button. So the two actions are siblings sharing
+// one ground — the way back takes the width it needs, Reset takes its own label's worth. Passing no
+// `onReset` renders the row exactly as the control looked before, at the same margins.
+//
+// It is the MARK it resets, never the reader: pressing it in chapter 500 leaves the reader in chapter
+// 500 and moves the frontier to them. The row then retires itself, because a reader standing at their
+// furthest point is offered nothing — the same rule that hides it at the frontier normally.
+export function FurthestReturn({
+  label, onGo, onReset,
+}: { label: string; onGo: () => void; onReset?: () => void }) {
   const { t, dir } = useI18n();
   return (
+    <div className="rp-furthest-row">
     <button className="rp-furthest" onClick={onGo} title={t("toc.furthestAria")} aria-label={t("toc.furthestAria")}>
       <span className="rp-furthest-arrow" aria-hidden="true">
         {/* Forward along the READING direction, and the sibling of the return pill's single chevron:
@@ -32,5 +43,17 @@ export function FurthestReturn({ label, onGo }: { label: string; onGo: () => voi
         <span className="rp-furthest-where" dir="auto">{label}</span>
       </span>
     </button>
+      {onReset && (
+        <button
+          className="rp-furthest-reset"
+          type="button"
+          onClick={onReset}
+          title={t("toc.furthestResetAria")}
+          aria-label={t("toc.furthestResetAria")}
+        >
+          {t("toc.furthestReset")}
+        </button>
+      )}
+    </div>
   );
 }

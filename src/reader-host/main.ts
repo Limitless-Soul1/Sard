@@ -89,12 +89,13 @@ function buildMirror(): Mirror {
     openingUnderTopBar: safe(() => controller.openingUnderTopBar(), false),
     pdfTextQuality: safe(() => controller.pdfTextQuality() as unknown, null),
     pdfRenderedScale: safe(() => controller.pdfRenderedScale(), 1),
+    pdfZoomBounds: safe(() => controller.pdfZoomBounds(), null),
     pdfHasSpeakableText: safe(() => controller.pdfHasSpeakableText(), false),
     isFixedLayout: safe(() => controller.isFixedLayout, false),
+    fxlMode: safe(() => controller.fxlMode, "scroll"),
     isScrolled: safe(() => controller.isScrolled, true),
     readingScrollTop: safe(() => controller.readingScrollTop, 0),
     pdfPageCount: safe(() => controller.pdfPageCount, 0),
-    furthestPosition: safe(() => controller.furthestPosition, null),
     dir: safe(() => controller.dir, undefined),
     title: safe(() => controller.title, undefined),
     author: safe(() => controller.author, undefined),
@@ -209,6 +210,8 @@ async function run(msg: Request): Promise<unknown> {
     searchAbort = new AbortController();
     return cloneable(
       await controller.searchBook(String(msg.args[0] ?? ""), {
+        // The one search option that is a plain value, so it crosses; the callbacks below cannot.
+        wholeWord: !!msg.args[1],
         signal: searchAbort.signal,
         onProgress: (f) => push({ kind: "event", name: "search-progress", args: [f] }),
         onBatch: (hits) => push({ kind: "event", name: "search-batch", args: [cloneable(hits)] }),

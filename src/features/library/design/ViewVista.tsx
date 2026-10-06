@@ -166,7 +166,7 @@ function SampleCover({ book, coverMode, onSettled }: {
   const pres = coverPresentation(book, !!src, { bg: "", ink: "" }, coverMode);
   if (pres.kind === "image" && src) {
     return (
-      <img className="v-cover" src={src} alt="" draggable={false}
+      <img className="v-cover" src={src} alt="" loading="lazy" draggable={false}
         onLoad={onSettled} onError={onSettled} />
     );
   }

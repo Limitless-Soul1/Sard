@@ -129,8 +129,17 @@ fn bind_book(
     let book = manifest.get("book").ok_or("dep.err.badBook")?;
     let hash = s(book, "hash").ok_or("dep.err.badBook")?;
 
+    // A BOOK, NOT MERELY A ROW. `books` also holds bridge rows — scaffolding written so reading
+    // progress has a parent, for a file the reader never added (see `books::IS_A_BOOK`). Binding to
+    // one would answer "you already have this book" and hang the deposit's marks on something the
+    // library does not show, so the reader would receive a deposit into a book they cannot open. The
+    // same id falls through to the import below instead, which fills that row and makes it real.
     let have: Option<String> = conn
-        .query_row("SELECT id FROM books WHERE id = ?1", [&hash], |r| r.get(0))
+        .query_row(
+            &format!("SELECT b.id FROM books b WHERE b.id = ?1 AND {}", crate::books::IS_A_BOOK),
+            [&hash],
+            |r| r.get(0),
+        )
         .optional()
         .map_err(|e| e.to_string())?;
     if have.is_some() {
@@ -140,8 +149,15 @@ fn bind_book(
     if let Some(id) = chosen {
         // A DIFFERENT COPY, named by the reader. It must be a book that exists; nothing else is trusted
         // about it, and every cfi-bearing mark will have to earn its place by text.
+        // Also a book rather than a row: the reader picks this from a list the library drew, which no
+        // longer offers bridges — this keeps the check honest on its own terms rather than relying on
+        // what the caller happened to show.
         let exists: Option<String> = conn
-            .query_row("SELECT id FROM books WHERE id = ?1", [id], |r| r.get(0))
+            .query_row(
+                &format!("SELECT b.id FROM books b WHERE b.id = ?1 AND {}", crate::books::IS_A_BOOK),
+                [id],
+                |r| r.get(0),
+            )
             .optional()
             .map_err(|e| e.to_string())?;
         if exists.is_none() {

@@ -15,6 +15,7 @@ import type { BookRow, CaseNode, ShelfNode } from "../../../lib/ipc";
 import {
   bookClearSpine,
   bookCommitCover,
+  bookDiscardCover,
   bookCommitSpine,
   bookRevertCover,
   bookStageCover,
@@ -58,6 +59,41 @@ const PALETTE = [
 ];
 
 const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif", "avif", "svg", "bmp", "ico"];
+
+/**
+ * HOW MUCH ACCENT THE WAITING SAVE BUTTON CARRIES, as a percentage mixed into the footer's chrome.
+ *
+ * Chosen by measuring, not by eye, and the measurement is why it is a named number rather than a
+ * literal in the style block. The fill has to clear two bars at once in every theme Sard ships AND in
+ * a هيئة a reader builds: far enough above the footer to read as a control, far enough below the
+ * ACTIVE Save — which is the accent at full strength — that the two states stay a hierarchy rather
+ * than a pair. Too low and the button is the invisible slab this replaced; too high and a sheet with
+ * nothing to save looks like a sheet begging to be saved.
+ *
+ * The strength is a mix of the ACCENT rather than of the ink, because that is what keeps it honest in
+ * both polarities: a fixed percentage of `--text` lands near-black on a dark theme and a heavy grey on
+ * a light one, while the accent is mid-toned in every theme by construction, so one number serves all
+ * of them.
+ *
+ * ⚠️ AND IT FORCED THE LABEL TO MOVE WITH IT, which is the part that could not be guessed. The waiting
+ * Save wore `--mut`, and `--mut` is floored against the PAPER, not against this fill — so every step
+ * that lifted the fill off the footer pushed the ink toward it. Measured across the fourteen themes:
+ *
+ *      tint        fill vs footer      --mut on fill       --txt on fill
+ *       0%           1.02–1.45            3.23 (min)         7.65 (min)     ← the invisible slab
+ *      22%           1.23–1.52            2.46               5.99
+ *      28%           1.32–1.77            2.28               5.40
+ *      34%           1.43–2.07            2.03               4.87           ← chosen
+ *      40%           1.56–2.43            1.78               4.39
+ *
+ * Every tint strong enough to be seen put a muted label UNDER the 3:1 the rest of the interface holds,
+ * so keeping `--mut` would have bought the button's visibility with its own legibility. On `--txt` the
+ * label clears 4.87 at every theme and every tint in the table, and the pair is then free to be chosen
+ * on the fill alone. 34% is where the quietest theme still reaches 1.43 while the loudest stops at
+ * 2.07 — the ACTIVE state measures 3.88–9.50 on the same scale, so the two remain a hierarchy with a
+ * clear gap rather than two similar buttons.
+ */
+const INACTIVE_SAVE_TINT = 34;
 
 const chip = (on: boolean): React.CSSProperties => ({
   display: "flex",
@@ -389,15 +425,26 @@ export function BookDetails(props: BookDetailsProps) {
     const sel = await openDialog({ multiple: false, filters: [{ name: "Image", extensions: IMAGE_EXTENSIONS }] });
     if (typeof sel !== "string") return;
     setBusy(true);
+    // STAGE, THEN ADOPT. `stage` writes the image into `library/covers/` under a content-addressed name
+    // and `commit` is what makes it the book’s cover. If the commit fails after the file is already
+    // written, the staged file belongs to nobody: the book keeps the cover it had, and that file would sit
+    // in `covers/` until this book’s NEXT commit or revert swept it (or the book was deleted). Discarding
+    // it here is what the two-stage design always intended — `book_discard_cover` exists for exactly this
+    // moment and had no caller. It removes the staged file and nothing else: no override is touched, so a
+    // failed replacement leaves the book exactly as it was.
+    let staged: { rel: string } | null = null;
     try {
-      const staged = await bookStageCover(book.id, sel);
+      staged = await bookStageCover(book.id, sel);
       const next = await bookCommitCover(book.id, staged.rel);
+      staged = null; // adopted — it is the book’s cover now, never a leftover
       if (next) setBook(next);
       // Choosing an image means showing it.
       await bookUpdate(book.id, { coverMode: "file" }).catch(() => {});
       props.onChanged();
     } catch {
       /* the staging path reports its own failure; the dialog simply stays open */
+    } finally {
+      if (staged) await bookDiscardCover(staged.rel).catch(() => {});
     }
     setBusy(false);
   };
@@ -406,13 +453,18 @@ export function BookDetails(props: BookDetailsProps) {
     const sel = await openDialog({ multiple: false, filters: [{ name: "Image", extensions: IMAGE_EXTENSIONS }] });
     if (typeof sel !== "string") return;
     setBusy(true);
+    // The same custody as a cover: a staged spine image that is never adopted is discarded here.
+    let staged: { rel: string } | null = null;
     try {
-      const staged = await bookStageSpine(book.id, sel);
+      staged = await bookStageSpine(book.id, sel);
       const next = await bookCommitSpine(book.id, staged.rel);
+      staged = null;
       if (next) setBook(next);
       props.onChanged();
     } catch {
       /* staging reports its own failure; the dialog stays open on the current spine */
+    } finally {
+      if (staged) await bookDiscardCover(staged.rel).catch(() => {});
     }
     setBusy(false);
   };
@@ -1249,8 +1301,20 @@ export function BookDetails(props: BookDetailsProps) {
               height: 32,
               padding: "0 18px",
               borderRadius: "var(--r-md)",
-              background: dirty ? "var(--acc)" : "var(--soft)",
-              color: dirty ? "var(--pap)" : "var(--mut)",
+              // A QUIET SAVE IS STILL THE PRIMARY ACTION, and it has to look like one before it is
+              // pressed. `--soft` is mixed from the reading PAPER while this footer is painted in the
+              // CHROME, so the two have no defined relationship: measured on a real هيئة the fill came
+              // out #181C20 on a #0C0E10 footer — 1.13:1, no visible body at all — and across all
+              // fourteen themes it never rose above 1.13. With the same `--mut` label and the same
+              // `--brd` border Cancel carries, Save was not a quieter primary; it was the same control.
+              // Tinting the chrome with the هيئة's own accent restores the distinction without raising
+              // the volume: it stays a dim surface, it tracks every theme, and it reads as the thing
+              // the sheet is for. See INACTIVE_SAVE_TINT for how the strength was chosen.
+              background: dirty ? "var(--acc)" : `color-mix(in srgb, var(--acc) ${INACTIVE_SAVE_TINT}%, var(--chr))`,
+              // `--txt`, not `--mut`, and the table in INACTIVE_SAVE_TINT is why: the muted ink is
+              // floored against the paper, so it cannot follow this fill. Cancel keeps `--mut` and no
+              // fill, which is what now tells the two apart at a glance.
+              color: dirty ? "var(--pap)" : "var(--txt)",
               border: dirty ? "none" : "1px solid var(--brd)",
               font: "600 .8125rem var(--ui)",
               opacity: showBusy ? 0.6 : 1,

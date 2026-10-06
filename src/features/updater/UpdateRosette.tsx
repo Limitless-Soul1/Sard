@@ -13,8 +13,9 @@
 //   • available  — a quiet accent badge sits at the corner; the DIALOG carries the decision now,
 //                  so a tap no longer opens a card of its own
 //
-// A once-daily auto-check runs on mount (gated in the store via `updater_last_check`); a tap always
-// checks now.
+// An automatic check runs on mount — once per launch, on EVERY launch (the store's `autoDone`
+// guards the Library's remounts and nothing more; the persisted 24-hour gate that used to sit behind
+// it is gone, see the note on `auto()`). A tap always checks now, and always reports the outcome.
 
 import { useEffect } from "react";
 
@@ -31,7 +32,9 @@ export function UpdateRosette() {
   const manual = useUpdater((s) => s.manual);
   const dismiss = useUpdater((s) => s.dismiss);
 
-  // Once-daily auto-check on app start (the store gates it; async, so it never blocks the render).
+  // THE LAUNCH CHECK. Async and deliberately not awaited, so it never blocks the render or the
+  // startup path; silent unless it finds something. The Library is Sard's home screen and always
+  // mounts at launch, which is what makes this the launch check rather than a Library feature.
   useEffect(() => {
     auto();
   }, [auto]);

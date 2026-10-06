@@ -211,7 +211,14 @@ html, body, #root {
    it auto-hides; for TTS the follow keeps the spoken sentence mid-view. (RAWY-129's per-spot
    `.reader-desk::after` bottom fade is retired — the True-Black desk is theme-matched at the root.) */
 .reader-root.tts-playing .page-host,
-.reader-root.flow-scrolled .page-host { inset-block-start: 0; }
+.reader-root.flow-scrolled .page-host,
+/* A PDF, in EITHER mode, for the same reason and one more. RAWY-142 excluded PDFs because they were
+   only ever paged then; a continuous Scroll mode is exactly the case it was written for. And in Pages
+   mode a moving host is worse than a reflow: "fit page" re-derives its scale from the host's height, so
+   every reveal of the bar re-rendered the page raster at a new size. MEASURED before this: the PDF host
+   went 102px/618px tall with the bar shown and 32px/688px with it hidden — the whole document moved
+   70px each time the pointer reached the top of the window. */
+.reader-desk.pdf-view .page-host { inset-block-start: 0; }
 
 /* the paper page sheet — measure + page-edge shadow (the book renders inside .page-host) */
 .page-sheet {
@@ -431,34 +438,100 @@ html, body, #root {
 .page-bookmark:active { cursor: grabbing; }
 .bm-shape { display: inline-block; }
 
-/* page-turn affordance — circular floating buttons on the desk edges (RAWY-33, design C-VI) */
+/* PAGE-TURN CONTROLS — two tall rails at the edges of the reading area.
+ *
+ * WHAT WAS WRONG WITH THE DISC, from the reader's own screenshots and from measuring it. A 38px circle
+ * resting at opacity 0.38 is a smudge on a photographic desk: it was barely findable, its 16px caret
+ * read as a browser widget, and its hit area was the smallest control on the reading surface. Making
+ * the same disc bigger would only make a bigger smudge, so the shape changed rather than the size.
+ *
+ * THE RAIL. A vertical pill the height of a hand's reach (96px), narrow (40px) so it sits in the desk
+ * gutter beside the page rather than over it. Its PLATE is what makes it findable: a frosted chrome
+ * surface with a hairline edge carries its own ground, so it reads the same on paper, on black and on a
+ * photograph, where a bare glyph or a translucent disc could not. Idle it is present but quiet; under the
+ * pointer it comes forward; pressed, it gives.
+ *
+ * TACTILE, THE SAME WAY THE WINDOW CONTROLS ARE. The press is answered within the frame — the plate
+ * settles and darkens, and the caret moves two pixels in the direction the page will go — with
+ * `transition: none` on the pressed state so only the RELEASE eases back.
+ *
+ * DIRECTION IS NOT MIRRORED, deliberately and as before (RAWY-33): the leading rail is «previous» and
+ * the trailing rail «next» in every book, in both languages, and the caret points the way the button
+ * physically moves.
+ */
 .page-chevron {
   position: absolute;
   top: 50%;
-  transform: translateY(-50%);
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
+  width: 40px;
+  height: 96px;
+  padding: 0;
+  border-radius: 20px;
   border: 1px solid var(--chrome-border);
+  /* ENROLLED IN THE INTERFACE TEXTURE, like every chrome surface: the plate's own opacity is 92% — at
+     or above the anchor the texture mapping is built on — and the reader's texture preference decides
+     how much of the desk shows through, as it does for the bars. The rail's quietness at rest comes
+     from its element opacity below, not from a hard-coded translucent plate the preference could not
+     reach. The reduced-transparency override further down makes the plate opaque. */
   background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (92% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
-  backdrop-filter: blur(6px);
-  box-shadow: 0 3px 10px rgba(40, 28, 14, 0.12);
+  backdrop-filter: blur(10px) saturate(1.1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
   color: var(--text);
-  font: 300 1.375rem var(--ui-font);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.55;
+  opacity: 0.74;
+  /* The centring translate is part of the button's own transform, so the press restates it. */
+  transform: translateY(-50%);
   /* WP-4A: above a panel, per the invariant — a control must stay reachable. This is the BACKSTOP;
      the real fix is the inset below, which moves the button out from under the panel entirely. */
   z-index: var(--z-nav);
-  transition: opacity 0.18s ease, background 0.18s ease, left 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
-    right 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: opacity 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease,
+    transform 0.16s cubic-bezier(0.22, 1, 0.36, 1),
+    left 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), right 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-@media (prefers-reduced-motion: reduce) { .page-chevron { transition: opacity 0.18s ease, background 0.18s ease; } }
-.page-chevron:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 14%, var(--chrome-bg)); }
-:root[data-dark="true"] .page-chevron { box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4); }
+/* The caret carries its own ease so the pressed nudge can be instant while the release is not. */
+.page-chevron > svg { opacity: 0.82; transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .page-chevron { transition: opacity 0.18s ease, background 0.18s ease; }
+  .page-chevron > svg { transition: none; }
+}
+.page-chevron:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 12%, var(--chrome-bg));
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--chrome-border));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+.page-chevron:hover > svg { opacity: 1; }
+/* THE PRESS IS FELT. The plate settles back onto the desk and the caret leads the way the page goes. */
+.page-chevron:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.96);
+  background: color-mix(in srgb, var(--accent) 22%, var(--chrome-bg));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  transition: none;
+}
+.page-chevron:active:not(:disabled) > svg { transition: none; }
+.page-chevron-left:active:not(:disabled) > svg { transform: translateX(-2px); }
+.page-chevron-right:active:not(:disabled) > svg { transform: translateX(2px); }
+/* The keyboard gets the same ring the rest of Sard's controls use, outside the plate so the plate's
+   own edge and the ring never merge. `:focus-visible`, so a pointer press never draws it. */
+.page-chevron:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* SPENT, AND SAYING SO. The first page has nothing before it; the rail stays in place — a control that
+   disappears at the edge makes the layout jump — drops its plate, and stops inviting a press. */
+.page-chevron:disabled {
+  opacity: 0.2;
+  cursor: default;
+  box-shadow: none;
+  background: transparent;
+  backdrop-filter: none;
+}
+.page-chevron:disabled:hover { opacity: 0.2; background: transparent; border-color: var(--chrome-border); box-shadow: none; }
+.reader-root[data-book-dark="true"] .page-chevron { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
+.reader-root[data-book-dark="true"] .page-chevron:hover { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); }
 
 /* RESILIENCE-1 / WP-4B — THE CHEVRONS FOLLOW THE READING AREA.
    MEASURED, all four {en,ar}×{ltr,rtl} combinations: with Contents open the left chevron sat at
@@ -474,8 +547,8 @@ html, body, #root {
    the window. Physical left/right, matching the physical padding: the reading area is pinned LTR
    (`.reader-root { direction: ltr }`, RAWY-89) and the drawers dock physically, so a logical
    property here would mirror against a box that does not. */
-.page-chevron-left { left: calc(var(--panel-lead, 0px) + 22px); }
-.page-chevron-right { right: calc(var(--panel-trail, 0px) + 22px); }
+.page-chevron-left { left: calc(var(--panel-lead, 0px) + 20px); }
+.page-chevron-right { right: calc(var(--panel-trail, 0px) + 20px); }
 
 /* ---- reading chrome (RAWY-33, design C-VI/C-VII): clear LABELLED controls, hidden until
    intent. A raised button face (--rc-surface) lifts the buttons off the translucent bar so
@@ -536,7 +609,7 @@ html, body, #root {
   box-shadow: 0 2px 14px rgba(40, 28, 14, 0.06);
   transform: translateY(-100%);
 }
-:root[data-dark="true"] .rc-top { box-shadow: 0 2px 14px rgba(0, 0, 0, 0.28); }
+.reader-root[data-book-dark="true"] .rc-top { box-shadow: 0 2px 14px rgba(0, 0, 0, 0.28); }
 .rc-bottom {
   bottom: 0;
   min-height: 56px;
@@ -785,12 +858,94 @@ html, body, #root {
    `:host { overflow: auto }` can never engage. Measured before this: scrollHeight === clientHeight at
    2x, 4x and 6x (945/945, 1890/1890, 2835/2835) — the host grew to fit the page, so a zoomed page had
    no scrollable extent and the wheel could only ever turn the page. */
-.reader-desk.pdf-view .page-host { block-size: 100%; min-block-size: 0; overflow: hidden; }
+/* BOUNDED BY ITS INSETS, NOT BY `block-size: 100%`.
+   The containment above was first written as `block-size: 100%`. On a box that is absolutely positioned
+   with `inset-block: <top> 0`, an explicit height OVER-CONSTRAINS it: the height wins and the bottom
+   inset is ignored, so the host was always the full sheet height STARTING below its top inset — and ran
+   off the bottom of the window by exactly that inset. MEASURED: host 720px tall from y=32 to y=752 in a
+   720px window while reading (the title bar's 32px lost), and 102px lost with the toolbar shown. So the
+   bottom of every PDF page was unreachable, and "fit page" fitted a box taller than the screen — the
+   page looked cropped at every fit until zoomed well below it.
+   The insets alone already give a DEFINITE height (sheet − top − bottom), which is all the containment
+   ever needed: the renderer's own `overflow: auto` still engages, because the host still cannot grow to
+   fit the page. PDF only — the EPUB host never carried the explicit height. */
+.reader-desk.pdf-view .page-host { min-block-size: 0; overflow: hidden; }
 /* Bound the height ONLY. `display: block` here overrode the renderer's own
    `:host { display: flex; justify-content: center; align-items: center }`, which is what sizes and
    centres the page box — losing it let the page geometry be driven by the viewport instead of by the
    PDF's real dimensions. The host keeps its flex layout; only its extent is constrained. */
 .reader-desk.pdf-view .page-host foliate-view { block-size: 100%; min-block-size: 0; }
+/* ONE PAGE GUTTER IN BOTH MODES. Scroll mode keeps an 18px desk gap around every page inside its own
+   renderer. The paged renderer fits the page to its whole box, so at "fit page" the page ran flush to
+   the top and bottom of the window — MEASURED 32→720 in a 720px window, no margin at all — and the two
+   modes looked like two different readers. The same 18px, applied as padding so the renderer's fit
+   arithmetic (which reads its own box) sees the smaller area and scales the page into it. */
+.reader-desk.pdf-view[data-pdf-mode="pages"] .page-host foliate-view { box-sizing: border-box; padding: 18px; }
+/* HOW MUCH OF THE SHEET SHOWS AROUND A PDF PAGE (`data-pdf-surround`, absent = Normal = unchanged).
+   The area around a PDF page is `.page-sheet` — the EPUB paper: its colour, its edge shadow and the grain
+   laid over it. The 18px page gap is NOT part of it: it is transparent spacing that the fit arithmetic
+   and the separation between pages depend on, and it only ever shows whatever this sheet paints.
+   So only the sheet's PAINT changes here — never its box, the host, the renderer or the gap — and no
+   size, zoom, scroll extent or position can follow from it.
+   `:root .reader-root` lifts the rules above the wallpaper variants of the sheet's shadow
+   (`:root[data-bg-reading="on"] .reader-root[data-book-dark="true"] .page-sheet`, 0,5,0), which sit
+   later in this file; with no wallpaper they win anyway. */
+/* Reduced: the paper at 40% of whatever strength it has now (so a translucent sheet over a wallpaper
+   stays proportionally lighter), and no edge shadow — the page, not the sheet, carries the edge. */
+:root .reader-root .reader-desk.pdf-view[data-pdf-surround="reduced"] .page-sheet {
+  background: color-mix(in srgb, var(--reader-page, var(--paper-bg)) calc(var(--bg-page-opacity, 100%) * 0.4), transparent);
+  box-shadow: none;
+}
+/* None: no sheet at all — the page sits directly on the reading background. The grain goes too: it is
+   the sheet's texture, and without the sheet it would be a film over the page and the desk. */
+:root .reader-root .reader-desk.pdf-view[data-pdf-surround="none"] .page-sheet { background: transparent; box-shadow: none; }
+:root .reader-root .reader-desk.pdf-view[data-pdf-surround="none"] .page-grain { display: none; }
+/* THE FRAME AROUND THE PAGE (`data-pdf-frame`: set once the reader has moved the size slider under
+   "Around the page"; absent, the sheet paints its whole column exactly as before).
+   The same paper, painted as a band that follows the page: `--pdf-band-w` is the page's on-screen width
+   plus the chosen frame on each side (never wider than the reading area), and `--pdf-band-x` its centre
+   within the sheet. The Reader measures both from the renderer's report and the page-host's box, and
+   re-measures on scroll, page turn, zoom and resize (Reader.tsx, `layoutPdfBand`).
+   PAINT ONLY: the sheet keeps its box and the page-host keeps its place; the band is a pseudo-element
+   behind them (`isolation` keeps `z-index: -1` inside the sheet), and `overflow: visible` lets a wide
+   frame reach past the sheet into the rest of the reading area. The grain goes with the column it
+   textured. The paper colour, translucency and edge shadows repeat the sheet's own rules, variant for
+   variant, so a frame looks like the column it replaces. */
+:root .reader-root .reader-desk.pdf-view[data-pdf-frame] .page-sheet { background: transparent; box-shadow: none; overflow: visible; isolation: isolate; }
+:root .reader-root .reader-desk.pdf-view[data-pdf-frame] .page-grain { display: none; }
+.reader-desk.pdf-view[data-pdf-frame] .page-sheet::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--pdf-band-x, 50%);
+  width: var(--pdf-band-w, 100%);
+  transform: translateX(-50%);
+  z-index: -1;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--reader-page, var(--paper-bg)) var(--bg-page-opacity, 100%), transparent);
+  box-shadow: 0 0 30px rgba(60, 40, 16, 0.1), -1px 0 0 rgba(43, 37, 33, 0.05), 1px 0 0 rgba(43, 37, 33, 0.05);
+}
+.reader-root[data-book-dark="true"] .reader-desk.pdf-view[data-pdf-frame] .page-sheet::before {
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
+}
+:root[data-bg-reading="on"] .reader-desk.pdf-view[data-pdf-frame] .page-sheet::before {
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.44), 0 2px 10px rgba(0, 0, 0, 0.26);
+}
+:root[data-bg-reading="on"] .reader-root[data-book-dark="true"] .reader-desk.pdf-view[data-pdf-frame] .page-sheet::before {
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.34),
+    inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
+}
+/* Reduced: the same 40% paper the column had, and no edge shadow. Last, and `:root:root` so it also
+   outranks the wallpaper + dark-book shadow above (0,8,1) — MEASURED: without it that shadow survived. */
+:root:root .reader-root .reader-desk.pdf-view[data-pdf-surround="reduced"][data-pdf-frame] .page-sheet::before {
+  background: color-mix(in srgb, var(--reader-page, var(--paper-bg)) calc(var(--bg-page-opacity, 100%) * 0.4), transparent);
+  box-shadow: none;
+}
+/* A reader who asked the OS for solid surfaces gets the solid paper, as the column does. */
+@media (prefers-reduced-transparency: reduce), (forced-colors: active), (prefers-contrast: more) {
+  .reader-desk.pdf-view[data-pdf-frame]:not([data-pdf-surround="reduced"]) .page-sheet::before { background: var(--reader-page, var(--paper-bg)); }
+}
 /* RAWY-294: the surround is NOT tinted. A PDF theme is a property of the PAGE; the reading surface
    stays whatever the app theme says, so switching PDF themes never restyles the reader around it. */
 /* Light themes: the tint does the work, the filter only trims glare. */
@@ -804,31 +959,49 @@ html, body, #root {
 /* High contrast: no tint, hard grey-scale punch for faint scans. */
 .reader-desk.pdf-theme-ink   { --pdf-tint: transparent; --pdf-filter: grayscale(1) contrast(1.75) brightness(0.94); }
 
-/* The PDF panel's zoom row and appearance chips. */
-.pdf-zoom-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.pdf-zoom-btn {
-  inline-size: 40px; block-size: 34px; border-radius: 9px; font-size: 18px; line-height: 1;
-  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer;
+/* THE PDF PANEL'S ZOOM CONTROLS — built on `.rs-seg`, the reading settings' own segmented control.
+   WHY THE OLD ONES LOOKED LIKE PLAIN TEXT: they were styled with `--surface-2`, `--surface-3`, `--line`
+   and `--ink`, and not one of those four tokens is defined anywhere in Sard — so every zoom button
+   rendered with no border, no background and an inherited colour. MEASURED in the running app, and
+   visible in the reader's own screenshot as a row of loose words. `.rs-seg` carries real tokens and
+   the design system's selected, hover and focus states, so these now match every other choice in the
+   reading settings. The fit pair takes the free width; the stepper sits beside it at its own size,
+   and wraps under it only if a narrow panel cannot hold both. */
+.pdf-zoom { display: flex; gap: var(--sp-4); align-items: stretch; flex-wrap: wrap; }
+.pdf-zoom-fits { flex: 1 1 11rem; }
+.pdf-zoom-step { flex: 0 0 auto; align-items: center; }
+.pdf-zoom-step .rs-seg-item { flex: 0 0 auto; inline-size: var(--ctl-lg); padding: 0; color: var(--text); }
+.pdf-zoom-step .rs-seg-item:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.pdf-zoom-step .rs-seg-item:active { background: color-mix(in srgb, var(--text) 14%, transparent); }
+/* The readout between the two steps: the scale actually on screen. Tabular figures so the control
+   does not change width as the number does. */
+.pdf-zoom-pct {
+  min-inline-size: 3.6rem; text-align: center; font: 600 0.75rem var(--ui-font);
+  font-variant-numeric: tabular-nums; color: var(--text); padding-inline: 2px;
 }
-.pdf-zoom-btn:hover { background: var(--surface-3); }
-.pdf-zoom-fit {
-  block-size: 34px; padding-inline: 12px; border-radius: 9px; font-size: 13px;
-  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer;
+/* The "view only" limitation, closing the panel instead of opening it: a footnote, not a callout. */
+.sp-pdf-foot {
+  margin: 0; padding-block-start: 14px; border-block-start: 1px solid var(--chrome-border);
+  font: 400 var(--fs-small)/1.6 var(--ui-font); color: var(--muted);
 }
-.pdf-zoom-fit:hover { background: var(--surface-3); }
-.pdf-zoom-fit.on { background: var(--accent); color: var(--accent-ink, #fff); border-color: transparent; }
 /* RAWY-292 · THEME PREVIEWS AS MINIATURE PAGES.
    The previous swatch was a flat near-white rectangle, so eight filters designed to tint PAPER read as
    eight identical white boxes. A filter is only visible on the ink-and-paper it transforms, so each
    preview is now a small page — paper, a heading bar, text lines — inside a frame carrying that
    theme's desk colour. Two columns keep the previews large enough to tell apart in a 384px drawer. */
 .pdf-theme-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+/* The card's own ground and edge come from tokens Sard DEFINES. They were `--line`, `--surface-2` and
+   `--surface-3`, which exist nowhere — so a card had no edge and no ground, and a preview whose frame
+   colour matched the panel (Normal, on a dark UI) simply vanished: MEASURED in the reader's screenshots,
+   the first card read as a page floating in empty space. The same wash `.rs-seg` uses, one step up. */
 .pdf-theme-card {
   display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 8px;
-  border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); cursor: pointer;
-  transition: border-color .12s ease, box-shadow .12s ease;
+  border-radius: 12px; border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--text) 5%, transparent); cursor: pointer;
+  transition: border-color .12s ease, box-shadow .12s ease, background .12s ease;
 }
-.pdf-theme-card:hover { background: var(--surface-3); }
+.pdf-theme-card:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.pdf-theme-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pdf-theme-card.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
 /* The frame is the reading surround; the page inside it takes the theme's filter — exactly the
    arrangement used for real reading (`.reader-desk` colour behind, filter on `.page-host`). */
@@ -844,7 +1017,7 @@ html, body, #root {
 .ptp-head { block-size: 5px; border-radius: 1px; background: #24201b; }
 .ptp-line { block-size: 3px; border-radius: 1px; background: #3f3a33; }
 .ptp-line.short { inline-size: 62%; }
-.pdf-chip-name { font-size: 11.5px; color: var(--ink); text-align: center; line-height: 1.2; }
+.pdf-chip-name { font-size: 11.5px; color: var(--text); text-align: center; line-height: 1.2; }
 .pdf-chip-normal { --ptp-filter: none; --ptp-tint: transparent; --ptp-desk: #0e0e0e; }
 .pdf-chip-sepia  { --ptp-filter: contrast(0.96) brightness(1.04); --ptp-tint: #d9b982; --ptp-desk: #e4d3b0; }
 .pdf-chip-warm   { --ptp-filter: contrast(0.97) brightness(1.05); --ptp-tint: #e6cda3; --ptp-desk: #edddc0; }
@@ -980,6 +1153,9 @@ html, body, #root {
 .rs-sec-hint { font: 400 0.6875rem/1.45 var(--ui-font); color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg)); margin: 2px 0 2px; }
 .rs-value { font: 500 0.75rem var(--ui-font); color: var(--accent); }
 .rs-na { font: 500 0.6875rem var(--ui-font); color: var(--muted); font-style: italic; }
+/* The Paper section names whose paper it edits. `margin-inline-end: auto` keeps it beside the heading
+   and leaves the Day/Night switch at the far end, in both directions. */
+.rs-sec-owner { margin-inline-end: auto; }
 /* RAWY-216: the scope suffix appended to a section title ("— this book" / "— all books"). It sits
    INSIDE an uppercase, letter-spaced title, so it opts back out of both — the scope is a quiet
    qualifier, not part of the heading's shout. */
@@ -1187,6 +1363,31 @@ html, body, #root {
   font: 500 0.875rem var(--ui); color: var(--muted);
 }
 .rs-sel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A هيئة AT ROW SIZE — the same answer the PDF appearance cards give, at a twelfth of the area: a
+   page on its desk with two strokes of its ink and its accent down the edge. Every colour is inline,
+   from that هيئة's own reading palette, so this stylesheet describes the SHAPE and never the look.
+
+   `align-self: center` rather than changing the row's `baseline`: the two font pickers share this
+   control and have no chip, and their text should go on aligning exactly as it does now.
+
+   Logical insets throughout, so the accent sits on the leading edge in both directions. */
+.rs-app-chip {
+  flex: none; align-self: center; position: relative; display: block;
+  inline-size: 26px; block-size: 18px;
+  border-radius: 3px; border: 1px solid; overflow: hidden;
+}
+.rs-app-page {
+  position: absolute; inset-block: 3px; inset-inline-start: 6px; inset-inline-end: 3px;
+  border-radius: 1.5px; padding: 0 2px;
+  display: flex; flex-direction: column; justify-content: center; gap: 2.5px;
+}
+/* The ink, at the weight text has when you are too far away to read it. */
+.rs-app-line { display: block; block-size: 1px; border-radius: 0.5px; opacity: 0.5; }
+.rs-app-line.short { inline-size: 62%; }
+.rs-app-accent { position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 2.5px; }
+/* On the chosen row the chip reads as chosen too, not just the name beside it. */
+.rs-sel-opt.is-on .rs-app-chip { box-shadow: 0 0 0 1px var(--accent); }
 /* THE MARKER, KEPT AND QUIETENED. Smaller, muted, and pushed to the far end so the column of names
    stays a column of names — it is a qualifier, not part of what the face is called. */
 .rs-sel-note {
@@ -1277,7 +1478,7 @@ html, body, #root {
   transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
     top 0.22s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.22s cubic-bezier(0.22, 1, 0.36, 1), visibility 0s 0.22s;
 }
-:root[data-dark="true"] .reader-panel { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45); }
+.reader-root[data-book-dark="true"] .reader-panel { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45); }
 /* RAWY-117 (fixes ISSUE C): the panel docks BETWEEN the bars (top 70 / bottom 56) only while they're
    shown. Contents is the one panel that can be open with the chrome hidden (it's excluded from the
    pin — RAWY-73), so when the bars hide it must FILL the space they vacate instead of holding gaps for
@@ -1339,6 +1540,10 @@ html, body, #root {
    transparent value here hides the bar without reaching into the shadow DOM, and reverts the instant
    `.scrolled-away` (or the gate class) drops. */
 .reader-root.immersive.scrolled-away.im-hide-scrollbar { scrollbar-color: transparent transparent; }
+/* …and the PDF Scroll renderer, whose scroller sets its own bar colour and so does not inherit the rule
+   above. It reads this custom property instead (custom properties cross the shadow boundary too), so
+   immersive hides a PDF's scrollbar exactly when it hides an EPUB's. */
+.reader-root.immersive.scrolled-away.im-hide-scrollbar { --sard-pdf-scrollbar: transparent transparent; }
 /* FIXED physical sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): chapters
    is PINNED to the physical LEFT, annotations to the physical RIGHT, and they DO NOT move when
    the UI language flips. Physical `left`/`right` (not logical) ignore the panel's `dir` attr, so
@@ -1738,7 +1943,7 @@ html, body, #root {
   backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   box-shadow: 0 16px 42px rgba(40, 28, 14, 0.24); font-family: var(--ui-font);
 }
-:root[data-dark="true"] .tts-pill { box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5); }
+.reader-root[data-book-dark="true"] .tts-pill { box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5); }
 
 .tts-pill-transport { display: flex; align-items: center; justify-content: space-between; }
 /* PART D: the ⏮/⏭ transport is a MEDIA control (it represents TIME, not reading direction), so it is NOT
@@ -2027,6 +2232,16 @@ html, body, #root {
   --nc-shadow: rgba(0, 0, 0, 0.5);
   --nc-shadow-soft: rgba(0, 0, 0, 0.32);
 }
+/* ...and the same values under the READER's own polarity, so a book whose هيئة is
+   dark keeps them inside a light application. The root block above is untouched. */
+.reader-root[data-book-dark="true"] {
+  --nc-cap: var(--accent);
+  --nc-cap-hover: color-mix(in srgb, var(--accent) 90%, #fff);
+  --nc-cap-press: color-mix(in srgb, var(--accent) 86%, #000);
+  --nc-cap-ink: var(--paper-bg);
+  --nc-shadow: rgba(0, 0, 0, 0.5);
+  --nc-shadow-soft: rgba(0, 0, 0, 0.32);
+}
 
 /* ================================================================================================
    THE CHAPTER-END COMPONENT IS THE PLATE.
@@ -2055,7 +2270,7 @@ html, body, #root {
   box-shadow: inset 0 0 0 1px var(--nc-edge), 0 2px 6px var(--nc-shadow);
 }
 /* the base pill's dark-theme shadow is (0,3,0) and would otherwise win — restate it at equal weight */
-:root[data-dark="true"] .tts-pill.chapter-end {
+.reader-root[data-book-dark="true"] .tts-pill.chapter-end {
   box-shadow: inset 0 0 0 1px var(--nc-edge), 0 2px 6px var(--nc-shadow);
 }
 /* the inner panel dissolves: no padding, no space-between gap, no separation of any kind */
@@ -2131,7 +2346,7 @@ html, body, #root {
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   box-shadow: 0 16px 40px rgba(40, 28, 14, 0.24); font-family: var(--ui-font); overflow: hidden;
 }
-:root[data-dark="true"] .tts-menu { box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); }
+.reader-root[data-book-dark="true"] .tts-menu { box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); }
 .tts-menu-head { padding: 12px 14px 6px; font: 700 0.75rem var(--ui-font); letter-spacing: 0.02em; color: var(--muted); }
 .tts-menu-scroll { overflow-y: auto; padding: 0 8px 10px; }
 .tts-menu-empty { padding: 18px; text-align: center; color: var(--muted); font: 400 0.8125rem var(--ui-font); }
@@ -2205,7 +2420,7 @@ html, body, #root {
   border: 1px solid var(--chrome-border); border-radius: 14px;
   box-shadow: 0 24px 60px rgba(20, 14, 6, 0.26);
 }
-:root[data-dark="true"] .vm-card { box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55); }
+.reader-root[data-book-dark="true"] .vm-card { box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55); }
 
 .vm-mark {
   width: 56px; height: 56px; margin-bottom: 20px; flex: 0 0 auto;
@@ -2278,7 +2493,7 @@ html, body, #root {
   backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
   box-shadow: 0 8px 22px rgba(40, 28, 14, 0.22);
 }
-:root[data-dark="true"] .tts-mini--kashida { box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45); }
+.reader-root[data-book-dark="true"] .tts-mini--kashida { box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45); }
 
 /* WHERE it sits (panel-clear result) */
 .tts-mini--kashida.side-right { right: 34px; left: auto; }
@@ -2348,7 +2563,7 @@ html, body, #root {
   backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
   animation: tts-resume-in 0.24s ease;
 }
-:root[data-dark="true"] .tts-resume { box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5); }
+.reader-root[data-book-dark="true"] .tts-resume { box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5); }
 .tts-resume[dir="rtl"] { padding: 8px 14px 8px 8px; }
 .tts-resume-ico { flex: none; width: 18px; height: 18px; color: var(--accent); }
 .tts-resume-msg { font: 500 0.8rem/1.3 var(--ui-font); color: var(--text); white-space: nowrap; }
@@ -2422,17 +2637,37 @@ html, body, #root {
    pill. It sits OUTSIDE .rp-scroll, so it needs no sticky layer and no opaque ground of its own, and
    the 1400 rows below can never slide under it. Its margins hold it to the rows' own edge (the
    scroller's 10px + the row's 11px), so nothing is a hair out of line with the list it heads. */
-.rp-furthest {
-  display: flex; align-items: center; gap: var(--sp-4);
+/* The ROW owns the placement, because the control is now two actions side by side: the way back, and
+   Reset. The margins that used to live on the button live here unchanged, so a row with no Reset sits
+   exactly where the single button always did. */
+.rp-furthest-row {
+  display: flex; align-items: stretch; gap: var(--sp-2);
   /* A gap above so it is the panel's first ACTION rather than the last line of its header, and a
      larger one below so the contents list plainly starts after it. Rendered, with none of this, it
      read as a banner welded to the header. */
-  width: calc(100% - 20px); margin: 4px 10px 9px; padding: 7px 11px;
+  width: calc(100% - 20px); margin: 4px 10px 9px;
+}
+.rp-furthest {
+  display: flex; align-items: center; gap: var(--sp-4);
+  flex: 1 1 auto; min-width: 0; padding: 7px 11px;
   border: 0; cursor: pointer; border-radius: var(--r-sm); text-align: start;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--text);
 }
 .rp-furthest:hover { background: color-mix(in srgb, var(--accent) 17%, transparent); }
+/* Sibling, not a rival: the SAME accent wash and radius as the way back, so the two read as one
+   control with two ends, and the quieter label keeps the destination the thing the eye lands on. */
+.rp-furthest-reset {
+  flex: 0 0 auto; padding: 7px 11px;
+  border: 0; cursor: pointer; border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: color-mix(in srgb, var(--text) 74%, transparent);
+  font: 600 var(--fs-tiny) var(--ui-font);
+}
+.rp-furthest-reset:hover {
+  background: color-mix(in srgb, var(--accent) 17%, transparent);
+  color: var(--text);
+}
 .rp-furthest-arrow { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--accent); }
 .rp-furthest-arrow svg {
   width: 15px; height: 15px; fill: none; stroke: currentColor;
@@ -2552,6 +2787,9 @@ html, body, #root {
 }
 .sp-search-clear:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* spoiler-safe toggle (app furniture — reuses .rp-switch) */
+/* The compact variant of the same switch row: one line of explanation instead of a position, so it sits
+   a little tighter. Nothing else differs — the two search switches are deliberately one shape. */
+.sp-spoiler.sp-opt { padding: 8px 12px; margin-bottom: 6px; }
 .sp-spoiler {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; width: calc(100% - 24px);
   margin: 0 12px 8px; padding: 10px 12px; border-radius: var(--r-md); cursor: pointer; text-align: start;
@@ -2640,7 +2878,7 @@ html, body, #root {
 .rp-tab.on {
   color: var(--text); background: var(--paper-bg); box-shadow: 0 1px 3px rgba(60, 40, 16, 0.14);
 }
-:root[data-dark="true"] .rp-tab.on { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+.reader-root[data-book-dark="true"] .rp-tab.on { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
 /* A NEUTRAL CARD, for the rows that are not a coloured mark.
    `.rp-item` tints itself from `--swatch` and falls back to the ACCENT when a row has none — right
    for a highlight, wrong for a reference or a rule, which arrived looking like accent-coloured
@@ -4058,15 +4296,15 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   border-radius: 15px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4); font-family: var(--ui-font);
   padding: 11px 13px 12px; display: flex; flex-direction: column; max-width: 94vw;
 }
-:root[data-dark="true"] .hl-pop { background: var(--chrome-bg); color: var(--text); }
+.reader-root[data-book-dark="true"] .hl-pop { background: var(--chrome-bg); color: var(--text); }
 .hl-pop.below { transform: translate(-50%, 0); }
 .hl-pop::after {
   content: ""; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
   border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid var(--text);
 }
-:root[data-dark="true"] .hl-pop::after { border-top-color: var(--chrome-bg); }
+.reader-root[data-book-dark="true"] .hl-pop::after { border-top-color: var(--chrome-bg); }
 .hl-pop.below::after { bottom: auto; top: -7px; border-top: none; border-bottom: 8px solid var(--text); }
-:root[data-dark="true"] .hl-pop.below::after { border-bottom-color: var(--chrome-bg); }
+.reader-root[data-book-dark="true"] .hl-pop.below::after { border-bottom-color: var(--chrome-bg); }
 /* tier 1 — palette */
 .hl-pop-colors { display: flex; align-items: center; gap: 9px; }
 .hl-pop-swatch {
@@ -4074,7 +4312,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.18);
 }
 .hl-pop-swatch:hover { transform: scale(1.08); }
-.hl-pop-vsep { width: 1px; height: 26px; background: rgba(255, 255, 255, 0.14); margin: 0 3px; flex: none; }
+/* The same correction as `.hl-pop-line`, and the same reason. It kept its slightly heavier weight
+   relative to the hairline (0.14 against 0.10 in white), because it separates the swatches from the
+   "+" across a full 26px rather than ruling off a tier. */
+.hl-pop-vsep { width: 1px; height: 26px; background: color-mix(in srgb, currentColor 20%, transparent); margin: 0 3px; flex: none; }
 .hl-pop-custom {
   position: relative; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex: none; cursor: pointer;
   border: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center;
@@ -4134,20 +4375,42 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .hl-cpick-apply:hover { filter: brightness(1.05); }
 
-/* hairline between the tiers */
-.hl-pop-line { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 11px 2px; }
+/* hairline between the tiers. RELATIVE TO THE FOREGROUND, NOT TO WHITE — see the note on the popover's
+   polarity above: `.hl-pop` is dark on a light book and light on a dark one, and a white wash is only
+   visible on the first. Measured on the light branch, `rgba(255,255,255,0.1)` came out at 1.03:1
+   against the popover — no hairline at all. `currentColor` is whichever way round the popover is, and
+   16% is the figure `.hl-cpick-rule` already uses for the same hairline forty lines below. */
+.hl-pop-line { height: 1px; background: color-mix(in srgb, currentColor 16%, transparent); margin: 11px 2px; }
 /* tier 2 — actions */
 .hl-pop-actions { display: flex; align-items: center; gap: 4px; }
+/* THE ANNOUNCEMENT HAS NO APPEARANCE. A copy confirms itself visually on the button that did it, so
+   this carries the same fact for a screen reader without taking a millimetre of any surface to do it.
+   Clipped rather than `display: none`, which would remove it from the accessibility tree and announce
+   nothing at all. */
+.sr-live {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 .hl-pop-act {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 9px;
   background: transparent; border: 0; cursor: pointer; font: 500 0.78125rem var(--ui-font); color: inherit; white-space: nowrap;
 }
 .hl-pop-act svg { flex: none; }
-.hl-pop-act:hover { background: rgba(255, 255, 255, 0.09); }
+/* Hover is FEEDBACK, so it is the one that may not quietly disappear: at `rgba(255,255,255,0.09)` on a
+   light popover it measured 1.03:1, which is no feedback at all. Same treatment, same reason. */
+.hl-pop-act:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
 .hl-pop-act.primary {
   padding: 8px 13px; font-weight: 600;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: color-mix(in srgb, var(--accent) 60%, #fff);
+  /* THE ONLY ACTION THAT DOES NOT INHERIT ITS COLOUR, and that is what made it the faint one. Its five
+     neighbours take `color: inherit` and so are always the right way round; this one lightened the
+     accent 40% TOWARDS WHITE, which reads on a dark popover and washes out on a light one — measured
+     1.15:1 to 1.53:1 there against 9.33:1 for every other action beside it. Mixing towards
+     `currentColor` instead keeps the same 60% of the هيئة's accent and lets the remaining 40% follow
+     the surface, so the accent the reader supplied is used as given and only Sard's own compositing
+     of it changes. (`currentColor` in the `color` property means the INHERITED colour, per CSS Color
+     4 — here, the popover's own foreground.) */
+  color: color-mix(in srgb, var(--accent) 60%, currentColor);
 }
 .hl-pop-act.primary:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 
@@ -5814,7 +6077,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   box-shadow: 0 20px 52px rgba(20, 14, 6, 0.3); overflow: hidden;
   --rc-surface: color-mix(in srgb, var(--chrome-bg) 90%, white 10%);
 }
-:root[data-dark="true"] .pc-basket-tray { box-shadow: 0 20px 52px rgba(0, 0, 0, 0.52); }
+.reader-root[data-book-dark="true"] .pc-basket-tray { box-shadow: 0 20px 52px rgba(0, 0, 0, 0.52); }
 
 .pbt-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
@@ -5974,17 +6237,32 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* Saved photo-card viewer — LIGHTBOX (RAWY-53): the card large & centered as the hero on a
    dark radial backdrop, a quiet caption, one floating action pill, a circular close. Mirrors
    in RTL; the backdrop follows the Library theme (warm on light, near-black on dark). */
+/* THE LIBRARY STAYS BEHIND IT, OUT OF FOCUS — it is not replaced by a panel.
+   This was a radial gradient painted corner to corner, which made the viewer a large dark surface
+   of its own: the card stopped being a thing lifted out of the shelf and became a slide on a black
+   screen. A veil thin enough to read through, over a blur, keeps the shelf where it was and says
+   only that it is not the thing being looked at. `backdrop-filter` blurs what is BEHIND this box,
+   so the card, the caption and the pill — its children — stay perfectly sharp. */
 .pg-lightbox {
   position: fixed; inset: 0; z-index: 45; display: flex; align-items: center; justify-content: center; padding: 40px;
-  background: radial-gradient(120% 100% at 50% 30%, #4A3A26 0%, #2C2013 80%);
+  background: rgba(38, 30, 22, 0.42);
+  backdrop-filter: blur(20px);
 }
-.pg-lightbox.dark { background: radial-gradient(120% 100% at 50% 30%, #14141F 0%, #06060A 82%); }
+.pg-lightbox.dark { background: rgba(8, 8, 13, 0.5); }
 .pg-lb-close {
-  position: absolute; top: 18px; inset-inline-end: 20px; z-index: 2; width: 34px; height: 34px; border: none;
+  position: absolute; top: 18px; inset-inline-end: 20px;
+  z-index: 2; width: 34px; height: 34px; border: none;
   border-radius: 50%; background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(4px); color: #F3ECDB;
   font: 300 1.125rem var(--ui-font); cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
 .pg-lb-close:hover { background: rgba(255, 255, 255, 0.2); }
+/* CLEAR OF THE FRAME. The viewer covers the whole window, Sard's own title bar included, so a close
+   18px from the top of the WINDOW sits beside the caption buttons and reads as part of the frame
+   rather than as part of this overlay. It is pushed down by the bar's own height — the same token
+   the Library pads itself by — and, like every other consumer of that token, ONLY while the frame
+   is actually on screen. A window wearing the platform's frame has nothing inside the webview to
+   clear, and reserving the height there would move the control for no reason. */
+:root[data-chrome="sard"] .pg-lb-close { top: calc(var(--sard-titlebar) + 18px); }
 .pg-lb-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; max-width: 100%; }
 .pg-lb-card { display: flex; }
 .pg-lb-card img {
@@ -6043,7 +6321,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   display: flex; align-items: center; justify-content: center; padding: 20px;
   background: rgba(20, 14, 6, 0.42); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
 }
-:root[data-dark="true"] .nec-scrim { background: rgba(0, 0, 0, 0.55); }
+.reader-root[data-book-dark="true"] .nec-scrim { background: rgba(0, 0, 0, 0.55); }
 /* the design's sheet: 704×480, 1fr + a 254px rail, 16px radius */
 .nec {
   width: min(50rem, 100%); height: min(34rem, 100%);
@@ -6054,7 +6332,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   overflow: hidden; font-family: var(--ui-font);
   animation: nec-in 0.18s cubic-bezier(0.32, 0.72, 0, 1) both;
 }
-:root[data-dark="true"] .nec { box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5); }
+.reader-root[data-book-dark="true"] .nec { box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5); }
 @keyframes nec-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .nec { animation: none; } }
 /* the design's own breakpoint: the rail drops under the paper */
@@ -6129,13 +6407,52 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .nec-meta-k { font: 400 0.6875rem/1.3 var(--ui-font); color: color-mix(in srgb, var(--muted) 76%, transparent); }
 .nec-meta-v { font: 500 0.75rem/1.35 var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* actions — save · cancel · delete, on one row */
-.nec-actions { display: flex; align-items: center; gap: 6px; padding-top: 9px; border-top: 1px solid var(--chrome-border); }
-.nec-save { flex: 1; height: 2.35rem; border: 0; border-radius: 9px; background: var(--accent); color: var(--paper-bg); font: 600 0.875rem/1 var(--ui-font); cursor: pointer; }
-.nec-cancel { flex: none; height: 2.35rem; padding: 0 0.8rem; border: 1px solid var(--chrome-border); border-radius: 9px; background: transparent; color: var(--muted); font: 500 0.8125rem/1 var(--ui-font); cursor: pointer; }
-.nec-del { flex: none; width: 2.35rem; height: 2.35rem; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #B23A3A; font: 500 13px/1 var(--ui-font); padding: 0; cursor: pointer; }
-:root[data-dark="true"] .nec-del { color: #E08585; }
+/* IT MUST FIT THE RAIL, WHATEVER THE RAIL IS. `.nec-rail` is `overflow-y: auto`, and a box with one
+   axis scrollable computes the OTHER to `auto` too — so a row wider than the rail does not simply
+   spill, it grows a horizontal scrollbar and pushes Save out of reach. Three siblings that could not
+   shrink did exactly that. Now: the two safe answers are one group, the row may wrap that group to a
+   second line when the rail is genuinely too narrow for both, and every button may give up padding
+   before anything is clipped. `min-width: 0` on the row is what lets any of that happen inside a
+   flex parent. */
+.nec-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  min-width: 0; padding-top: 9px; border-top: 1px solid var(--chrome-border);
+}
+/* Cancel and Save travel together and sit at the end; the auto margin is what holds them apart from
+   the destructive one without needing a spacer element. */
+.nec-actions-end { display: flex; align-items: center; gap: 6px; min-width: 0; margin-inline-start: auto; }
+/* The question, when one is being asked. It gives up its own width first — the two answers beside it
+   must never be the thing that shrinks. */
+.nec-del-ask { flex: 1 1 8rem; min-width: 0; font: 500 0.8125rem/1.3 var(--ui-font); color: var(--text); }
+.nec-save { flex: 0 1 auto; min-width: 0; height: 2.35rem; padding: 0 1.1rem; border: 0; border-radius: 9px; background: var(--accent); color: var(--paper-bg); font: 600 0.875rem/1 var(--ui-font); white-space: nowrap; cursor: pointer; }
+.nec-cancel { flex: 0 1 auto; min-width: 0; white-space: nowrap; height: 2.35rem; padding: 0 0.8rem; border: 1px solid var(--chrome-border); border-radius: 9px; background: transparent; color: var(--muted); font: 500 0.8125rem/1 var(--ui-font); cursor: pointer; }
+/* DELETE IS A BUTTON THAT SAYS SO. It was a bare glyph in a 2.35rem square with no label and no
+   edge — the one destructive control in the editor, drawn smaller and quieter than everything
+   around it. It keeps the row's height so the three read as one row, gains the icon and the word,
+   and is pushed to the start by the auto margin below so it is not among the two safe answers.
+   The tint stays quiet: this must be findable and unmistakable, not loud. */
+.nec-del {
+  flex: none; display: inline-flex; align-items: center; gap: 7px;
+  height: 2.35rem; padding: 0 0.85rem; border-radius: 9px;
+  border: 1px solid color-mix(in srgb, #B23A3A 30%, transparent);
+  background: color-mix(in srgb, #B23A3A 8%, transparent);
+  color: #B23A3A; font: 600 0.8125rem/1 var(--ui-font); cursor: pointer;
+  flex: 0 1 auto; min-width: 0; white-space: nowrap;
+}
+/* The confirming press: the same button, now filled, so the second press is visibly the committing one. */
+.nec-del.confirm { background: #B23A3A; border-color: #B23A3A; color: var(--paper-bg); }
+.reader-root[data-book-dark="true"] .nec-del.confirm { background: #E08585; border-color: #E08585; color: #1A1613; }
+.nec-del.confirm:hover { background: #9C3131; border-color: #9C3131; }
+.reader-root[data-book-dark="true"] .nec-del.confirm:hover { background: #D07272; border-color: #D07272; }
+.reader-root[data-book-dark="true"] .nec-del {
+  color: #E08585;
+  border-color: color-mix(in srgb, #E08585 30%, transparent);
+  background: color-mix(in srgb, #E08585 12%, transparent);
+}
+.nec-del svg { flex: none; }
 .nec-cancel:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
-.nec-del:hover { border-color: #B23A3A; }
+.nec-del:hover { background: color-mix(in srgb, #B23A3A 16%, transparent); border-color: color-mix(in srgb, #B23A3A 55%, transparent); }
+.reader-root[data-book-dark="true"] .nec-del:hover { background: color-mix(in srgb, #E08585 20%, transparent); border-color: color-mix(in srgb, #E08585 55%, transparent); }
 .nec-save:focus-visible, .nec-cancel:focus-visible, .nec-del:focus-visible, .nec-x:focus-visible, .nec-quote-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* RAWY-259 (owner review): the TAG PICKER inside the Notes editor.
    TWO problems, one cause. `.tag-chip` was written for a surface where `--paper-bg` READS AS INK — its
@@ -6200,7 +6517,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   display: flex; align-items: center; justify-content: center; padding: 20px;
   background: rgba(40, 28, 14, 0.26);
 }
-:root[data-dark="true"] .ref-scrim { background: rgba(0, 0, 0, 0.5); }
+.reader-root[data-book-dark="true"] .ref-scrim { background: rgba(0, 0, 0, 0.5); }
 .ref-dialog {
   width: min(24rem, 100%);
   background: var(--chrome-bg); color: var(--text);
@@ -6209,7 +6526,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   padding: 1.5rem 1.6rem 1.4rem; font-family: var(--ui-font);
   animation: ref-in 0.18s cubic-bezier(0.32, 0.72, 0, 1) both;
 }
-:root[data-dark="true"] .ref-dialog { box-shadow: 0 26px 60px rgba(0, 0, 0, 0.55); }
+.reader-root[data-book-dark="true"] .ref-dialog { box-shadow: 0 26px 60px rgba(0, 0, 0, 0.55); }
 @keyframes ref-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .ref-dialog { animation: none; } }
 /* the design's uppercase terracotta eyebrow */
@@ -6238,7 +6555,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   padding: 0.55rem 0.95rem; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
   font: 500 0.85rem var(--ui-font); color: #A2503C;
 }
-:root[data-dark="true"] .ref-del { color: #E08585; }
+.reader-root[data-book-dark="true"] .ref-del { color: #E08585; }
 .ref-del:hover { background: color-mix(in srgb, #A2503C 12%, transparent); }
 .ref-cancel {
   padding: 0.55rem 1.05rem; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
@@ -6351,7 +6668,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   background: rgba(20, 15, 8, 0.42);
   animation: note-scrim-in 0.18s ease both;
 }
-:root[data-dark="true"] .note-scrim { background: rgba(0, 0, 0, 0.55); }
+.reader-root[data-book-dark="true"] .note-scrim { background: rgba(0, 0, 0, 0.55); }
 @keyframes note-scrim-in { from { opacity: 0; } to { opacity: 1; } }
 
 .note-sheet {
@@ -6368,7 +6685,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   animation: note-rise 0.22s cubic-bezier(0.32, 0.72, 0, 1) both;
   outline: none;
 }
-:root[data-dark="true"] .note-sheet {
+.reader-root[data-book-dark="true"] .note-sheet {
   /* The hairline carries more of the load on a dark theme than the shadow does: a near-black paper on
      a desk dimmed to near-black has no edge left for a shadow to describe. It is still only a hairline. */
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.09);
@@ -6512,7 +6829,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 /* placed BELOW the word when there is no room above, so it never covers the line just tapped */
 .ref-popup.below { transform: translate(-50%, 0); }
-:root[data-dark="true"] .ref-popup { box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45); }
+.reader-root[data-book-dark="true"] .ref-popup { box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45); }
 .ref-popup-head { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.5rem; }
 .ref-popup-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 .ref-popup-label {
@@ -6850,18 +7167,28 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    The scrim step is a composited opacity change; the blur step is deliberately SMALL (+4px) because
    animating a large blur radius over a full-window layer is the expensive kind of filter animation.
 
-   RAWY-278 — the blur step is now OPTIONAL, and the fallback is what preserves today.
-   `--bg-rd-immstep` is emitted by `applyBackgrounds` ONLY when the reader turns the preference off,
-   in which case it is `0px`. When the preference is on — the default, and every profile that predates
-   it — the property is absent and this `var()` resolves to its own `4px` fallback, so the enabled
-   state is byte-identical to what shipped rather than a value re-derived in JS.
-   At `0px` the receded filter computes to the SAME value as the un-receded state, so Chromium starts
-   no transition and re-rasterises nothing. The scrim step below is deliberately NOT gated: only the
-   blur is optional, and the environment still recedes. */
+   WHETHER IT RECEDES AT ALL IS `.im-dim`, AND THAT IS THE ONLY GATE.
+   `.im-dim` is rendered by the Reader from `useTheme.immersiveDim` — the Background Dimming
+   preference — exactly as `.immersive` is rendered from `useTheme.immersive`. So the recede needs
+   three things that are all reading state and none of them a look: immersive on, deliberately
+   scrolled away, dimming wanted. Immersive with the dimming off is a real, reachable combination:
+   the chrome goes quiet and the picture stays exactly as it was set.
+
+   A SELECTOR GATE, NOT ZEROED PROPERTIES. The previous design emitted `--bg-rd-immstep: 0px` and
+   `--bg-rd-immscrim: 0%` from `applyBackgrounds` whenever the active هيئة said so, which is how a
+   look came to own a reading behaviour (removed in the commit before this one). Not matching the
+   rule is strictly better than matching it with neutral values: no property is written, no stale
+   pair can outlive the هيئة that wrote it, and `4px` / `14%` stay in the stylesheet as the var
+   fallbacks — the shipped amounts, unchanged by this task.
+
+   The TRANSITION below is deliberately left on `.immersive` alone. It describes how the filter
+   moves if it moves at all; keeping it unconditional means turning the preference off while already
+   scrolled away eases back to the resting blur instead of snapping, and when there is nothing to
+   animate an unmatched filter change costs nothing. */
 :root[data-bg-reading="on"] .reader-root.immersive .reader-desk::before {
   transition: filter 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away .reader-desk::before {
+:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away.im-dim .reader-desk::before {
   filter: blur(calc(var(--bg-rd-blur, 0px) + var(--bg-rd-immstep, 4px)));
 }
 /* RAWY-278 (fix) — PREVIEW, so the boost can actually be SEEN while it is being set.
@@ -6888,16 +7215,14 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* The scrim step: ONE value change, on the registered property, so it interpolates. Additive
    so the measured floor is only ever moved UP — the recede can never make the desk more exposed.
 
-   RAWY-278 (bug fix) — THE STEP IS GATED BY THE SAME PREFERENCE AS THE BLUR, and this is the fix for
-   "the immersive blur toggle does nothing". The recede has TWO steps and only the blur was gated;
-   the +14% scrim kept firing. On a real wallpaper the SCRIM is the part you can see: measured live,
-   entering immersive with the boost OFF changed 91.4% of pixels (mean 3.49/255), and neutralising
-   just this step took the same transition to 412 pixels of 792,000 (mean 0.0235/255). The blur step
-   alone is mean 1.20/255 — 2.9x smaller. A contrast drop on a dark image reads as softening, which
-   is exactly why it was reported as blur.
-   `14%` stays as the var's own fallback, so the ENABLED default is byte-identical to what shipped;
-   `applyBackgrounds` emits `0%` only when the reader switches the preference off. */
-:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away .reader-desk {
+   GATED ON `.im-dim` TOO, because the scrim is the half you actually see. Measured live on a real
+   wallpaper, entering immersive changed 91.4% of pixels (mean 3.49/255) with the scrim step in play
+   and 412 pixels of 792,000 (mean 0.0235/255) without it; the blur step alone is mean 1.20/255, 2.9x
+   smaller. A preference called "dim the background" that gated only the blur would under-deliver by
+   roughly 3x and read as doing nothing — the exact complaint this control exists to answer.
+   `14%` and the `4px` above remain the stylesheet's own fallbacks: this task moved the decision,
+   not the amounts. */
+:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away.im-dim .reader-desk {
   --bg-rd-scrim: calc(var(--bg-rd-scrim-base, 100%) + var(--bg-rd-immscrim, 14%));
 }
 @media (prefers-reduced-motion: reduce) {
@@ -7338,3 +7663,152 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .pcx-insp-toggle:hover { background: var(--pc-surface); }
 .pcx-insp-toggle.on { color: var(--pc-accent); border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent); }
 .pcx-insp-toggle svg { flex: none; }
+
+/* =====================================================================================================
+   THE WINDOW'S OWN FRAME — `components/WindowChrome.tsx`.
+
+   NOT A BAR. The first version was a 32px strip of flat `--chrome-bg` with a rule under it, and it
+   read as a lid on the application: the Library's picture, scrim, grain and frost all stopped at its
+   edge, so above them sat a second, different material. What makes the sidebar belong to the room is
+   that it is the same picture seen through the sidebar's tint and frost — so the frame is now that.
+   The Library runs to the top of the window (it starts under the frame by padding, not by position),
+   and the frame is its top 32px seen through EXACTLY the sidebar's formula: the same floor-anchored
+   `--chrome-bg` travel, the same frost, so frame and sidebar are one continuous mat around the desk,
+   with no line where they meet and no line under the frame. Without a picture the formula reduces
+   to the sidebar's own flat ground, and the two are the same colour. The reader and the gates keep
+   the frame above them; there it is the chrome material the reader's own bars use, so a revealed top
+   bar and the frame read as one slab.
+
+   NOTHING ELSE IS IN IT. No mark — the sidebar's brand row sits directly under the frame and carries
+   the identity — and no rule. The three controls are marks from the icon set in the muted ink, with
+   the hover the sidebar's rows use; Close answers with the accent in its mark, not with a red plate.
+   On the right in both directions, in the desktop's order.
+
+   `--sard-titlebar` is set only while the frame is on screen (`data-chrome="sard"` on the root). */
+:root[data-chrome="sard"] { --sard-titlebar: 32px; }
+.wc {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  height: var(--sard-titlebar, 32px); box-sizing: border-box;
+  display: flex; align-items: center; justify-content: flex-end;
+  /* NO PADDING HERE. The 6px that used to hold the cluster off the window's right edge is now Close's
+     own padding, so the gap is drawn in exactly the same place while the LAST 6px of the bar belong to
+     Close instead of to the frame — see `.wc-close`. Padding on this element could only ever be a strip
+     that looks like part of the cluster and drags the window. */
+  padding: 0;
+  direction: ltr;
+  color: var(--muted);
+  /* ONE SOLID SURFACE, OUTSIDE THE TEXTURE SYSTEM ON PURPOSE. The frame took the sidebar's picture
+     formula for a while, and in the reader it painted nothing at all so the desk ran under it; with
+     a wallpaper both read as a strip of glass with the artwork moving behind it — a floating layer,
+     not a frame. So the frame is the chrome ground, opaque, with no frost and no alpha, whatever the
+     texture step and whatever surface is beneath: nothing behind the window's frame is ever visible
+     through it. `--chrome-bg` is the theme's own chrome surface, so it still follows every paper. */
+  background: var(--chrome-bg);
+  user-select: none; -webkit-user-select: none;
+}
+.wc[data-focused="false"] .wc-controls { opacity: 0.55; }
+/* ADJACENT, LIKE EVERY DESKTOP'S WINDOW CONTROLS. The three pads touch: a gap between them reads as
+   three separate icon buttons that happen to sit together, and it leaves dead strips where a press
+   lands on the frame and starts a drag instead. */
+.wc-controls { display: flex; align-items: center; gap: 0; }
+/* THE PAD IS A FULL RECTANGLE; ITS SURFACE IS THE ROUNDED THING INSIDE IT. A radius on the control
+   itself is a radius on its HIT AREA too — corners stop belonging to the button, and with the pads
+   adjacent those notches fall on the frame, so a press one pixel inside the cluster starts a drag
+   instead (MEASURED: 6 of 408 sampled points, all within a pixel of a corner). So the button keeps
+   square edges and the plate is painted by `::before`, which is drawn, never hit-tested. */
+/* THE CONTROL IS AS TALL AS THE BAR; ITS PAD IS THE 24px PLATE DRAWN INSIDE IT. The pad used to be
+   the control, 24px tall and centred in a 32px bar, which left a 4px strip above it and another
+   below — and those strips belong to `.wc`, a `deep` drag region, so a press there starts a window
+   drag instead of pressing the button and no click is ever delivered. MEASURED in the running window:
+   scanning the full height of the bar down the middle of each control, y 0–3 and y 28–31 answered
+   DRAG for all three, i.e. 8 of the bar's 32px — a quarter of the height a reader aims at. It is
+   missed only when the pointer arrives fast, which is exactly when it lands away from the centre.
+   The control is therefore the full bar height and the plate is inset to where it already was, so
+   every painted pixel is identical and the dead strips become part of the button they sit against.
+   The pad cannot reach past the bar, and its neighbours grow the same way, so nothing is taken from
+   any other control — only from the drag region directly above and below each button. */
+.wc-btn {
+  position: relative;
+  width: 34px; height: var(--sard-titlebar, 32px); padding: 0; margin: 0; border: 0; border-radius: 0;
+  display: grid; place-items: center;
+  background: transparent; color: inherit; cursor: default;
+  transition: color 0.1s ease-out;
+}
+.wc-btn::before {
+  content: ""; position: absolute; inset: calc((var(--sard-titlebar, 32px) - 24px) / 2) 0; border-radius: 5px;
+  background: transparent;
+  transition: background 0.1s ease-out;
+}
+/* THE FOUR STATES, EACH A STEP FROM THE LAST — a window control's language, in Sard's colours.
+   Rest is the muted mark on the bare frame, with no plate at all. Hover raises the control's own
+   surface and gives the mark full ink, so it is unmistakably a button. A press deepens that surface
+   and sinks the mark one pixel; it happens on the SAME FRAME as the press (no transition on the way
+   in) and settles back over the same 100 ms on release, which is what makes it feel pushed rather
+   than merely re-coloured. The glyph moves by `transform`, so nothing around it is laid out again.
+   MEASURED before this existed: hover and press were 7% and 12% of one ink, nine levels apart, with
+   no other cue — a press that could not be felt.
+   A pad is 34×24 and its surface never grows beyond it; the three pads are adjacent, so the row reads
+   as one control cluster. Keyboard activation shows the same pressed state as the pointer, and focus
+   stays its own signal: a hairline of the accent OUTSIDE the pad, distinct from both. */
+/* CLOSE REACHES THE WINDOW'S EDGE. The bar used to reserve 6px to its right, and that strip is `.wc`,
+   a `deep` drag region: a press there started a window drag instead of closing — and on a maximised
+   window that strip contains the screen's top-right corner, the easiest target on the display and where
+   a window is most often closed from. The 6px is now Close's own right padding: the control is 40px
+   wide and ends at the window's edge, while its content box is still 34px, so the glyph stays where it
+   was, and the plate below is held off the edge by the same 6px it always was. The other two controls
+   do not move: the cluster is 34+34+40 where it was 34+34+34 plus the bar's 6px padding, so its left
+   edge is unchanged. MEASURED before this: x 1378–1383 answered DRAG at every row of the bar. */
+.wc-close { width: 40px; padding-right: 6px; }
+/* The plate is inset from the control's right by that padding, so it is painted at exactly the size and
+   position it had — 34×24, ending 6px from the window's edge. */
+.wc-close::before { right: 6px; }
+.wc-btn > svg { position: relative; transition: transform 0.1s ease-out; }
+.wc-btn:hover::before { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.wc-btn:hover { color: var(--text); }
+.wc-btn:active::before { background: color-mix(in srgb, var(--text) 18%, transparent); transition: none; }
+.wc-btn:active { color: var(--text); transition: none; }
+.wc-btn:active > svg { transform: translateY(1px); transition: none; }
+/* The ring is drawn INSIDE the pad: the pads are adjacent, so a ring outside one would sit on top of
+   its neighbour. It keeps the pad's own square edges — a radius here would take the corners out of the
+   hit area again, for exactly as long as the control is focused. */
+/* The ring stays on the PLATE, not on the control's box: the control is now the full height of the
+   bar, and a ring at its edges would be a taller ring than the pad it belongs to. */
+.wc-btn:focus-visible { outline: none; }
+.wc-btn:focus-visible::before { outline: 1.5px solid var(--accent); outline-offset: -2px; }
+/* CLOSE ANSWERS IN RED, because closing is the one destructive thing on this bar and every desktop
+   says so the same way. The reds are Sard's own destructive pair (`#b24a4a` armed, `#9c3b3b` deeper),
+   the ones the archive and the profile editor already use — so this is the product's language, not a
+   borrowed system button. At REST there is no red at all: the plate exists only under the pointer,
+   or while the focused control is being activated from the keyboard. */
+.wc-close:hover::before { background: #b24a4a; }
+.wc-close:hover { color: #fff; }
+.wc-close:active::before { background: #9c3b3b; transition: none; }
+.wc-close:active { color: #fff; transition: none; }
+/* THE SURFACES BELOW THE FRAME. The Library and the Reader run under it — the frame is the top of
+   their own ground — and the gates start beneath it. */
+:root[data-chrome="sard"] .lib-root { padding-top: var(--sard-titlebar); box-sizing: border-box; }
+:root[data-chrome="sard"] .welcome,
+:root[data-chrome="sard"] .runtime-gate,
+:root[data-chrome="sard"] .pf-editor { top: var(--sard-titlebar); }
+
+/* THE READER: THE FRAME IS THE DESK. The reader's own bar is its control surface — frosted chrome
+   with a rule and a shadow, revealed on a reach for the top edge — and a second slab of chrome
+   material directly above it read as one 102px head with the controls pressed against its top.
+   Measured: the bar's buttons began 4px under the frame, identical in tone; nothing overlapped, it
+   only looked so. So in the reader the desk — its ground, its wallpaper, its scrim — runs to the top
+   of the window under the frame, and the reader's bar is the only bar. Every reading coordinate is
+   where it was: the bar, the page host, the
+   panels and the chevrons each start `--sard-titlebar` lower inside a desk that is that much taller,
+   so the text's first line, the bar's height and the auto-hide reclaim are byte-identical. */
+:root[data-chrome="sard"] .reader-root { top: 0; }
+:root[data-chrome="sard"] .reader-chrome { top: var(--sard-titlebar); }
+:root[data-chrome="sard"] .reader-panel,
+:root[data-chrome="sard"] .settings-panel { top: calc(70px + var(--sard-titlebar)); }
+:root[data-chrome="sard"] .reader-root.chrome-hidden .reader-panel { top: var(--sard-titlebar); }
+:root[data-chrome="sard"] .page-host { inset-block-start: calc(70px + var(--sard-titlebar)); }
+:root[data-chrome="sard"] .reader-root.tts-playing .page-host,
+:root[data-chrome="sard"] .reader-root.flow-scrolled .page-host,
+:root[data-chrome="sard"] .reader-desk.pdf-view .page-host,
+:root[data-chrome="sard"] .reader-root.chrome-hidden .page-host { inset-block-start: var(--sard-titlebar); }
+:root[data-chrome="sard"] .page-chevron { top: calc(50% + var(--sard-titlebar) / 2); }
+

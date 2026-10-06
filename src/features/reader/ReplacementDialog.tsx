@@ -19,6 +19,7 @@ export function ReplacementDialog({
   phrase,
   existing,
   bookTitle,
+  notice,
   onSave,
   onDelete,
   onClose,
@@ -29,6 +30,13 @@ export function ReplacementDialog({
   existing: RepRow | null;
   /** Named in the scope line, because a rule applying to ONE book is the thing readers most misread. */
   bookTitle: string;
+  /**
+   * Something the editor has to say about THIS attempt — today, that the original was changed to
+   * words another rule already governs, so nothing was written. It takes the place of the
+   * "a rule already exists" line, in the same slot and the same voice: the reader is told why the
+   * save did not happen while the dialog is still open and their wording is still in it.
+   */
+  notice?: string | null;
   onSave: (from: string, to: string) => void;
   onDelete: () => void;
   onClose: () => void;
@@ -95,11 +103,13 @@ export function ReplacementDialog({
             alone" and "can be switched off" are the two promises the feature makes. */}
         {/* A RULE ALREADY EXISTS FOR THESE WORDS, AND THE READER IS TOLD SO — on the spot, before he
             composes a second one that the database would refuse without ever saying why. */}
-        {existing && (
-          <div className="rep-exists">
-            {t("rep.already", { from: existing.phrase, to: existing.replacement })}
-          </div>
-        )}
+        {notice
+          ? <div className="rep-exists">{notice}</div>
+          : existing && (
+            <div className="rep-exists">
+              {t("rep.already", { from: existing.phrase, to: existing.replacement })}
+            </div>
+          )}
         <div className="rep-scope">{t("rep.scopeHint", { title: bookTitle })}</div>
         <div className="ref-actions">
           {existing && (

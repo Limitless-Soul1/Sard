@@ -188,13 +188,30 @@ export function applyTexture(
   //
   // The fallback in the stylesheet is still `--bg-lib-sidebar`, so a tree with no profile applied
   // renders exactly as it always did.
-  root.style.setProperty("--ui-base", "100%");
-  root.style.setProperty("--ui-k", stepK(step).toFixed(3));
-  root.style.setProperty("--ui-floor", `${(minChromeAlpha(scrim, theme) * 100).toFixed(2)}%`);
-  root.style.setProperty("--ui-frost", `${stepBlur(step)}px`);
-  root.style.setProperty("--ui-sat", stepSat(step).toFixed(2));
-  root.style.setProperty("--ui-bright", stepBright(step).toFixed(2));
+  for (const [k, v] of Object.entries(textureVars(step, theme, scrim))) root.style.setProperty(k, v);
   root.setAttribute("data-ui-texture", step);
+}
+
+/**
+ * THE SAME SIX VALUES, as a style object rather than a write to `:root`.
+ *
+ * The Reader wears the texture of the هيئة the open book is read in, which is not always the هيئة the
+ * Library wears — and its floor is measured against ITS OWN desk scrim, which a book with its own
+ * reading picture does not share either. Both sides derive here so neither can drift.
+ */
+export function textureVars(
+  step: TextureStep,
+  theme: { chromeBg: string; text: string },
+  scrim: number = worstDeskScrim(),
+): Record<string, string> {
+  return {
+    "--ui-base": "100%",
+    "--ui-k": stepK(step).toFixed(3),
+    "--ui-floor": `${(minChromeAlpha(scrim, theme) * 100).toFixed(2)}%`,
+    "--ui-frost": `${stepBlur(step)}px`,
+    "--ui-sat": stepSat(step).toFixed(2),
+    "--ui-bright": stepBright(step).toFixed(2),
+  };
 }
 
 // ---- colour helpers, local and small -------------------------------------------------------------

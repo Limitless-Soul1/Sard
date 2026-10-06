@@ -152,6 +152,8 @@ export interface LibraryDesignProps {
     select: (b: BookRow) => CardSelect;
     /** The Library's "hide names until touched" preference, for the caption Grid draws itself. */
     hideTitles?: boolean;
+    /** True while a book is in hand: the grid then renders its whole run (see `useRowWindow`). */
+    carrying: boolean;
     /**
      * The cover size the reader has chosen, as a CSS length for Grid's `minmax()` floor.
      *
@@ -171,6 +173,17 @@ export interface LibraryDesignProps {
   onFormat: (f: string | null) => void;
   onOpenBook: (b: BookRow) => void;
   onAddBooks: () => void;
+  /**
+   * THE SHELF THE READER IS STANDING INSIDE — reported to the Library so that books added while a
+   * shelf is open are filed onto it.
+   *
+   * The scope lives here and the import lives there, which is precisely why a bulk import used to
+   * land in the library and nowhere else: the two halves never exchanged this one fact. Only a
+   * WRITABLE shelf is ever reported (`scopedHandShelf`); a rule shelf fills itself from a query and
+   * a row written to it is never read back, so naming one here would promise a filing that cannot
+   * happen. `null` means the general Library, and the Library's own behaviour is then unchanged.
+   */
+  onOpenShelf?: (shelfId: string | null) => void;
   /**
    * DELETE A BOOK FROM THE LIBRARY — through the owner's own `bookDelete` path, not a second one.
    *
@@ -864,6 +877,13 @@ export function LibraryDesign(props: LibraryDesignProps) {
     const s = shelfById.get(scope.shelfId)?.shelf;
     return s && !s.auto_rule ? s : null;
   }, [scope.shelfId, shelfById]);
+
+  // Report the open shelf whenever it changes (and on mount, so a session resumed inside a shelf
+  // files correctly without the reader touching the sidebar first).
+  const onOpenShelf = props.onOpenShelf;
+  useEffect(() => {
+    onOpenShelf?.(scopedHandShelf?.id ?? null);
+  }, [onOpenShelf, scopedHandShelf]);
 
   /**
    * A RUN, AS THE READER SEES IT — their arrangement, with what they have since read in front.
@@ -1848,6 +1868,22 @@ export function LibraryDesign(props: LibraryDesignProps) {
     [props, loadTree, scope],
   );
 
+  /**
+   * Drop a shelf at a position among its siblings, and say where it landed.
+   *
+   * The index-taking twin of `shelfOps.move`, which steps by one — both call `shelf_reorder`, so
+   * the drag in the sidebar and the «move» in the ⋯ menu write exactly the same order.
+   */
+  const placeShelf = useCallback(
+    async (id: string, at: number) => {
+      const name = shelfById.get(id)?.shelf.name ?? "";
+      if (await write(() => shelfReorder(id, at))) {
+        flash(t("lib.shelfMoved", { name, n: num(at + 1) }));
+      }
+    },
+    [shelfById, write, flash, t, num],
+  );
+
   const shelfOps = useMemo(
     () => ({
       setOrder: async (shelfId: string, order: ShelfOrder) => {
@@ -2665,6 +2701,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           onNewRuleShelf={(caseId) => write(() => shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={(id, ink) => write(() => caseSetInk(id, ink))}
           onPlaceCase={placeCase}
+          onPlaceShelf={placeShelf}
           onManageUnfiled={() => setEditorFor(UNFILED_EDITOR)}
           onManageCase={setEditorFor}
           onRenameShelf={renameShelf}
@@ -2734,6 +2771,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         onNewRuleShelf={(caseId) => write(() => shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={(id, ink) => write(() => caseSetInk(id, ink))}
           onPlaceCase={placeCase}
+          onPlaceShelf={placeShelf}
           onManageUnfiled={() => setEditorFor(UNFILED_EDITOR)}
           onManageCase={setEditorFor}
           onRenameShelf={renameShelf}
@@ -2918,6 +2956,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
               hideTitles,
               gap: gapBefore,
               gapAfter,
+              carrying: carry != null,
               order: bookOrder,
               select: (b) => ({
                 on: mode === "select",
@@ -2950,6 +2989,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           {view === "details" ? (
             <ViewDetails
               books={flatBooks}
+              scrollerRef={paneRef}
               placeOf={placeOf}
               // Details reorders under exactly the conditions everything else does, and through
               // exactly the same machinery: it emits `data-book` and the landing-place attributes,
@@ -2961,6 +3001,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
               order={bookOrder}
               actions={bookActions}
               arrangeOn={mode === "arrange"}
+              carrying={carry != null}
               sort={sort}
               onSort={setSort}
               selected={selected}
@@ -2977,6 +3018,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
             />
           ) : isGroupedView(view) ? (
             <ViewGrouped
+              scrollerRef={paneRef}
               actions={bookActions}
               onDeleteBook={(b) => setDeleting([b])}
               cases={rendered}

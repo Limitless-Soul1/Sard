@@ -17,11 +17,6 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { create } from "zustand";
 
-import { settingsGet, settingsSet } from "./ipc";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-const LAST_CHECK_KEY = "updater_last_check"; // key/value settings row (RAWY-162 pattern)
-
 /** Why a check or a download failed. The UI maps each to its own sentence. */
 export type UpdErrorKind = "offline" | "server" | "signature" | "download" | "install" | "unknown";
 
@@ -53,12 +48,13 @@ export type UpdState =
 
 interface UpdaterStore {
   state: UpdState;
-  /** True once a check has run this session — the daily auto-check is at most once per launch. */
+  /** True once the automatic check has run in THIS process. Guards the Library's remounts only —
+   *  a new launch is a new process and therefore a new check. */
   autoDone: boolean;
   /** Set while a download is in flight so the dialog can offer to abandon it. */
   cancelRequested: boolean;
 
-  /** Once per session, gated to ≤1/day. Silent unless an update is genuinely found. */
+  /** Once per launch, on every launch. Silent unless an update is genuinely found. */
   auto: () => Promise<void>;
   /** An explicit tap: always checks, always shows the outcome — including "you're up to date". */
   manual: () => Promise<void>;
@@ -96,14 +92,33 @@ export const useUpdater = create<UpdaterStore>((set, get) => ({
   cancelRequested: false,
 
   auto: async () => {
-    if (get().autoDone) return; // at most once per session (survives Library remounts)
+    // ONCE PER LAUNCH, AND EVERY LAUNCH.
+    //
+    // `autoDone` is in-memory, so it is fresh in every process. Its whole job is the Library's
+    // remounts — closing the reader rebuilds the Library, and the rosette's mount effect fires
+    // again — not the launch itself. A new process means a new check.
+    //
+    // THERE WAS A SECOND, PERSISTED GATE HERE — `updater_last_check` plus a 24-hour window — and it
+    // decided something it could not see. Two measured consequences, both covered by tests in
+    // `updaterLaunchCheck.test.ts`:
+    //
+    //   · A reader who restarted Sard within a day of the last check performed NO check at all, so a
+    //     release published in between stayed invisible until the row aged past 24h. "Checked
+    //     yesterday" is not evidence about today, and a launch is exactly when a reader is willing
+    //     to be told.
+    //   · The row was written on the ERROR path too, so a single launch with no network armed the
+    //     gate for a day — and the next launch skipped the check even once the network was back. A
+    //     check that never reached the endpoint was being recorded as a check that had.
+    //
+    // What removing it costs: one small manifest fetched from GitHub Releases per launch, off the
+    // startup path. This runs from a mount effect that does not await it, so startup is unaffected.
+    if (get().autoDone) return;
     set({ autoDone: true });
-    const last = await settingsGet(LAST_CHECK_KEY).catch(() => null);
-    if (last && Date.now() - Number(last) < DAY_MS) return; // already checked within 24h
     const next = await runCheck();
-    settingsSet(LAST_CHECK_KEY, String(Date.now())).catch(() => {});
     // Silent unless there is genuinely something to offer: an automatic check must never interrupt
-    // a reader to tell them nothing happened.
+    // a reader to tell them nothing happened. A failure is silent here BY DESIGN — an update check
+    // that could not run is not the reader's problem to solve, and must never become a startup
+    // failure. The explicit tap is where a failure is worth a sentence.
     if (next.k === "available") set({ state: next });
   },
 
@@ -117,7 +132,6 @@ export const useUpdater = create<UpdaterStore>((set, get) => ({
       runCheck(),
       new Promise((r) => setTimeout(r, 650)),
     ]);
-    settingsSet(LAST_CHECK_KEY, String(Date.now())).catch(() => {});
     set({ state: next });
   },
 

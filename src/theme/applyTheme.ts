@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { contrastRatio } from "../lib/contrast";
+import { setWindowGround } from "../lib/ipc";
 import type { Theme } from "./tokens";
 import { applyVistaTokens } from "./vistaTokens";
 
@@ -89,28 +90,42 @@ export function reapplyTitlebarTheme(): void {
   invoke("set_titlebar_theme").catch(() => {});
 }
 
+/**
+ * A THEME AS THE TEN TOKENS IT PAINTS WITH — derived once, applied in two places.
+ *
+ * `:root` wears the LIBRARY's theme; `.reader-root` wears the theme of the هيئة the open book is
+ * being read in, which is not always the same one. Both need the identical derivation — the muted
+ * floor, the two guaranteed-legible marker registers — so it lives here and neither side can drift
+ * from the other. Vista's furniture is NOT included: only the Library draws Vista, so those ten stay
+ * where `applyTheme` puts them.
+ */
+export function themeVars(theme: Theme): Record<string, string> {
+  const c = theme.colors;
+  return {
+    "--app-bg": c.surfaceBg,
+    "--paper-bg": c.paperBg,
+    "--chrome-bg": c.chromeBg,
+    "--chrome-border": c.chromeBorder,
+    "--text": c.text,
+    // Floored against every ground it paints on — see the MUTED_FLOOR note above.
+    "--muted": resolveFloor(c.muted, [c.chromeBg, c.paperBg, c.surfaceBg], c.text, MUTED_FLOOR, MUTED_STEP),
+    "--accent": c.accent,
+    "--selection": c.selection,
+    // RAWY-256: the guaranteed-legible marker colours. Derived from the RAW `c.muted`, not the
+    // floored one — see the note on the call site below.
+    "--read-marker": resolveReadMarker(c.accent, c.chromeBg, c.text),
+    "--read-marker-quiet": resolveReadMarker(c.muted, c.chromeBg, c.text),
+  };
+}
+
 export function applyTheme(theme: Theme): void {
   const r = document.documentElement;
   const c = theme.colors;
   const set = (k: string, v: string) => r.style.setProperty(k, v);
-  set("--app-bg", c.surfaceBg);
-  set("--paper-bg", c.paperBg);
-  set("--chrome-bg", c.chromeBg);
-  set("--chrome-border", c.chromeBorder);
-  set("--text", c.text);
-  // Floored against every ground it paints on — see the MUTED_FLOOR note above.
-  set("--muted", resolveFloor(c.muted, [c.chromeBg, c.paperBg, c.surfaceBg], c.text, MUTED_FLOOR, MUTED_STEP));
-  set("--accent", c.accent);
-  set("--selection", c.selection);
-  // RAWY-256: the guaranteed-legible marker colours (see the note above). Two registers: the NOTICEABLE
-  // one (five variants, from `accent`) and the QUIET one (Reading Trail, from `muted`) — quiet means lower
-  // visual weight (thinner, softer hue), never below-threshold contrast.
-  //
-  // Deliberately derived from the RAW `c.muted`, not the floored `--muted`: RAWY-256 measured this cell
-  // at 5% for Linen/quiet, and feeding it an already-floored source would silently change a documented
-  // measured result. The marker computes its own floor regardless, so it is guaranteed either way.
-  set("--read-marker", resolveReadMarker(c.accent, c.chromeBg, c.text));
-  set("--read-marker-quiet", resolveReadMarker(c.muted, c.chromeBg, c.text));
+  for (const [k, v] of Object.entries(themeVars(theme))) set(k, v);
+  // The platform paints this where the page has not yet (a window that just grew) — the same ground
+  // `body` paints, so a resize never shows white or black for a frame (window_chrome.rs).
+  setWindowGround(c.surfaceBg).catch(() => {});
   // VISTA'S FURNITURE. Ten tokens that only Vista reads, set here because they follow the theme and
   // this is where a theme becomes CSS. A built-in paper gets the designer's authored values; a
   // reader-made theme gets them derived by the same rule, so no theme is left without a set.

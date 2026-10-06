@@ -6,15 +6,16 @@
 // row with search, the view switcher, the density steps and the sort menu — all carried over
 // with the design's own measurements.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
 import { ProfileSwitcher } from "../../profiles/ProfileSwitcher";
 import { localeNum } from "../../../lib/format";
 import { Hoopoe } from "../Hoopoe";
 import { CaseManageMenu, ShelfOrderMenu } from "./Menus";
-import { DENSITY_MAX, DENSITY_MIN, DENSITY_STEP, DESIGN_SORTS, dropIndex, hasUnfiledContent, isVirtualShelf, UNFILED_CASE_ID, type DesignSort, type DesignView } from "./model";
+import { DENSITY_MAX, DENSITY_MIN, DENSITY_STEP, DESIGN_SORTS, hasUnfiledContent, isVirtualShelf, UNFILED_CASE_ID, type DesignSort, type DesignView } from "./model";
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
+import { useRowDrag } from "./rowDrag";
 import { Icon, type IconName } from "../../../components/Icon";
 import { openTransient } from "./transient";
 import { SelectionTick, type AllState } from "../../../components/listSelection";
@@ -80,6 +81,8 @@ interface SidebarProps {
   onCaseInk: (caseId: string, ink: string | null) => void;
   /** Place a lifted case at an index among its peers. */
   onPlaceCase: (id: string, toIndex: number) => void;
+  /** Move a shelf among its siblings — the shelves of its case, or the loose ones. */
+  onPlaceShelf: (id: string, toIndex: number) => void;
   /** Open the management panel over the shelves that belong to no case. */
   onManageUnfiled: () => void;
   /** Open the management panel over one case — reachable from every view, not just the cards. */
@@ -166,85 +169,35 @@ export function Sidebar(props: SidebarProps) {
   const [managing, setManaging] = useState<string | null>(null);
   // A case lifted by its grip, waiting for a rail to be clicked.
   const [caseHand, setCaseHand] = useState<string | null>(null);
-  // A case being DRAGGED by its grip right now, and where it would land.
-  const [dragging, setDragging] = useState<string | null>(null);
-  const [dropAt, setDropAt] = useState<number | null>(null);
-  const dragStart = useRef<{ id: string; y: number; moved: boolean } | null>(null);
-  const rowRefs = useRef(new Map<string, HTMLElement>());
-  const ghostRef = useRef<HTMLDivElement | null>(null);
   // One scroller for the sidebar, kept across renders so a re-render cannot cancel a live drag.
   const scrollerRef = useRef<EdgeScroller | null>(null);
   if (!scrollerRef.current) scrollerRef.current = createEdgeScroller();
 
   /**
-   * The grip's drag.
+   * THE DRAG THAT REORDERS A ROW — one gesture for both kinds of row in this list.
    *
-   * Bound to the window rather than the button because a pointer that leaves the 20px grip must
-   * not end the drag — which is what "it looks like a handle but I cannot drag it" feels like from
-   * the outside. A few pixels of movement is what separates a drag from a click, so a click can
-   * still lift the case the way the reference does.
+   * A case and a shelf are moved by different commands and among different siblings, but they are
+   * the same MANIPULATION, so they share one implementation and differ only in which command the
+   * release calls. `orderKey` is the drawn order: when it changes, the hook animates every row from
+   * where it was to where it now is, which is what makes the commit a settle rather than a cut.
    */
-  useEffect(() => {
-    // Recomputing the landing place from a bare pointer position, so an auto-scroll can ask for
-    // it again without a pointermove — the reader holds still at the edge while the list moves.
-    const retarget = (y: number) => {
-      const st = dragStart.current;
-      if (!st?.moved) return;
-      const order = props.cases.map((c) => c.id);
-      const from = order.indexOf(st.id);
-      const mids = order.map((id) => {
-        const el = rowRefs.current.get(id);
-        if (!el) return Number.POSITIVE_INFINITY;
-        const r = el.getBoundingClientRect();
-        return r.top + r.height / 2;
-      });
-      setDropAt(dropIndex(y, mids, from));
-    };
-    const scroller = scrollerRef.current!;
-    scroller.onScrolled = (_x, y) => retarget(y);
-    const move = (e: PointerEvent) => {
-      const st = dragStart.current;
-      if (!st) return;
-      if (!st.moved && Math.abs(e.clientY - st.y) < 4) return;
-      if (!st.moved) {
-        st.moved = true;
-        setDragging(st.id);
-        setCaseHand(null); // a drag supersedes any lift
-      }
-      retarget(e.clientY);
-      scroller.update(e.clientX, e.clientY);
-      const g = ghostRef.current;
-      if (g) g.style.transform = `translate(${e.clientX + 12}px, ${e.clientY - 10}px)`;
-    };
-    const up = () => {
-      // `pointerup` on the grip does the placing; this only catches a release elsewhere.
-      scroller.stop();
-      if (dragStart.current?.moved) {
-        setDragging(null);
-        setDropAt(null);
-      }
-      dragStart.current = null;
-    };
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      scroller.stop();
-      dragStart.current = null;
-      setDragging(null);
-      setDropAt(null);
-      setCaseHand(null);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
-    window.addEventListener("keydown", key);
-    return () => {
-      scroller.stop();
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", up);
-      window.removeEventListener("keydown", key);
-    };
-  }, [props.cases]);
+  const caseIdSet = useMemo(() => new Set(props.cases.map((c) => c.id)), [props.cases]);
+  const orderKey = useMemo(
+    () =>
+      props.cases.map((c) => `${c.id}:${c.shelves.map((s) => s.id).join(",")}`).join("|") +
+      "#" +
+      props.loose.map((s) => s.id).join(","),
+    [props.cases, props.loose],
+  );
+  const onCommitOrder = useCallback(
+    (id: string, toIndex: number) => {
+      if (caseIdSet.has(id)) props.onPlaceCase(id, toIndex);
+      else props.onPlaceShelf(id, toIndex);
+    },
+    [caseIdSet, props],
+  );
+  const rowDrag = useRowDrag({ onCommit: onCommitOrder, orderKey });
+
 
   const num = (n: number) => localeNum(n, lang);
   const rtl = lang === "ar";
@@ -274,9 +227,13 @@ export function Sidebar(props: SidebarProps) {
 
   // The design's shelf row: a mark, the name, the count. Shelf management lives in the shelf's
   // own order popover in the main pane, which is where the design puts it — not here.
-  const shelfRow = (s: ShelfNode) => {
+  const shelfRow = (s: ShelfNode, siblings?: string[]) => {
     const active = props.scope.shelfId === s.id;
     const ink = s.ink;
+    // ORDERABLE BY HAND ONLY WHERE AN ORDER EXISTS TO SET. The unshelved run is not a collection and
+    // a shelf that fills itself from a query is not ordered by the reader, so neither is dragged —
+    // exactly the rows the ⋯ menu already withholds «move» from.
+    const draggable = siblings != null && siblings.length > 1 && !isVirtualShelf(s.id);
     // THE UNSHELVED RUN IS NOT A COLLECTION. It is the books that belong to no shelf, gathered
     // under a name so they can be reached — there is no row behind it to rename, re-file or
     // delete. Everything else in this list is a real shelf and gets the whole menu.
@@ -306,6 +263,12 @@ export function Sidebar(props: SidebarProps) {
       // so a book let go over the name, the count or the menu still finds this shelf.
       <div
         key={s.id}
+        ref={draggable ? rowDrag.register(s.id) : undefined}
+        // THE ROW ITSELF IS THE HANDLE. A shelf row carries no grip: the press is recorded here and
+        // only becomes a drag once the pointer has travelled, so a press that stays put is still the
+        // click that opens the shelf. That is the same bargain `useBookPickup` strikes for a book,
+        // and it is why no control had to be added to a row whose layout is already settled.
+        onPointerDown={draggable ? (e) => rowDrag.begin(e, s.id, siblings!) : undefined}
         // A SHELF IN THE SIDEBAR IS A PLACE A BOOK CAN BE PUT.
         //
         // Until now a destination existed only where the current view happened to have DRAWN it,
@@ -334,6 +297,10 @@ export function Sidebar(props: SidebarProps) {
         className={`libd-shelf${active ? " is-on" : ""}`}
         style={{
           position: "relative",
+          // A DRAG LIFTS THE ROW A LITTLE, and changes nothing else about it: the row under the
+          // pointer is the shelf itself, so it keeps its ink, its mark and its weight. The same
+          // treatment a dragged case gets, for the same reason.
+          boxShadow: rowDrag.draggingId === s.id ? "var(--sh2)" : undefined,
           display: "flex",
           alignItems: "center",
           borderRadius: "var(--r-sm)",
@@ -568,28 +535,13 @@ export function Sidebar(props: SidebarProps) {
           paddingBottom: 8,
         }}
       >
-        {props.cases.map((c, ci) => {
+        {props.cases.map((c) => {
           const open = props.openCases.has(c.id);
           const active = props.scope.caseId === c.id && !props.scope.shelfId;
           const ink = c.ink ?? "var(--acc)";
           const lifted = caseHand === c.id;
           return (
-            <div key={c.id} style={{ position: "relative" }}>
-              {/* THE INSERTION BAR while a case is being dragged — the answer to "where will this
-                  land if I let go now". It is the same accent rail the lift-and-place path uses,
-                  so both routes show the reader the same thing. */}
-              {dragging && dropAt === ci && (
-                <span
-                  style={{
-                    display: "block",
-                    height: 2,
-                    margin: "3px 0",
-                    borderRadius: 1,
-                    background: "var(--acc)",
-                    boxShadow: "0 0 0 3px color-mix(in srgb, var(--acc) 22%, transparent)",
-                  }}
-                />
-              )}
+            <div key={c.id} ref={rowDrag.register(c.id)} style={{ position: "relative" }}>
               {/* A place-here rail above each other case while one is lifted by its grip. */}
               {caseHand && caseHand !== c.id && (
                 <button
@@ -608,10 +560,6 @@ export function Sidebar(props: SidebarProps) {
                   read as a case at a glance, and it is why the shelf rows below (which have no
                   bar) read as children. */}
               <div
-                ref={(el) => {
-                  if (el) rowRefs.current.set(c.id, el);
-                  else rowRefs.current.delete(c.id);
-                }}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -619,7 +567,10 @@ export function Sidebar(props: SidebarProps) {
                   paddingInlineEnd: 2,
                   borderInlineStart: `3px solid ${ink}`,
                   background: active ? "var(--act)" : "transparent",
-                  opacity: lifted || dragging === c.id ? 0.4 : 1,
+                  opacity: lifted ? 0.4 : 1,
+                  // A DRAG LIFTS THE ROW; it does not fade it. The row under the pointer is the
+                  // case itself, so it keeps its colours and its weight and only rises a little.
+                  boxShadow: rowDrag.draggingId === c.id ? "var(--sh2)" : undefined,
                 }}
               >
                 <button
@@ -700,25 +651,20 @@ export function Sidebar(props: SidebarProps) {
                   aria-label={t("lib.moveCaseHint")}
                   onPointerDown={(e) => {
                     e.stopPropagation();
-                    e.preventDefault();
-                    dragStart.current = { id: c.id, y: e.clientY, moved: false };
-                    scrollerRef.current?.setContainer(e.currentTarget as Element);
-                    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                    setCaseHand(null); // a drag supersedes any lift
+                    rowDrag.begin(e, c.id, props.cases.map((x) => x.id));
                   }}
-                  onPointerUp={(e) => {
-                    e.stopPropagation();
-                    const st = dragStart.current;
-                    dragStart.current = null;
-                    if (st?.moved) {
-                      // A real drag: drop where the bar is showing.
-                      if (dropAt != null) props.onPlaceCase(c.id, dropAt);
-                      setDragging(null);
-                      setDropAt(null);
-                      setCaseHand(null);
-                    } else {
-                      // A click: lift, or put back down.
-                      setCaseHand(lifted ? null : c.id);
-                    }
+                  onPointerUp={() => {
+                    // NO `stopPropagation` HERE, deliberately. The drag is finished by the window
+                    // listener, and this handler runs first: stopping the event stops it reaching
+                    // that listener, so the release was never seen and the case snapped back having
+                    // committed nothing. Measured — a shelf, which has no such call, moved fine
+                    // while a case would not move at all.
+                    //
+                    // A DRAG IS FINISHED BY THE WINDOW. Only the press that never travelled is this
+                    // button's to answer, and its answer is the lift the rails still offer.
+                    if (rowDrag.isDragging()) return;
+                    setCaseHand(lifted ? null : c.id);
                   }}
                   style={{
                     flex: "none",
@@ -727,10 +673,10 @@ export function Sidebar(props: SidebarProps) {
                     borderRadius: "var(--r-sm)",
                     fontSize: 11,
                     lineHeight: 1,
-                    cursor: dragging === c.id ? "grabbing" : "grab",
+                    cursor: rowDrag.draggingId === c.id ? "grabbing" : "grab",
                     touchAction: "none",
-                    color: lifted || dragging === c.id ? "var(--acc)" : "var(--faint)",
-                    background: lifted || dragging === c.id ? "var(--act)" : "transparent",
+                    color: lifted || rowDrag.draggingId === c.id ? "var(--acc)" : "var(--faint)",
+                    background: lifted || rowDrag.draggingId === c.id ? "var(--act)" : "transparent",
                   }}
                 >
                   <Icon name="grip" size="sm" />
@@ -791,27 +737,12 @@ export function Sidebar(props: SidebarProps) {
                     // with the bar and the disc on its own row — both untouched.
                   }}
                 >
-                  {c.shelves.map(shelfRow)}
+                  {c.shelves.map((sh) => shelfRow(sh, c.shelves.map((x) => x.id)))}
                 </div>
               )}
             </div>
           );
         })}
-
-        {/* The bar's last position: after every case. Without it the bottom of the list would be
-            the one place a drag could not reach. */}
-        {dragging && dropAt === props.cases.length - 1 && (
-          <span
-            style={{
-              display: "block",
-              height: 2,
-              margin: "3px 0",
-              borderRadius: 1,
-              background: "var(--acc)",
-              boxShadow: "0 0 0 3px color-mix(in srgb, var(--acc) 22%, transparent)",
-            }}
-          />
-        )}
 
         {/* The tail rail. Without it a lifted case could be dropped ABOVE any other case but
             never after the last one, so the bottom position was unreachable. */}
@@ -940,7 +871,7 @@ export function Sidebar(props: SidebarProps) {
                 marginInlineStart: 22,
               }}
             >
-              {props.loose.map(shelfRow)}
+              {props.loose.map((sh) => shelfRow(sh, props.loose.map((x) => x.id)))}
               {props.unshelved && shelfRow(props.unshelved)}
             </div>
           )}
@@ -1003,31 +934,6 @@ export function Sidebar(props: SidebarProps) {
           uses `text-align: start`. */}
       {/* The case in hand, following the pointer — the thing that makes a drag read as carrying
           something rather than as the list rearranging itself for reasons of its own. */}
-      {dragging && (
-        <div
-          ref={ghostRef}
-          aria-hidden
-          style={{
-            position: "fixed",
-            insetBlockStart: 0,
-            insetInlineStart: 0,
-            zIndex: 200,
-            pointerEvents: "none",
-            padding: "5px 11px",
-            borderRadius: "var(--r-md)",
-            border: "1px solid var(--brd)",
-            borderInlineStart: `3px solid ${props.cases.find((c) => c.id === dragging)?.ink ?? "var(--acc)"}`,
-            background: "var(--chr)",
-            boxShadow: "var(--sh3)",
-            font: "600 .8125rem var(--ui)",
-            color: "var(--txt)",
-            opacity: 0.95,
-          }}
-        >
-          {props.cases.find((c) => c.id === dragging)?.name}
-        </div>
-      )}
-
       <div className="lib-sidefoot" style={{ display: "block", paddingTop: 10, borderTop: "1px solid var(--brd)" }}>
         {/* PROFILES: the active profile joins the theme and the language in the foot. One row,
             above Settings; the caption below is left exactly as it is. Self-contained — it reads

@@ -74,6 +74,8 @@ export type IconName =
   | "image"        // "no image chosen" placeholder                (was U+25A3)
   | "caretLeft"    // disclosure, inline-start                     (was U+2190)
   | "caretUp"      // disclosure, collapse                         (was U+2191)
+  | "minus"        // step down — PDF zoom out                     (was a text "−")
+  | "plus"         // step up — PDF zoom in                        (was a text "+")
   // ---- Direction 02 v3 — the library destinations and the annotation kinds ----------------------
   // Five of these replace the 13x13 CSS box in `Chrome.tsx`, where Library, Bookmarks and Photo
   // cards were three IDENTICAL squares. Each destination now owns a silhouette from a different
@@ -94,7 +96,15 @@ export type IconName =
   // drawings themselves).
   | "navReferences"
   | "navReplacements"
-  | "deposit";
+  | "deposit"
+  /* ---- THE WINDOW'S OWN CONTROLS (the title bar) --------------------------------------------
+     Drawn on a 15-unit square inside the 24 box, so that at the 16px the title bar renders them
+     they measure 10px — the size Windows draws its own caption glyphs at — and sit on the same
+     stroke as everything else. `windowClose` is the ordinary close mark at that size. */
+  | "windowMinimize"
+  | "windowMaximize"
+  | "windowRestore"
+  | "windowClose";
 
 export type IconSize = "sm" | "md" | "lg" | "xl";
 
@@ -205,6 +215,11 @@ const PATHS: Record<IconName, ReactElement> = {
     </>
   ),
   close: <path d="M6 6 18 18M18 6 6 18" />,
+  windowMinimize: <path d="M4.5 12h15" />,
+  windowMaximize: <path d="M4.5 4.5h15v15h-15z" />,
+  // the restored window in front of the one it came from: the back one shows two edges only
+  windowRestore: <path d="M4.5 8.5h11v11h-11zM8.5 8.5v-4h11v11h-4" />,
+  windowClose: <path d="M4.5 4.5 19.5 19.5M19.5 4.5 4.5 19.5" />,
   more: (
     <>
       <circle cx="5.2" cy="12" r="1.5" />
@@ -353,6 +368,11 @@ const PATHS: Record<IconName, ReactElement> = {
   ),
   caretLeft: <path d="m14.5 6-6 6 6 6" />,
   caretUp: <path d="m6 14.5 6-6 6 6" />,
+  // A stepper's two marks. Drawn rather than typed for the reason the page-turn carets are: a "−" and
+  // "+" set in the interface face changed weight and optical centre with the face and its fallbacks,
+  // and could not take the icon stroke token. Same 12-unit arm as the carets, centred on the grid.
+  minus: <path d="M6.5 12h11" />,
+  plus: <path d="M6.5 12h11M12 6.5v11" />,
 
   // ---- Direction 02 v3 · the five library destinations ------------------------------------------
   // REQ-01. Volumes standing on a plank, one leaning. FURNITURE, so no view mode can be mistaken for
@@ -606,7 +626,7 @@ export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "name"> {
  * keeps the `aria-label` / `title` it already had. Every glyph replaced by this component was the
  * sole label of its button, so dropping that name would leave the control unnamed.
  */
-export function Icon({ name, size = "md", ...rest }: IconProps) {
+export function Icon({ name, size = "md", width, height, strokeWidth, style, ...rest }: IconProps) {
   const filled = FILLED.has(name);
   const perPath = PER_PATH.has(name);
   // Below 16px a drawing with fewer parts is used where one exists — the switch the designer
@@ -615,8 +635,6 @@ export function Icon({ name, size = "md", ...rest }: IconProps) {
   return (
     <svg
       viewBox="0 0 24 24"
-      width={SIZE[size]}
-      height={SIZE[size]}
       // COLOUR IS NEVER FIXED HERE. Both channels resolve to `currentColor`, so a mark takes the ink
       // of whatever control holds it and follows the active theme across all sixteen papers with no
       // per-theme artwork. A `fill`/`stroke` set on a child overrides only that child, and the
@@ -624,14 +642,40 @@ export function Icon({ name, size = "md", ...rest }: IconProps) {
       // half of the window) are solid AND theme-following, not one or the other.
       fill={filled ? "currentColor" : "none"}
       stroke={filled ? "none" : "currentColor"}
-      // Omitted for the per-path set so each shape's own weight applies; `--icon-stroke` still
-      // carries 1.75, which is exactly the primary-structure rung those icons draw at.
-      strokeWidth={filled || perPath ? undefined : "var(--icon-stroke)"}
+      // The stroke WEIGHT rides the style declaration below, for the same reason the size does: as
+      // the attribute `stroke-width="var(--icon-stroke)"` it is rejected by an engine that does not
+      // take `var()` in a length attribute, and a rejected stroke-width is the SVG default of 1 —
+      // every outlined mark a third thinner than drawn (MEASURED: 1.75px → 1px). Omitted for the
+      // per-path set so each shape's own weight applies; `--icon-stroke` still carries 1.75, which is
+      // exactly the primary-structure rung those icons draw at.
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden
       focusable="false"
-      style={{ flex: "none", display: "block" }}
+      // THE SIZE IS A CSS DECLARATION, NOT A PRESENTATION ATTRIBUTE — and that is a compatibility
+      // rule, not a style preference. This used to be `width={SIZE[size]}` on the element, i.e.
+      // `width="var(--icon-md)"`. A presentation attribute is parsed with the property's own grammar,
+      // and older Chromium/WebView2 runtimes reject `var()` there for length attributes; a rejected
+      // attribute is simply absent, and an inline svg with no width takes its container's width at
+      // the viewBox's 1:1 ratio. MEASURED: a 16px mark became 165–199px in the sidebar row — every
+      // icon in the Library at the width of its row, strokes scaled with it, text and covers
+      // untouched — which is the report this fixes (1.3.0 shipped the attribute form). `var()` in a
+      // `style` declaration is resolved by the cascade on every engine the product runs on. The
+      // tokens and the size mapping are unchanged; only where the value is applied moved.
+      //
+      // A caller's own `width`/`height` (the reader's 18px gear) and `style` are honoured: the size
+      // props win over the token, and the caller's style is merged AFTER these, never spread over
+      // them — spreading `...rest` last used to let `style={{ opacity }}` silently drop the base.
+      style={{
+        flex: "none",
+        display: "block",
+        width: width ?? SIZE[size],
+        height: height ?? SIZE[size],
+        // A caller's own weight (the reader's gear passes 1.9) wins, exactly as its attribute used to;
+        // a child shape's own `strokeWidth` still overrides whatever the root carries, as before.
+        ...(strokeWidth != null ? { strokeWidth } : filled || perPath ? {} : { strokeWidth: "var(--icon-stroke)" }),
+        ...style,
+      }}
       {...rest}
     >
       {shapes}

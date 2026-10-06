@@ -138,6 +138,65 @@ function Choice<T extends string | number>({
   );
 }
 
+
+/**
+ * THE ONE ROW THAT BELONGS IN TWO PLACES.
+ *
+ * Text size is the reader's own, and Quick Customization offers it beside the design it imports. It
+ * is a component rather than copied markup so that the control a reader touches there is the control
+ * they touch here — same value, same draft, one behaviour.
+ *
+ * The first-line indent below is NOT offered there, deliberately: Quick Customization carries the
+ * decisions a reader makes while a design is in front of them, and the indent belongs with the rest
+ * of the measure. It stays exported to nothing, one row of this chapter like any other.
+ */
+export function TextSizeRow({ value, fallback, onChange }: RowPair<number>) {
+  const { t, lang } = useI18n();
+  const set = value.zoom !== null;
+  const v = value.zoom ?? fallback;
+  return (
+    <Row
+      label={t("type.size")}
+      set={set}
+      shown={set ? localeDigits(`${Math.round(v * 100)}%`, lang) : t("profiles.measure.follows")}
+      onClear={() => onChange({ zoom: null })}
+    >
+      <Slide value={v} min={ZOOM_MIN} max={ZOOM_MAX} step={0.05}
+        onInput={(x) => onChange({ zoom: Math.round(x * 100) / 100 })} />
+    </Row>
+  );
+}
+
+function IndentRow({ value, fallback, onChange }: RowPair<boolean>) {
+  const { t } = useI18n();
+  const set = value.firstLineIndent !== null;
+  const v = value.firstLineIndent ?? fallback;
+  return (
+    <Row
+      label={t("type.indent")}
+      set={set}
+      shown={set ? t(v ? "profiles.measure.indentOn" : "profiles.measure.indentOff") : t("profiles.measure.follows")}
+      onClear={() => onChange({ firstLineIndent: null })}
+    >
+      <Choice<string>
+        value={v ? "on" : "off"}
+        onPick={(k) => onChange({ firstLineIndent: k === "on" })}
+        options={[
+          { key: "on", label: t("profiles.measure.indentOn") },
+          { key: "off", label: t("profiles.measure.indentOff") },
+        ]}
+      />
+    </Row>
+  );
+}
+
+interface RowPair<T> {
+  value: ProfileTypography;
+  /** The reader's live value, shown greyed while the هيئة has no opinion of its own. */
+  fallback: T;
+  onChange: (patch: Partial<ProfileTypography>) => void;
+}
+
 export function MeasureSection({
   value,
   fallback,
@@ -166,15 +225,7 @@ export function MeasureSection({
 
       <div className="pf-ms-group">{t("profiles.measure.groupType")}</div>
 
-      <Row
-        label={t("type.size")}
-        set={set("zoom")}
-        shown={set("zoom") ? n(`${Math.round(v("zoom") * 100)}%`) : t("profiles.measure.follows")}
-        onClear={() => clear("zoom")}
-      >
-        <Slide value={v("zoom")} min={ZOOM_MIN} max={ZOOM_MAX} step={0.05}
-          onInput={(x) => onChange({ zoom: Math.round(x * 100) / 100 })} />
-      </Row>
+      <TextSizeRow value={value} fallback={fallback.zoom} onChange={onChange} />
 
       <Row
         label={t("type.weight")}
@@ -226,23 +277,7 @@ export function MeasureSection({
           onInput={(x) => onChange({ paragraphSpacing: x })} />
       </Row>
 
-      <Row
-        label={t("type.indent")}
-        set={set("firstLineIndent")}
-        shown={set("firstLineIndent")
-          ? t(v("firstLineIndent") ? "profiles.measure.indentOn" : "profiles.measure.indentOff")
-          : t("profiles.measure.follows")}
-        onClear={() => clear("firstLineIndent")}
-      >
-        <Choice<string>
-          value={v("firstLineIndent") ? "on" : "off"}
-          onPick={(k) => onChange({ firstLineIndent: k === "on" })}
-          options={[
-            { key: "on", label: t("profiles.measure.indentOn") },
-            { key: "off", label: t("profiles.measure.indentOff") },
-          ]}
-        />
-      </Row>
+      <IndentRow value={value} fallback={fallback.firstLineIndent} onChange={onChange} />
 
       <Row
         label={t("type.align")}

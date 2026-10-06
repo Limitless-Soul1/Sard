@@ -1,3 +1,5 @@
+import { isWholeWordHit } from './sard-wordmatch.js'   // SARD LOCAL PATCH 15
+
 // length for context in excerpts
 const CONTEXT_LENGTH = 50
 
@@ -109,7 +111,9 @@ export const search = (strs, query, options) => {
 }
 
 export const searchMatcher = (textWalker, opts) => {
-    const { defaultLocale, matchCase, matchDiacritics, matchWholeWords, acceptNode } = opts
+    // SARD LOCAL PATCH 15 — `sardWholeWords`, Sard's own whole-word mode. Absent or false, everything
+    // below runs exactly as upstream wrote it. See sard-wordmatch.js for why it is not `matchWholeWords`.
+    const { defaultLocale, matchCase, matchDiacritics, matchWholeWords, sardWholeWords, acceptNode } = opts
     return function* (doc, query) {
         const iter = textWalker(doc, function* (strs, makeRange) {
             for (const result of search(strs, query, {
@@ -121,6 +125,10 @@ export const searchMatcher = (textWalker, opts) => {
                 : 'base',
             })) {
                 const { startIndex, startOffset, endIndex, endOffset } = result.range
+                // SARD LOCAL PATCH 15 — drop a hit that sits inside a longer word. Before `makeRange`,
+                // so a rejected hit costs no DOM Range, and in the one place the section's strings and
+                // the hit's offsets are both in hand.
+                if (sardWholeWords && !isWholeWordHit(strs, result.range)) continue
                 result.range = makeRange(startIndex, startOffset, endIndex, endOffset)
                 yield result
             }

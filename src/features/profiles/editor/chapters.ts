@@ -11,6 +11,12 @@ import type { TKey } from "../../../i18n/locales/en";
 
 export const CHAPTERS = [
   { id: "identity",   name: "profiles.chapter.identity",   q: "profiles.chapter.identity.q" },
+  // A هيئة DESIGNED ELSEWHERE, brought in here. It sits second because it is a STARTING POINT: the
+  // reader names the هيئة, optionally commissions a design for it, and then refines that design
+  // through every chapter below exactly as they would one they had built by hand. It is not a door
+  // into a different tool — what it produces is this editor's own draft, drawn by this editor's own
+  // stage, saved by this editor's own Save.
+  { id: "quick",      name: "profiles.chapter.quick",      q: "profiles.chapter.quick.q" },
   // TWO SURFACES, TWO CHAPTERS. A profile carries two palettes, and one chapter with a switch in it
   // presented them as one thing with a setting. These are the two editing surfaces themselves: each
   // opens its own face, so the preview beside the swatches IS the thing being coloured.
@@ -73,6 +79,9 @@ export const FOCUS: Record<ChapterId, Focus> = {
   paperBook:  { face: "book",    label: "profiles.focus.paper",        targets: [".pf-page"] },
   // It governs the desk under BOTH faces, so it frames the whole composition and names neither.
   background: { face: null,      label: null,                      targets: [".pf-stage-fit"] },
+  // NO FACE LOCK AND NO REGION, for the same reason `background` has none: a design governs every
+  // surface at once, so pinning the preview to one of them would misstate what the chapter does.
+  quick:      { face: null,      label: null,                      targets: [".pf-stage-fit"] },
   // The reading type, all of it: the chapter line and both scripts are one specimen.
   fonts:      { face: "book",    label: "profiles.focus.fonts",    targets: [".pf-page-label", ".pf-page-ar", ".pf-page-la"] },
   // The whole set body — the measure is the relationship BETWEEN the lines, so framing one paragraph

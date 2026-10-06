@@ -23,6 +23,20 @@ const K_HIDE_FIRST_LINE = "hide_first_line";
 // (spotlight/karaoke, D49) is deliberately NOT bound to this and keeps tracking. A GLOBAL flag (like
 // hide-first-line): one reading-behaviour preference, not per-book typography.
 const K_IMMERSIVE = "immersive_scroll";
+// BACKGROUND DIMMING — its own preference, and the point is the independence.
+// Immersive Mode and "the reading background steps back" used to be one behaviour: entering the
+// receded state always applied +14% of scrim and +4px of blur. They are two things a reader can want
+// separately — immersive for the quiet chrome, the dimming for the picture — so this is a SEPARATE
+// key rather than a third meaning for `immersive_scroll`.
+//
+// ⚠ IT LIVES HERE, NOT IN A هيئة. The dimming WAS decided by the active هيئة's
+// `bg.reading.params.immersiveBlur`, which meant wearing a look re-answered a reading-behaviour
+// question on the reader's behalf (fixed in the commit before this one). Putting the preference in
+// the theme store — beside `immersive`, persisted in the settings table, never in a profile payload
+// (`profileSettings` writes 14 keys and not one of them is a reading-behaviour flag) — is what keeps
+// applying an Appearance unable to move it. `immersiveBlur` is still parsed and still stored so
+// existing هيئات stay readable; it simply governs nothing.
+const K_IMMERSIVE_DIM = "immersive_dim";
 const K_MODE = "theme_mode"; // "manual" | "auto" (RAWY-39 — Follow OS)
 
 /** Band-H MODE control value: derived from the active theme + auto flag. */
@@ -41,6 +55,9 @@ interface ThemeState {
   hideChapterTitles: boolean;
   hideFirstLine: boolean;
   immersive: boolean; // RAWY-210: immersive hide-on-scroll (hide pill + scrollbar with the bars)
+  /** Does the reading background step back (+scrim, +blur) once immersive has scrolled away?
+   *  Independent of `immersive`: immersive can run with the picture left exactly as it was. */
+  immersiveDim: boolean;
   ready: boolean;
   /** Apply a specific LIBRARY theme. An explicit theme choice exits Follow-OS mode. */
   setTheme: (id: ThemeId) => void;
@@ -54,6 +71,7 @@ interface ThemeState {
   setHideTitles: (v: boolean) => void;
   setHideFirstLine: (v: boolean) => void;
   setImmersive: (v: boolean) => void; // RAWY-210
+  setImmersiveDim: (v: boolean) => void;
 }
 
 // Apply + persist a theme id WITHOUT touching the auto flag (used by Follow-OS too).
@@ -76,6 +94,11 @@ export const useTheme = create<ThemeState>((set, get) => ({
   // RAWY-210: default OFF — an untouched profile keeps today's exact behaviour (the TTS pill floats
   // visible while the chrome is auto-hidden). The owner decides live whether to flip the default ON.
   immersive: false,
+  // Default ON — and this default is the whole compatibility story. Until now the recede was
+  // unconditional whenever immersive scrolled away, so ON is what an existing reader already has;
+  // a missing key reads as ON (the `ov !== "0"` idiom below). Nothing migrates, and nobody's
+  // reading surface changes the first time they launch a build that has this preference.
+  immersiveDim: true,
   ready: false,
   setTheme: (id) => {
     if (get().autoMode) {
@@ -122,6 +145,14 @@ export const useTheme = create<ThemeState>((set, get) => ({
     set({ immersive: v });
     settingsSet(K_IMMERSIVE, v ? "1" : "0").catch(console.error);
   },
+  // Deliberately symmetric with `setImmersive`, and deliberately nothing more: the effect itself is
+  // a stylesheet gate on a class the Reader renders from this flag, so there is no CSS to write here
+  // and no background call to make. That is what keeps ONE owner — a `setProperty` from this side
+  // would be a second one, racing `applyBackgrounds`.
+  setImmersiveDim: (v) => {
+    set({ immersiveDim: v });
+    settingsSet(K_IMMERSIVE_DIM, v ? "1" : "0").catch(console.error);
+  },
 }));
 
 /** The Band-H MODE value for the current state. */
@@ -132,13 +163,14 @@ export function currentMode(s: Pick<ThemeState, "autoMode" | "themeId">): ThemeM
 
 /** Load persisted theme settings and apply them. Call once at startup. */
 export async function initTheme(): Promise<void> {
-  const [tid, btid, ov, ht, hfl, imm, mode] = await Promise.all([
+  const [tid, btid, ov, ht, hfl, imm, immDim, mode] = await Promise.all([
     settingsGet(K_THEME).catch(() => null),
     settingsGet(K_BOOK_THEME).catch(() => null),
     settingsGet(K_OVERRIDE).catch(() => null),
     settingsGet(K_HIDE).catch(() => null),
     settingsGet(K_HIDE_FIRST_LINE).catch(() => null),
     settingsGet(K_IMMERSIVE).catch(() => null),
+    settingsGet(K_IMMERSIVE_DIM).catch(() => null),
     settingsGet(K_MODE).catch(() => null),
   ]);
   const auto = mode === "auto";
@@ -167,6 +199,10 @@ export async function initTheme(): Promise<void> {
     hideChapterTitles: ht === "1",
     hideFirstLine: hfl === "1",
     immersive: imm === "1", // RAWY-210: default OFF unless explicitly turned on
+    // Default ON unless explicitly turned OFF — a missing key is an existing reader, who has had
+    // the dimming all along. This is read ONCE at startup and thereafter only by its own setter;
+    // `applyProfile` never passes through here, which is why wearing a هيئة cannot disturb it.
+    immersiveDim: immDim !== "0",
     ready: true,
   });
   // Track the OS scheme while in Follow-OS mode (RAWY-39).

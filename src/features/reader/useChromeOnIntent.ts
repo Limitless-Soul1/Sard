@@ -194,9 +194,29 @@ export function useChromeOnIntent(): {
     //
     // `arm()` still runs, so an ALREADY-VISIBLE bar keeps its idle countdown reset while the reader
     // works in the panel — the guard suppresses the forced reveal, not the liveness.
+    // A PAGE TURN IS NOT A REQUEST FOR THE TOOLBAR, and pressing one must not end immersive reading.
+    //
+    // THE BUG IT FIXES — measured, not inferred. In a PDF in Pages mode with the bars hidden
+    // (`.reader-root.chrome-hidden`, `.rc-top` parked at top=-38), pressing the next-page chevron fired
+    // this listener, `wake()` set `visible=true`, and both bars slid back in — measured top=-38 → 32,
+    // the bottom bar from hidden to visible, on the first press and on all four of a consecutive run.
+    // The page itself turned correctly each time (6 → 7 → 8 → 9 → 10); only the chrome was wrong.
+    //
+    // WHY THE CHEVRONS AND NOT THE WHOLE SURFACE. Tapping the PAGE is still a reveal — that is the
+    // deliberate "show me the controls" gesture, and it is unchanged. These two buttons are different in
+    // kind: they perform the reader's own action, and they sit over the reading area precisely so they
+    // can be used without leaving it. The same reasoning the Contents guard above records, for the same
+    // reason: a press that DOES something is not a press that asks for the bar.
+    //
+    // `arm()` still runs, so a VISIBLE bar keeps its idle countdown reset while the reader pages
+    // through — the bar never hides mid-use, and non-immersive paging is byte-identical to before. A
+    // HIDDEN bar simply stays hidden, which is the whole of the fix.
+    //
+    // Keyboard paging needed nothing: RAWY-194 removed wake-on-keydown, so it already left the bars
+    // alone, and this brings the pointer path into line with it rather than inventing a new rule.
     const onTap = (e: PointerEvent) => {
       const el = e.target as Element | null;
-      if (el?.closest?.(".reader-panel.rp-lead:not(.search-panel)")) {
+      if (el?.closest?.(".reader-panel.rp-lead:not(.search-panel)") || el?.closest?.(".page-chevron")) {
         arm();
         return;
       }

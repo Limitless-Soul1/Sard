@@ -12,19 +12,34 @@ import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
 import { useProfiles } from "../profiles/store";
+import { changesBetween, guardUnsaved } from "../profiles/session";
 import { parseSectionHref, sectionHref } from "../../reader-engine/sectionHref"; // WP-6A: generated-row hrefs
 import { positionReadout } from "../../reader-engine/position";
 import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 stage 3 // WP-4F: one place decides the readout
 // RAWY-291: PDF reading appearances + the zoom lattice.
 import {
   isPdfThemeId, PDF_THEME_KEY, pdfTheme, pdfZoomKey, pdfZoomAttr, parseStoredZoom,
-  stepPdfZoom, zoomForWheel, isFitMode, type PdfZoom, type PdfThemeId,
+  PDF_VIEW_MODE_KEY, parsePdfViewMode, type PdfViewMode,
+  PDF_SURROUND_KEY, parsePdfSurround, type PdfSurround,
+  PDF_FRAME_KEY, parsePdfFrame, pdfBand,
+  zoomForWheel, isFitMode, clampPdfZoom, type PdfZoom, type PdfZoomRange, type PdfThemeId,
 } from "../../reader-engine/pdfView";
 import {
   speakSymbolsKey, speakSymbolsAttr, parseSpeakSymbols, effectiveSpeakSymbols,
 } from "./speakSymbols";
 import {
+  bookAppearanceKey, parseBookAppearance, resolveAppearanceStyle, readingBackgroundOf,
+  splitReadingEdit, withReadingEdit, withBackgroundEdit, withPaperEdit, withPaletteEdit,
+  noteBookAppearance, BOOK_APPEARANCE_NONE,
+} from "./bookAppearance";
+import { profileReadingTheme, profileTheme, readingThemeId, type Profile } from "../profiles/model/profile";
+import {
+  appearanceDraftDirty, clearAppearanceDraft, commitAppearanceDraft, draftDirty, editAppearance,
+  heldDraft, resolveAppearance, useAppearanceDraft,
+} from "./appearanceDraft";
+import {
   ARABIC_DEFAULTS,
+  defaultsForDir,
   PAGE_WIDTH_DEFAULT,
   pageWidthPx,
   type ReadingStyle,
@@ -33,6 +48,7 @@ import {
   ZOOM_MIN,
   ZOOM_STEP,
 } from "../../reader-engine/injectedCss";
+import { Icon } from "../../components/Icon";
 import { bookGet, bookRegister, bookSetCoverPng, bookSetExtracted, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 // RESILIENCE-1 / WP-3: the ONE place a book's displayed name is decided (see lib/bookMeta.ts).
 import { hintMeta, resolveBookMeta } from "../../lib/bookMeta";
@@ -44,9 +60,9 @@ import { openWebView2Help } from "../../lib/webview2";
 import { ErrorCard } from "../../app/ErrorCard";
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
-import { resolveTheme, useTheme, type ThemeId } from "../../theme";
+import { isBuiltinThemeId, resolveTheme, themeVars, useTheme, type ThemeId } from "../../theme";
 import type { FootnoteHit } from "../../reader-engine/FoliateController";
-import { loadGlobalStyle, saveGlobalStyle } from "./perBookSettings";
+import { loadGlobalStyle, peekGlobalRow, saveGlobalRow } from "./perBookSettings";
 // RAWY-265 (Phase 3): the page-opacity gate + the desk scrim, both resolved in one place.
 import {
   bgOverlayOf,
@@ -54,7 +70,10 @@ import {
   effectivePageOpacity,
   overlayTint,
   useBackground,
+  setReadingBackgroundOwner,
 } from "../../lib/background";
+import { textureVars } from "../../lib/texture";
+import { chromeStack } from "../../lib/fonts";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { PhotoBasketTray } from "./PhotoBasketTray";
@@ -81,6 +100,7 @@ import {
   type Landing,
   markFromResume,
   parseFurthest,
+  resetFurthest,
   serialiseFurthest,
   type FurthestMark,
 } from "./furthestRead"; // the furthest point reached — the maximum of the reading position
@@ -140,6 +160,28 @@ const parseSecs = (raw: string | null): number[] => {
   }
 };
 
+/**
+ * THE BOOK FLAGS, BUILT IN ONE PLACE. Every `ctrl.open()` hands the engine the same five values, read
+ * from their stores at the moment of the open.
+ *
+ * The reading-mode switch used to build its own copy with only the first three. Without
+ * `pageOpacity` the book document paints the page colour OPAQUE, so after Scroll -> Pages a translucent
+ * page over a wallpaper turned into a solid dark block — MEASURED: the frame's body went from
+ * `transparent` to `rgb(17, 26, 27)`, and the controller's flags lost `pageOpacity: 0.84` and
+ * `deskScrim`. Moving a background slider "fixed" it only because those two values feed the theme
+ * effect, which re-applied the full set.
+ */
+function currentBookFlags() {
+  const ts = useTheme.getState();
+  return {
+    overrideBookColor: ts.overrideBookColor,
+    hideChapterTitles: ts.hideChapterTitles,
+    hideFirstLine: ts.hideFirstLine,
+    pageOpacity: effectivePageOpacity(),
+    deskScrim: currentDeskScrim(),
+  };
+}
+
 export function Reader({
   book: initial,
   onExit,
@@ -171,6 +213,14 @@ export function Reader({
   // re-implementation of it that could drift.
   (window as unknown as { __sardTrackStats?: (lang?: string) => unknown }).__sardTrackStats = (lang) =>
     ctrlRef.current?.trackStats(lang);
+  // DEV ONLY, and compiled out of a release build. Cross-chapter preparation keys prepared audio on the
+  // opening of a section read from its RAW document; these two let that be measured against the units the
+  // rendered chapter actually produces, through the real pipeline rather than a copy of it.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __sardRawUnits?: (i: number, lang?: string, n?: number) => unknown }).__sardRawUnits = (i, lang, n) =>
+      ctrlRef.current?.rawSectionFirstUnits(i, lang, n ?? 2);
+    (window as unknown as { __sardCtrl?: () => unknown }).__sardCtrl = () => ctrlRef.current;
+  }
   // RAWY-292: the same convention for PDF read-aloud — units as the pipeline builds them, plus the
   // text-layer verdict, so extraction QUALITY is measured through the real code.
   (window as unknown as { __sardPdfTts?: (lang?: string) => unknown }).__sardPdfTts = async (lang) => {
@@ -237,6 +287,8 @@ export function Reader({
   // close-requested handler registers ONCE ([] deps) but must describe the book on screen NOW, not the one
   // this Reader happened to mount with — the Reader is REUSED across books (RAWY-206 cross-book follow).
   const isPdfRef = useRef(false);
+  // The PDF frame's layout, read by the once-registered onRelocate closure (see `layoutPdfBand`).
+  const pdfBandRef = useRef<() => void>(() => {});
   // RAWY-249 (PART 2): latest hideChrome, so the once-registered onRelocate closure (openBook, [] deps) always
   // calls the current hook callback — same stale-capture guard as playRef.
   const hideChromeRef = useRef<() => void>(() => {});
@@ -386,6 +438,148 @@ export function Reader({
   // STALE value: it was captured when the book opened, so switching profiles mid-book and then going
   // back handed the Library its previous profile's colours.
   const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().bookThemeId);
+  // THIS BOOK'S OWN هيئة, or `null` for "follows the worn one" — an IDENTIFIER, never a copy of what
+  // it names (see `bookAppearance.ts`). `bookThemeId` above holds the EFFECTIVE palette, which is what
+  // every existing consumer already reads; this is held separately because two questions are asked of
+  // it: what to render (effective) and what the control should show (this book's own answer alone).
+  //
+  // Held in a ref as well as state because the effect that carries a هيئة change into an open book
+  // runs off the THEME store and must not be re-created when this changes — a ref cannot be a render
+  // behind the row that was just loaded, which is the same reason `speakSymbolsRef` exists.
+  const [bookAppearanceId, setBookAppearanceId] = useState<string | null>(null);
+  const bookAppearanceRef = useRef<string | null>(null);
+  /**
+   * THE ROW AS THE READER AUTHORED IT, beside the resolved style `globalStyleRef` holds.
+   *
+   * These are two different things and conflating them was a real defect: the resolved style carries
+   * a value for EVERY field, filled in from the per-script baseline, and writing it back turned
+   * "the reader has no opinion about the alignment" into "the reader chose the Arabic one" — which
+   * then decided every Latin book. `globalStyleRef` stays resolved, because that is what renders;
+   * this is what gets written.
+   */
+  const globalRowRef = useRef<Partial<ReadingStyle>>({});
+  /**
+   * THE BOOK IS ON ITS WAY OUT, so nothing should be painted into it.
+   *
+   * Set only by an answered unsaved-changes dialog that ends in leaving — see `leaveWithDraft`, which
+   * records why. It exists because a save re-renders this component one last time before the unmount,
+   * and that render would otherwise queue frame work against a view that is already gone.
+   */
+  const leavingRef = useRef(false);
+  // Appearance-owned changes waiting to be folded into the هيئة, accumulated across the save debounce
+  // so a slider drag becomes one write to one هيئة rather than one per tick.
+  const pendingAppearanceEdit = useRef<Partial<ReadingStyle>>({});
+  /**
+   * WHICH هيئة A STORED ID NAMES, resolved against the registry as it is right now.
+   *
+   * Three answers, and they are not the same thing: a هيئة of the book's own (`own`), one of the
+   * sixteen shipped papers (`builtin` — a paper carries no measure, so there is nothing more of it to
+   * resolve), or neither, which is how a هيئة the reader has since DELETED reads. The last falls all
+   * the way through to the worn هيئة rather than to an error or to Ivory: the reader never chose Ivory,
+   * they chose something that no longer exists, and following is the honest reading of that. The stale
+   * row is left on disk, so re-importing that هيئة restores the book.
+   *
+   * Reads the store imperatively rather than subscribing: every caller already re-runs for its own
+   * reason, and a subscription here would re-resolve on every unrelated profile touch.
+   */
+  /**
+   * PUT A هيئة'S READING PICTURE ON THE DESK — or hand the desk back to the session.
+   *
+   * THE LIBRARY'S PICTURE IS NOT TOUCHED, and that is the whole of the surface split: a هيئة carries
+   * two images, and only the reading one belongs to a book. `wearReadingBackground` writes the
+   * EFFECTIVE reading slots and never the persisted rows, so the reader's own library environment and
+   * the worn هيئة's stored binding are both exactly where they were.
+   *
+   * The OWNER is installed alongside: while this book wears a هيئة, the drawer's picture controls edit
+   * THAT هيئة rather than the shared rows — the same rule the measure follows, and the reason moving
+   * the presence slider here does not silently move every other book's desk.
+   */
+  const wearAppearanceBackground = useCallback((p: Profile | null) => {
+    const bg = useBackground.getState();
+    if (!p) {
+      bg.wearReadingBackground(null, null);
+      setReadingBackgroundOwner(null);
+      return;
+    }
+    const { ref, params } = readingBackgroundOf(p);
+    bg.wearReadingBackground(ref, params);
+    setReadingBackgroundOwner({
+      setParams: (next) => {
+        const live = appearanceInForce();
+        if (live) editAppearance(withBackgroundEdit(live, { params: next }));
+      },
+      setImage: (nextRef, next) => {
+        const live = appearanceInForce();
+        if (live) editAppearance(withBackgroundEdit(live, { ref: nextRef, params: next }));
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * THE هيئة THIS BOOK IS READ IN — its unsaved draft while one is open, its saved row otherwise.
+   *
+   * ONE substitution, and it is what makes the whole draft model work without a second copy of
+   * anything: every surface that resolves an appearance already comes through here, so the style,
+   * the paper, the picture and the interface all read the draft from the moment it exists and the
+   * saved row again the moment it does not.
+   */
+  const appearanceFor = useCallback((id: string | null) => {
+    const list = useProfiles.getState().profiles ?? [];
+    const own = resolveAppearance(id, list);
+    const builtin = !own && id && isBuiltinThemeId(id) ? id : null;
+    return { own, builtin };
+  }, []);
+
+  /**
+   * THE هيئة THIS BOOK IS ACTUALLY WEARING — the one and only owner of every appearance-owned edit.
+   *
+   *   · the book names its own هيئة  → that هيئة
+   *   · the book follows «افتراضي»   → the هيئة worn in the Library, whatever it is today
+   *
+   * «افتراضي» IS A REFERENCE, NOT A COPY. A following book resolves the CURRENT global default on
+   * every open, so changing the Library's هيئة moves every following book with it and no per-book row
+   * is written. That is why this reads the active id rather than storing one.
+   *
+   * WHY THE SECOND BRANCH IS NEW. A following book's edits used to go to the shared reading row, and
+   * the Library's drift dialog offered — later, elsewhere — to fold them into the worn هيئة. So the
+   * reader edited "the appearance this book is in" and the change landed somewhere else until they
+   * answered a question they had not asked for. Now both kinds of book edit the هيئة they are wearing,
+   * through the same draft and the same three answers.
+   *
+   * `null` only when NOTHING is worn — possible after deleting the active هيئة — and the old shared
+   * path is what answers then, because there is genuinely no owner to edit.
+   */
+  /**
+   * WHAT AN APPEARANCE-OWNED EDIT APPLIES TO — the draft in progress, else the effective owner.
+   *
+   * TWO DIFFERENT QUESTIONS, and conflating them lost a reader's work. `ownerFor` answers "what would
+   * this book wear if nothing were in progress"; it is re-derived, so it MOVES when the Library's
+   * هيئة changes. A draft answers "what is the reader in the middle of changing", and that must not
+   * move at all until they Save or Discard.
+   *
+   * MEASURED DEFECT: a following book drafted «TNocturne»; the reader changed the Library's هيئة to
+   * «TRing», chose Stay, and made one more edit. That edit resolved its target through `ownerFor`,
+   * which now said TRing — so the draft was rebuilt from TRing, the pending TNocturne change was
+   * silently dropped, and Save wrote TRing, an appearance the reader had never set out to edit.
+   *
+   * A CLEAN draft is not a draft: if the reader has put every value back, there is nothing in
+   * progress and the next edit belongs to whatever the book wears now.
+   */
+  const appearanceInForce = useCallback((): Profile | null => {
+    const held = heldDraft();
+    if (held && appearanceDraftDirty()) return held.draft;
+    return ownerFor();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const ownerFor = useCallback((): Profile | null => {
+    const list = useProfiles.getState().profiles ?? [];
+    const own = resolveAppearance(bookAppearanceRef.current, list);
+    if (own) return own;
+    if (bookAppearanceRef.current) return null; // a builtin paper, not a هيئة — no owner to edit
+    return resolveAppearance(useProfiles.getState().activeId ?? null, list);
+  }, []);
   const [photoCard, setPhotoCard] = useState<CardData | null>(null); // RAWY-49 Photo Mode composer
   const [devCardFont, setDevCardFont] = useState<string | null>(null); // RAWY-81 DEV capture only
   const [basketOpen, setBasketOpen] = useState(false); // RAWY-60 passages tray
@@ -407,7 +601,7 @@ export function Reader({
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
   // colour + hide-chapter-titles stay GLOBAL flags. RAWY-216: Reader only READS them now (to inject
   // the CSS); the setters live where the controls do — the drawer's "All books" tab / Global Settings.
-  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive } = useTheme();
+  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, immersiveDim } = useTheme();
   // RAWY-265 (Phase 3): the effective page opacity + the desk scrim in force. Both ride the EXISTING
   // applyTheme(theme, flags) channel rather than new plumbing, and both are 1 unless a reading
   // background is genuinely showing — so an untouched profile passes exactly what it passed before.
@@ -525,12 +719,48 @@ export function Reader({
       // for the same fields. Any `book_style:<id>` a reader stored is left on disk untouched and is
       // simply never read — the same "ignore, never delete" rule unified scope always followed.
       const ts = useTheme.getState();
+      // THE BOOK'S OWN PAPER IS READ HERE, BESIDE THE STYLE, and not with the dozen per-book rows
+      // further down — because the paper has to be known before the FIRST paint. `setBookThemeId`
+      // three lines below is what `--reader-page` and `--reader-bg` are resolved from, and the note
+      // on those vars records what a late correction costs: 182 ms of the wrong colour on every cold
+      // open, measured.
+      //
+      // STARTED HERE AND AWAITED AFTER THE STYLE rather than batched with it, so the two reads still
+      // overlap while the style's own line stays exactly what it was. That line is asserted verbatim
+      // by `readerColourBoundary` — the suite standing guard over the removed two-level reading style
+      // — and rewriting a guard to fit a new feature is how the thing it guards comes back.
+      const bookAppearanceRow = settingsGet(bookAppearanceKey(target.id)).catch(() => null);
       const global = await loadGlobalStyle(target.dir ?? undefined);
+      const appearanceRaw = await bookAppearanceRow;
       if (stale()) return;
       globalStyleRef.current = global;
-      // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme.
-      const effTheme = ts.bookThemeId;
-      let initialStyle = global;
+      // The authored row behind that resolution, for the write path — see `globalRowRef`.
+      globalRowRef.current = peekGlobalRow() ?? {};
+      // THE هيئة THIS BOOK IS READ IN — its own when it names one that still exists, the worn one
+      // otherwise. `own` is the whole object, so the palette AND the measure below come from ONE
+      // definition rather than from two rows that could disagree.
+      //
+      // FOLLOWING IS THE UNTOUCHED PATH, deliberately: with no هيئة of its own the book reads the
+      // global row, which already IS the worn هيئة's patch plus whatever the reader has changed since.
+      // Re-resolving it from the worn هيئة here would quietly discard those changes.
+      const { own, builtin } = appearanceFor(parseBookAppearance(appearanceRaw));
+      const inForce = own ? own.id : builtin;
+      bookAppearanceRef.current = inForce;
+      setBookAppearanceId(inForce);
+      // A sitting starts clean: whatever draft the last book left has already been answered for at
+      // its own boundary, and a هيئة draft must never follow a reader into a different book.
+      clearAppearanceDraft();
+      // Only a هيئة moves the reading STYLE, so only a هيئة is announced to the drift detector.
+      noteBookAppearance(own ? own.id : null);
+      // THE PICTURE BELONGS TO THE EFFECTIVE OWNER, which for a FOLLOWING book is the هيئة the Library
+      // wears — not `own`, which is null there. Passing `own` left a following book with no picture
+      // owner at all, so the drawer's picture controls fell through to the shared `bg_reading_params`
+      // row: measured as Presence 9 -> 7 written straight to that row, with no draft, nothing asked on
+      // the way out and no way to discard it. Every other appearance-owned writer already resolves
+      // through `ownerFor`; these three were the ones left behind.
+      wearAppearanceBackground(ownerFor());
+      const effTheme = own ? readingThemeId(own.id) : ((builtin as ThemeId | null) ?? ts.bookThemeId);
+      let initialStyle = own ? resolveAppearanceStyle(own, target.dir ?? undefined, global) : global;
       set({ style: initialStyle });
       setBookThemeId(effTheme);
 
@@ -615,22 +845,36 @@ export function Reader({
       // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
       // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
       // deferral of the handler: the data is just present before anything can read it.
-      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, furthestRaw, speakSymRaw] = await Promise.all([
+      const [readRaw, seenRaw, spoilerRaw, wholeWordRaw, backwardRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, pdfModeRaw, furthestRaw, speakSymRaw, pdfSurroundRaw, pdfFrameRaw] = await Promise.all([
         settingsGet(`chapters_read:${target.id}`).catch(() => null),
         settingsGet(`seen_start:${target.id}`).catch(() => null),
         settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
+        // Whole-word search, this book's answer. Per book and default OFF, exactly like the
+        // spoiler-safe row beside it — the two switches in the search panel keep one convention.
+        settingsGet(`search_whole_word:${target.id}`).catch(() => null),
+        // Which way search reads this book. Per book and default OFF — the scan Sard has always run
+        // — following the same convention as the two switches beside it.
+        settingsGet(`search_backward:${target.id}`).catch(() => null),
         settingsGet(`pdf_invert:${target.id}`).catch(() => null),
         // The PDF appearance is a READING preference, so it is global like the book theme — a reader
         // who wants sepia wants it for every PDF. Zoom is the opposite: it belongs to the document,
         // because the right magnification depends on that file's page size and scan quality.
         settingsGet(PDF_THEME_KEY).catch(() => null),
         settingsGet(pdfZoomKey(target.id)).catch(() => null),
+        // HOW a PDF is read — one continuous flow, or one page at a time. Loaded here with the rest,
+        // because it decides which renderer `ctrl.open()` builds and cannot be changed afterwards
+        // without reopening the book.
+        settingsGet(PDF_VIEW_MODE_KEY).catch(() => null),
         // The furthest point reached. Same additive settings-row pattern as the two sets above —
         // no schema change, no migration, and an absent key simply means this book has no mark yet.
         settingsGet(`furthest_read:${target.id}`).catch(() => null),
         // This book's own answer to "say the decorative marks?", or nothing at all — the third state,
         // which is what lets a book go back to following the worn هيئة. Same additive row pattern.
         settingsGet(speakSymbolsKey(target.id)).catch(() => null),
+        // How much of the reading sheet shows around a PDF page. Global, like the PDF appearance.
+        settingsGet(PDF_SURROUND_KEY).catch(() => null),
+        // ...and how far it extends beyond the page (absent = the whole reading column, as before).
+        settingsGet(PDF_FRAME_KEY).catch(() => null),
       ]);
       if (stale()) return;
       // Held in a ref as well as state: the three read-aloud entry points resolve it at the moment
@@ -668,11 +912,22 @@ export function Reader({
       // OFF via the Library route — same book, same stored value). Loading them on the same path as every
       // other per-book value removes the second lifecycle rather than adding a second reset.
       setSpoilerSafe(spoilerRaw !== "0"); // default ON (design §5)
+      setSearchWholeWord(wholeWordRaw === "1"); // default OFF — today's substring search is unchanged
+      setSearchBackward(backwardRaw === "1"); // default OFF — first section to last, as it always was
       // A reader who had chosen "inverted" before themes existed keeps a dark page: the old boolean is
       // honoured once, as "night", and only when no theme has been chosen since. Nobody's setting is
       // silently discarded, and nobody who never used invert gets a dark theme they did not ask for.
       setPdfThemeId(isPdfThemeId(pdfThemeRaw) ? pdfThemeRaw : invertRaw === "1" ? "night" : "normal");
       setPdfZoom(parseStoredZoom(pdfZoomRaw) ?? "fit-page");
+      setPdfSurround(parsePdfSurround(pdfSurroundRaw));
+      setPdfFrame(parsePdfFrame(pdfFrameRaw));
+      // Set BOTH before `ctrl.open()` below reads the ref: the mode chooses the renderer, and the
+      // renderer is built inside that call.
+      {
+        const mode = parsePdfViewMode(pdfModeRaw);
+        pdfModeRef.current = mode;
+        setPdfMode(mode);
+      }
       // RESILIENCE-1 / WP-6B — a FRAGMENTED spine defaults to SCROLLED flow.
       //
       // MEASURED across the corpus: exactly one book qualifies — `word-generated--unknown-title`,
@@ -708,6 +963,8 @@ export function Reader({
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
         // WP-4F: `location`/`pageLabel` are foliate's own position data, which used to be dropped here.
         set({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel });
+        // A PDF page that scrolled, turned or changed size takes its frame with it (no-op for an EPUB).
+        pdfBandRef.current();
         // DISC/RPC: the activity's position line follows the real reading position — the chapter
         // label when the engine has one, else the whole-book percent. Throttled inside.
         updateReadingSession(chapterLabel, fraction);
@@ -832,7 +1089,8 @@ export function Reader({
               if (!grown) return;
               furthestRef.current = grown;
               setFurthestUi(grown);
-              ctrl.setFurthestBoundary(grown.cfi); // search seals from the new point on
+              // No boundary is pushed to the engine: search seals from the reader's live position, not
+              // from this mark. The mark is progress — where the way back leads.
               settingsSet(`furthest_read:${bookRef.current}`, serialiseFurthest(grown)).catch(() => {});
             })();
           }
@@ -848,18 +1106,15 @@ export function Reader({
         resumeFraction, // RAWY-85: PDFs resume by page fraction
         style: initialStyle,
         theme: resolveTheme(effTheme),
-        flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine, pageOpacity: effectivePageOpacity(), deskScrim: currentDeskScrim() },
+        flags: currentBookFlags(),
         dir: target.dir ?? undefined, // RAWY-85: a PDF's manual RTL override lives in books.dir too
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
+        fxlMode: pdfModeRef.current, // PDF only: "scroll" (default) or "pages"
         revealLabels: makeRevealLabels(), // RAWY-70
       });
       // Superseded during the (async) open → don't publish ready/toc or bind the shared stores; the
       // newer open owns them now.
       if (stale()) return;
-      // THE SPOILER-SAFE BOUNDARY IS THIS MARK. The engine no longer works it out from what has been
-      // displayed; it is told, here and on every advance below, so search seals exactly what the
-      // reader has not read — and keeps sealing it after they page back to an earlier chapter.
-      ctrl.setFurthestBoundary(furthestRef.current?.cfi ?? null);
 
       // RESILIENCE-1 / WP-3 — the DATABASE names this book, not the file.
       //
@@ -1184,13 +1439,146 @@ export function Reader({
     void (async () => {
       const global = await loadGlobalStyle(dir ?? undefined);
       if (!alive) return;
+      // THE ROW STILL HAS TO BE RE-READ, because it is the session's and the switch rewrote it — a
+      // book that follows takes it, and a book that does not still needs it for the fields a هيئة does
+      // not own (the flow, the ink, the immersive pair, the page colour).
       globalStyleRef.current = global;
-      useReader.getState().set({ style: global });
-      ctrlRef.current?.applyStyle(global);
+      const own = appearanceFor(bookAppearanceRef.current).own;
+      // BOTH BRANCHES INSTALL THE PICTURE'S OWNER, and it is the effective one. A following book takes
+      // the early return below, so passing `own` here left it ownerless after every هيئة switch.
+      wearAppearanceBackground(ownerFor());
+      if (!own) {
+        useReader.getState().set({ style: global });
+        ctrlRef.current?.applyStyle(global);
+        return;
+      }
+      // A BOOK WEARING ITS OWN هيئة DECLINES THE SWITCH — and has to be re-asserted rather than merely
+      // left alone, because `applyProfile` has just re-run `initBackground`, which re-hydrates the
+      // reading surface from the newly worn هيئة's stored binding. Without this the palette and the
+      // measure would hold while the DESK quietly changed to the other هيئة's picture.
+      const next = resolveAppearanceStyle(own, dir ?? undefined, global);
+      useReader.getState().set({ style: next });
+      ctrlRef.current?.applyStyle(next);
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyTick]);
+
+  /**
+   * LEAVING THE BOOK WITH A هيئة THE READER HAS CHANGED BUT NOT SAVED.
+   *
+   * An appearance-owned edit made in here is a DRAFT: the book shows it at once, the هيئة does not
+   * receive it. That is only honest if the draft is not then thrown away in silence — so every route
+   * out of the book passes through here, and the reader is asked once, at the moment the answer
+   * actually matters.
+   *
+   * IT IS THE EXISTING QUESTION, NOT A NEW ONE. `guardUnsaved` already carries `subject`, `onSave`
+   * and `onDiscard` for a draft that `driftOf` cannot see — that is how the profile editor's own
+   * draft is handled. This is the same shape from a different boundary, so the dialog, its wording,
+   * its three answers and its keyboard behaviour are the ones Sard already has.
+   *
+   *   Save      the draft becomes the هيئة, so every book wearing it follows. The global appearance
+   *             and the Library are not touched: a هيئة owns itself and nothing else.
+   *   Discard   the draft goes and the book returns to the saved هيئة. No هيئة data changes.
+   *   Stay      nothing happens and the draft is still there, which is what "not yet" means.
+   *
+   * A CLEAN DRAFT ASKS NOTHING. `appearanceDraftDirty` compares the two objects rather than latching
+   * a flag, so a reader who tries Sepia and puts the original back walks out without a question —
+   * there is genuinely nothing unsaved.
+   */
+  const leaveWithDraft = useCallback((go: () => void, opts?: { keepsBook?: boolean }) => {
+    // THE DRAFT ITSELF IS THE SUBJECT, and it is read from the store rather than looked up by the
+    // owner. A draft is bound to the هيئة it departed from; changing the Library's هيئة, the book's
+    // assignment or anything else afterwards must not retarget it. Re-deriving the owner here named
+    // the WRONG هيئة once the global default moved under a dirty draft — see `heldDraft`.
+    const held = heldDraft();
+    if (!held || !draftDirty()) {
+      clearAppearanceDraft();
+      go();
+      return;
+    }
+    // THE BOOK IS ABOUT TO GO, SO DO NOT REPAINT IT ON THE WAY OUT.
+    //
+    // MEASURED, not guessed: `setStyles` in the vendored paginator queues
+    // `requestAnimationFrame(() => … getBackground(this.#view.document))` with no guard on `#view`
+    // (paginator.js:1204, and its own note says the frame is required in Chromium). Answering the
+    // dialog and leaving in the same tick tears the view down before that frame runs, and the
+    // callback then dereferences null — one uncaught TypeError per exit, on both Save and Discard,
+    // where a plain exit and a reload produce none.
+    //
+    // The repaint is only ever FOR the case where the reader stays in the book, which is the هيئة
+    // switch below; through the two doors there is nothing left to paint. So the fix is to not ask
+    // for it rather than to patch vendored code for a call that should not have been made.
+    const leaving = !opts?.keepsBook;
+    guardUnsaved(
+      () => { clearAppearanceDraft(); go(); },
+      {
+        // THE هيئة THE DRAFT BELONGS TO — named, and its own changes listed. Both come from the same
+        // object the Save and the Discard act on, so the question and the answer cannot disagree.
+        subject: held.draft,
+        alsoDirty: true,
+        keys: changesBetween(held.saved, held.draft),
+        onSave: async () => {
+          leavingRef.current = leaving;
+          await commitAppearanceDraft();
+        },
+        // PUT THE BOOK BACK, when there is still a book to put back. Clearing the draft is enough for
+        // the palette and the interface — they re-resolve from the saved row on the next render — but
+        // the reading STYLE and the desk are imperative, so they are re-asserted the same way a هيئة
+        // switch under an open book re-asserts them.
+        onDiscard: () => {
+          leavingRef.current = leaving;
+          clearAppearanceDraft();
+          if (leaving) return;
+          const dir = useReader.getState().dir ?? undefined;
+          const session = { ...defaultsForDir(dir), ...globalRowRef.current } as ReadingStyle;
+          globalStyleRef.current = session;
+          const saved = ownerFor();
+          const back = saved ? resolveAppearanceStyle(saved, dir, session) : session;
+          useReader.getState().set({ style: back });
+          ctrlRef.current?.applyStyle(back);
+          if (saved) wearAppearanceBackground(saved);
+        },
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * EVERY WAY OUT OF THE BOOK, and there are exactly two doors.
+   *
+   * `onExit` unmounts the Reader — the ✕/back arrow, and the three menu items that end in the Library
+   * (back, re-import, remove). `onOpenBook` keeps it mounted and swaps the book under it, which is
+   * how a note or a cross-book reference opens somewhere else. Both are props, so wrapping them HERE
+   * covers every caller inside the Reader without each one having to remember the question.
+   *
+   * WHAT IS DELIBERATELY NOT INTERCEPTED: closing the window. That is quitting, not leaving the book,
+   * and the close path carries its own history (RAWY-174) that a new dependency has no business
+   * joining. A draft dies with the session, which is what an unsaved draft has always done.
+   */
+  const exitBook = useCallback(() => leaveWithDraft(onExit), [leaveWithDraft, onExit]);
+  const openOtherBook = useCallback(
+    (t: OpenTarget) => leaveWithDraft(() => onOpenBook?.(t)),
+    [leaveWithDraft, onOpenBook],
+  );
+
+  /**
+   * LEAVING THE BOOK HANDS THE DESK BACK.
+   *
+   * The reading surface is the SESSION's again the moment no book is being read in a هيئة of its own,
+   * and the owner has to go with it: a picture control reached from anywhere else must write the
+   * reader's own rows, not whichever هيئة the last book happened to wear.
+   */
+  useEffect(() => () => {
+    noteBookAppearance(null);
+    useBackground.getState().wearReadingBackground(null, null);
+    setReadingBackgroundOwner(null);
+    // AND A DRAFT NEVER OUTLIVES THE READER THAT HOLDS IT. Every door out already asks and then
+    // clears, so by the time this runs there is nothing left — except on a route that never reached a
+    // door at all, such as an unmount from an error boundary. A draft surviving into the Library would
+    // be an unsaved هيئة nobody can see, answer or put back.
+    clearAppearanceDraft();
+  }, []);
 
   /**
    * AND SO DOES THE PALETTE THAT SWITCH BROUGHT WITH IT.
@@ -1205,15 +1593,23 @@ export function Reader({
    *
    * Kept separate from the style effect above on purpose: this one is synchronous and depends on the
    * THEME store, not on the profile row, so it is also correct for any other route that changes the
-   * default reading theme under an open book. A per-book theme still wins — the same three lines the
-   * scope effect uses, for the same reason.
+   * default reading theme under an open book.
+   *
+   * AND A PER-BOOK PAPER WINS HERE, which is the half of the feature that cannot be done at open
+   * time. This effect is exactly what makes a هيئة change reach a book already on screen, so it is
+   * also exactly where a book that has departed from the هيئة must decline to follow it. Read through
+   * the REF, not the state: this effect depends on the theme store alone, and adding the override to
+   * its dependency list would re-run it on every per-book choice — repainting for a value the writer
+   * below has already applied.
    */
   const defaultBookTheme = useTheme((st) => st.bookThemeId);
   useEffect(() => {
     if (status !== "ready") return;
-    const effTheme = defaultBookTheme;
-    setBookThemeId(effTheme);
-    ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    // A book wearing its own هيئة declines the switch entirely — palette AND measure. Its style was
+    // resolved from that هيئة and nothing about the worn one reaches it, which is the whole promise.
+    if (bookAppearanceRef.current) return;
+    setBookThemeId(defaultBookTheme);
+    ctrlRef.current?.applyTheme(resolveTheme(defaultBookTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultBookTheme]);
 
@@ -1260,7 +1656,7 @@ export function Reader({
     // RAWY-184 (Part C) / PART D: Right/Left arrow with focus inside the reading frame skips the next/prev
     // SENTENCE while read-aloud is active — NOT mirrored in RTL (the transport is a media/time control, not
     // reading direction); otherwise the arrows keep their normal page-turn (which DOES mirror in RTL).
-    ctrl?.onArrow((key) => skipSentenceForArrow(key));
+    ctrl?.onArrow((key, repeat) => skipSentenceForArrow(key, repeat));
     // RAWY-73/130: scroll-down hides the bars, scroll-up shows them — the SAME during TTS now (RAWY-129
     // gated this off to dodge a reflow hitch; RAWY-130 removes the gate and instead pins the reading area
     // full-height during TTS via `.reader-root.tts-playing .page-host` (global.css), so the bars hide/show
@@ -1522,13 +1918,35 @@ export function Reader({
     const next = { ...current, ...patch };
     useReader.getState().set({ style: next });
 
-    // ONE BASELINE, ONE ROW. Every reading change is the global one now, so there is no second
-    // place a value could go and nothing that could outrank the active هيئة.
+    // WHERE THE CHANGE BELONGS, and there are exactly two answers because there are exactly two
+    // owners — never a per-book copy, which is the deleted model.
     //
-    // THE READ-ALOUD SPECIAL CASE IS GONE WITH IT. It existed to keep those seven out of a book's
-    // override while everything else still went there; with no override to keep them out of, the
-    // rule is simply the rule for every field.
-    globalStyleRef.current = next;
+    //   · The book FOLLOWS the worn هيئة → the global row, exactly as before. Untouched path.
+    //   · The book wears a هيئة OF ITS OWN → the fields that هيئة owns are an edit TO THAT هيئة, and
+    //     the handful it does not own (flow, ink, the immersive pair, the page colour) stay the
+    //     reader's own row. Both halves are written on the debounce below.
+    //
+    // A reader changing the leading while book A wears Runes is changing RUNES. Every book wearing
+    // Runes then shows it, because there is one Runes — which is the product decision this
+    // implements, and the reason no per-book measure row exists anywhere in this file.
+    const ownAppearance = appearanceInForce();
+    if (!ownAppearance) {
+      // A FOLLOWING BOOK: the untouched path, except that what is written is the AUTHORED row plus
+      // this edit — never the resolved style, which would freeze the per-script baseline as though
+      // the reader had chosen it.
+      globalStyleRef.current = next;
+      globalRowRef.current = { ...globalRowRef.current, ...patch };
+    } else {
+      const split = splitReadingEdit(patch);
+      const row = globalStyleRef.current;
+      // READING MODE IS NOT APPEARANCE. The flow, the page fit and the immersive pair stay the
+      // reader's own and are written as they are made — they are not part of a هيئة and must never be
+      // inside its Save/Discard boundary. Written to the AUTHORED row, so a field nobody set does not
+      // acquire a value (see `saveGlobalRow`).
+      if (row) globalStyleRef.current = { ...row, ...split.session };
+      globalRowRef.current = { ...globalRowRef.current, ...split.session };
+      Object.assign(pendingAppearanceEdit.current, split.appearance);
+    }
 
     // flowMode is a renderer attribute set at open() — switching it re-opens at the current CFI
     // (preserves position); every other field is the live injected-CSS funnel.
@@ -1539,11 +1957,7 @@ export function Reader({
         resumeCfi: cfi,
         style: next,
         theme: resolveTheme(bookThemeId),
-        flags: {
-          overrideBookColor: useTheme.getState().overrideBookColor,
-          hideChapterTitles: useTheme.getState().hideChapterTitles,
-          hideFirstLine: useTheme.getState().hideFirstLine,
-        },
+        flags: currentBookFlags(),
         dir: initial.dir ?? undefined,
         flow: next.flowMode,
         revealLabels: makeRevealLabels(), // RAWY-70
@@ -1567,7 +1981,24 @@ export function Reader({
     }
     if (styleTimer.current) clearTimeout(styleTimer.current);
     styleTimer.current = window.setTimeout(() => {
-      saveGlobalStyle(useReader.getState().style!);
+      const wearing = appearanceInForce();
+      if (!wearing) {
+        saveGlobalRow(globalRowRef.current);
+        return;
+      }
+      // The reader's own half — reading MODE only, now that the colours belong to the هيئة. Written
+      // as the AUTHORED row rather than the resolved style, so a page-fit change cannot materialise
+      // a per-script alignment into a row both scripts read.
+      saveGlobalRow(globalRowRef.current);
+      // ...and the هيئة's half, folded into the هيئة ITSELF. Accumulated across the debounce so a
+      // slider drag is one save rather than forty, and cleared before the write so a change arriving
+      // during it is not lost with it.
+      const edit = pendingAppearanceEdit.current;
+      pendingAppearanceEdit.current = {};
+      if (Object.keys(edit).length) {
+        const nextProfile = withReadingEdit(wearing, edit);
+        if (nextProfile !== wearing) editAppearance(nextProfile);
+      }
     }, SAVE_DEBOUNCE_MS);
   };
   updateRef.current = update;
@@ -1577,12 +2008,109 @@ export function Reader({
   // (`book_theme_id`) so every book follows it — the Library theme (`theme_id`) is left untouched,
   // so returning to the Library still shows its own theme.
   //
-  // THE PER-BOOK BRANCH IS GONE, and with it the «↻ إعادة الضبط» that existed only to undo it: a
-  // book no longer keeps a paper of its own, because the هيئة is what decides how Sard looks.
+  /**
+   * THE PAPER CONTROL, AND IT EDITS WHICHEVER هيئة OWNS THE PAPER.
+   *
+   * A هيئة is the complete appearance, and a paper is part of it. So the rule here is the rule the
+   * measure, the marks, the reference rule and the reading picture already follow: an appearance-owned
+   * property changed while a هيئة is worn is an edit to THAT هيئة.
+   *
+   *   · The book FOLLOWS the worn هيئة → the shared BOOK theme, exactly as before. The reader's own
+   *     consent path is untouched: the change lands in `book_theme_id`, `driftOf` reports it, and the
+   *     existing dialog offers to fold it into the هيئة. Nothing about that model moves.
+   *   · The book wears a هيئة OF ITS OWN → that هيئة's reading palette is rewritten and saved, so every
+   *     book wearing it follows. The global and the Library are not touched at all.
+   *
+   * WHAT THIS REPLACES was a control that wrote the shared row and then declined to repaint, because
+   * repainting would have overruled the book's own choice. The reader saw a paper grid above a book it
+   * could not change — actionable in appearance, inert in fact, and silently moving a different book's
+   * look instead. Editing the owner is the only answer that keeps one owner per property.
+   */
+  /**
+   * THE PAGE COLOUR AND THE INK — the هيئة's own, and nothing else's.
+   *
+   * These two used to write `reading_style`, a row every book reads, so a colour chosen while reading
+   * one book repainted every other and no Discard could reach it. They edit the owner's palette now,
+   * which is where a هيئة has always carried its paper and its ink — one owner, one value, and the
+   * change travels with the هيئة to exactly the books that share it.
+   *
+   * WITH NOTHING WORN THERE IS NO OWNER, and the control does nothing rather than writing a value
+   * nowhere. That state is reachable only by deleting the active هيئة, and the old shared row is no
+   * longer an answer: the page resolves from the palette alone, so a row written there would be
+   * stored and never shown. The paper GRID still works in that state — it names a whole theme — which
+   * is the coherent way to choose a colour when there is no هيئة to keep one in.
+   */
+  const setReadingColour = (slot: "paperBg" | "text", hex: string | null) => {
+    const own = appearanceInForce();
+    if (!own) return;
+    editAppearance(withPaletteEdit(own, slot === "paperBg" ? { paperBg: hex } : { text: hex }));
+  };
+
   const setBookTheme = (id: ThemeId) => {
+    const own = appearanceInForce();
+    if (own) {
+      // No optimistic paint and no second copy of the palette: the draft IS the هيئة as far as this
+      // Reader is concerned, `readingTheme` resolves its palette below, and the effect there repaints
+      // the book's own document from that one value.
+      editAppearance(withPaperEdit(own, id, resolveTheme(id)));
+      return;
+    }
     setBookThemeId(id);
     ctrlRef.current?.applyTheme(resolveTheme(id), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
+  };
+
+  /**
+   * AND THIS IS THE "THIS BOOK'S هيئة" CONTROL — the whole هيئة this one book is read in.
+   *
+   * `null` REMOVES the choice rather than storing the worn هيئة's id, which is the difference between
+   * "follows the هيئة" and "happens to match it today": a book that stored the copy would freeze on it
+   * the next time the reader wore another. The row is written EMPTY rather than deleted, the same way
+   * `tts.speakSymbols.<id>` spells its third state.
+   *
+   * WHAT IT DOES NOT DO is copy anything out of the هيئة. It writes an id; the palette and the measure
+   * are resolved from the object that id names, here and at every later open, so there is never a
+   * second copy of a هيئة to fall out of step with the هيئة itself.
+   *
+   * `bookRef.current`, not `initial.id` — RAWY-285: this closure outlives the book that created it when
+   * the Reader is reused, and a captured id writes one book's choice onto another's row.
+   */
+  const setThisBookAppearance = (id: string | null) => {
+    // CHANGING WHICH هيئة THIS BOOK WEARS WOULD STRAND A DRAFT of the one it is leaving — the same
+    // loss as walking out of the book, reached by a different control. It is not "leaving the book",
+    // so it is not in the two doors above; it IS a route that would discard the draft, so it asks the
+    // same question, and the switch is what proceeds once it is answered.
+    const held = heldDraft();
+    if (held && held.id !== id && appearanceDraftDirty()) {
+      leaveWithDraft(() => setThisBookAppearance(id), { keepsBook: true });
+      return;
+    }
+    // The answer was given and the book is staying, so painting is welcome again.
+    leavingRef.current = false;
+    const book = bookRef.current;
+    const { own, builtin } = appearanceFor(id);
+    const inForce = own ? own.id : builtin;
+    bookAppearanceRef.current = inForce;
+    setBookAppearanceId(inForce);
+    noteBookAppearance(own ? own.id : null);
+    // ...and the effective owner again: choosing «افتراضي» here hands the picture to the worn هيئة
+    // rather than to nobody.
+    wearAppearanceBackground(ownerFor());
+
+    // THE PALETTE...
+    const effTheme = own ? readingThemeId(own.id) : ((builtin as ThemeId | null) ?? useTheme.getState().bookThemeId);
+    setBookThemeId(effTheme);
+    ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+
+    // ...AND THE MEASURE, from the same object. Returning to «افتراضي» hands the book back to the
+    // global row, which is what every following book already reads — not to a remembered copy.
+    const globalRow = globalStyleRef.current;
+    if (globalRow) {
+      const next = own ? resolveAppearanceStyle(own, initial.dir ?? undefined, globalRow) : globalRow;
+      useReader.getState().set({ style: next });
+      ctrlRef.current?.applyStyle(next);
+    }
+    if (book) settingsSet(bookAppearanceKey(book), id ?? BOOK_APPEARANCE_NONE).catch(() => {});
   };
 
   // RAWY-41: toggle a bookmark at the CURRENT reading location (CFI + fraction + chapter). If the
@@ -1621,6 +2149,106 @@ export function Reader({
   // for why a PDF "theme" can only be a colour transform), and the renderer's zoom is finally exposed.
   const [pdfThemeId, setPdfThemeId] = useState<PdfThemeId>("normal");
   const [pdfZoom, setPdfZoom] = useState<PdfZoom>("fit-page");
+  /**
+   * HOW A PDF IS READ — one continuous flow (the default) or one page at a time.
+   *
+   * It decides which renderer the engine builds, so it is fixed for the life of an open book: the
+   * setter below persists it and REOPENS, which is the honest way to change something that is
+   * decided at construction. A ref beside the state because `openBook` and the desk's wheel handler
+   * both read it from closures registered once.
+   */
+  const [pdfMode, setPdfMode] = useState<PdfViewMode>("scroll");
+  /** How much of the reading sheet shows around a PDF page. Paint only, so it applies live. */
+  const [pdfSurround, setPdfSurround] = useState<PdfSurround>("normal");
+  const choosePdfSurround = (v: PdfSurround) => {
+    setPdfSurround(v);
+    settingsSet(PDF_SURROUND_KEY, v).catch(() => {});
+  };
+  /**
+   * THE FRAME AROUND THE PAGE: how many px of surround on each side of the page. `null` is the untouched
+   * surround (the sheet across the whole reading column, exactly as before). Paint only: the frame is
+   * drawn by `.page-sheet::before` from two CSS variables; no box that holds the page moves.
+   */
+  const [pdfFrame, setPdfFrame] = useState<number | null>(null);
+  const choosePdfFrame = (v: number) => {
+    setPdfFrame(v);
+    settingsSet(PDF_FRAME_KEY, String(Math.round(v))).catch(() => {});
+  };
+  /** The frame slider's far end for the page on screen, and where the untouched surround sits on it. */
+  const [pdfFrameInfo, setPdfFrameInfo] = useState<{ max: number; current: number } | null>(null);
+  const pdfFrameRef = useRef<number | null>(null);
+  pdfFrameRef.current = pdfFrame;
+  /** Measure the frame for the page on screen (null when there is no PDF page to frame). */
+  const measurePdfBand = () => {
+    const desk = deskRef.current;
+    const sheet = desk?.querySelector<HTMLElement>(".page-sheet");
+    const host = desk?.querySelector<HTMLElement>(".page-host");
+    const b = ctrlRef.current?.pdfZoomBounds();
+    if (!desk || !sheet || !host || !b || !b.pageWidth) return null;
+    const dr = desk.getBoundingClientRect(), sr = sheet.getBoundingClientRect(), hr = host.getBoundingClientRect();
+    const ds = getComputedStyle(desk);
+    return { sheet, band: pdfBand({
+      areaLeft: dr.left + parseFloat(ds.paddingLeft || "0"), areaRight: dr.right - parseFloat(ds.paddingRight || "0"),
+      sheetLeft: sr.left, sheetWidth: sr.width, hostLeft: hr.left, hostWidth: hr.width,
+      boxWidth: b.boxWidth, pageWidth: b.pageWidth, pageCenterX: b.pageCenterX, frame: pdfFrameRef.current,
+    }) };
+  };
+  // Coalesced to one layout per frame: a scroll relocates many times a second. Nothing is measured while
+  // no frame is drawn, and nothing is written when the band has not moved: the page-host and the renderer
+  // sit INSIDE the sheet, so every custom-property write restyles them too.
+  const pdfBandRaf = useRef(0);
+  const layoutPdfBand = useCallback(() => {
+    if (pdfBandRaf.current) return;
+    pdfBandRaf.current = requestAnimationFrame(() => {
+      pdfBandRaf.current = 0;
+      if (!deskRef.current?.hasAttribute("data-pdf-frame")) return;
+      const m = measurePdfBand();
+      if (!m) return;
+      const w = `${m.band.width}px`, x = `${m.band.x}px`;
+      if (m.sheet.style.getPropertyValue("--pdf-band-w") !== w) m.sheet.style.setProperty("--pdf-band-w", w);
+      if (m.sheet.style.getPropertyValue("--pdf-band-x") !== x) m.sheet.style.setProperty("--pdf-band-x", x);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  pdfBandRef.current = isPdf ? layoutPdfBand : () => {};
+  /**
+   * THE SCALE ON SCREEN, for the zoom readout — refreshed only while the settings panel is OPEN.
+   *
+   * A fit mode resolves to a number only inside the renderer, and it changes with the window, the side
+   * panels and the page, none of which tell React. Rather than wire every one of them, the readout is
+   * re-read while the one surface that shows it is open: a single `getBoundingClientRect` a few times a
+   * second, and nothing at all while the panel is closed.
+   */
+  const [pdfScaleShown, setPdfScaleShown] = useState(1);
+  /** The renderer's zoom range for the page on screen — the slider's ends. Read with the scale. */
+  const [pdfZoomRange, setPdfZoomRange] = useState<PdfZoomRange | null>(null);
+  const pdfModeRef = useRef<PdfViewMode>("scroll");
+  pdfModeRef.current = pdfMode;
+  /**
+   * SWITCHING THE MODE REOPENS THE BOOK, and does so on purpose.
+   *
+   * The mode chooses which renderer the engine constructs, so it cannot be changed on a live view
+   * without tearing one renderer down and standing another up in its place — which is a reopen with
+   * extra steps, and a reopen that hides what it is doing. Instead the position is FLUSHED first and
+   * the book is opened again: `openBook` resumes a PDF from the saved fraction, which is the same
+   * `(pageIndex + 0.5) / n` both renderers report, so the reader lands on the page they were on
+   * whichever direction the switch goes.
+   */
+  const choosePdfMode = useCallback((m: PdfViewMode) => {
+    if (m === pdfModeRef.current) return;
+    void (async () => {
+      await settingsSet(PDF_VIEW_MODE_KEY, m).catch(() => {});
+      // Persist WHERE WE ARE before the view goes away; the reopen reads exactly this row.
+      try {
+        const st = useReader.getState();
+        if (bookRef.current) await progressSave(bookRef.current, st.cfi ?? "", st.fraction);
+      } catch { /* an unsaved position falls back to the last one written, never to the start */ }
+      pdfModeRef.current = m;
+      setPdfMode(m);
+      openBook(initial);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial]);
   // RAWY-292: the PDF toast is gone with copy-selection, its only caller. A PDF that cannot be read
   // aloud now degrades through the EXISTING read-aloud path: unusable pages yield zero units, which is
   // the same empty-chapter state an empty EPUB chapter produces — one behaviour, not a parallel one.
@@ -1645,25 +2273,66 @@ export function Reader({
   const applyPdfZoom = useCallback((z: PdfZoom) => {
     setPdfZoom(z);
     ctrlRef.current?.setPdfZoom(z);
+    pdfBandRef.current(); // the page changed size: its frame follows
     // Persist lazily: a wheel gesture must not write a settings row per frame.
     if (pdfZoomWrite.current) clearTimeout(pdfZoomWrite.current);
     pdfZoomWrite.current = window.setTimeout(() => {
       settingsSet(pdfZoomKey(initial.id), pdfZoomAttr(z)).catch(() => {});
     }, 400);
   }, [initial.id]);
-  /** The scale currently on screen — resolved by the renderer when a fit mode is active. */
-  const currentPdfScale = useCallback(
-    () => (isFitMode(pdfZoomRef.current) ? (ctrlRef.current?.pdfRenderedScale() ?? 1) : (pdfZoomRef.current as number)),
-    [],
-  );
-  const pdfZoomStep = useCallback((dir: 1 | -1) => applyPdfZoom(stepPdfZoom(currentPdfScale(), dir)), [applyPdfZoom, currentPdfScale]);
+  /**
+   * The scale currently on screen. The renderer knows it exactly — a fit mode resolves there, and a
+   * number is held to the zoom range there — so it is read back rather than assumed: a zoom remembered
+   * from a larger window may be shown smaller than the number that was stored.
+   */
+  const currentPdfScale = useCallback(() => {
+    const b = ctrlRef.current?.pdfZoomBounds();
+    if (b) return b.scale;
+    return isFitMode(pdfZoomRef.current) ? (ctrlRef.current?.pdfRenderedScale() ?? 1) : (pdfZoomRef.current as number);
+  }, []);
+  useEffect(() => {
+    if (!isPdf || !settingsOpen) return;
+    const read = () => {
+      setPdfScaleShown((prev) => {
+        const next = Math.round(currentPdfScale() * 100) / 100;
+        return next === prev ? prev : next;
+      });
+      const fm = measurePdfBand();
+      if (fm) setPdfFrameInfo((prev) => (prev && prev.max === fm.band.max && prev.current === fm.band.current ? prev : { max: fm.band.max, current: fm.band.current }));
+      const b = ctrlRef.current?.pdfZoomBounds();
+      setPdfZoomRange((prev) => {
+        if (!b) return prev;
+        return prev && Math.abs(prev.min - b.min) < 1e-3 && Math.abs(prev.max - b.max) < 1e-3 ? prev : { min: b.min, max: b.max };
+      });
+    };
+    read();
+    const id = window.setInterval(read, 300);
+    return () => window.clearInterval(id);
+  }, [isPdf, settingsOpen, currentPdfScale]);
   // Wheel/pinch: coalesce to one render per frame. A trackpad pinch arrives as ctrl+wheel too, which
   // is why no separate gesture handler is needed on this platform.
   const pdfZoomPending = useRef<number | null>(null);
   const pdfZoomRaf = useRef<number | undefined>(undefined);
+  // The slider: an exact scale per input event, coalesced to one re-render per frame exactly as the
+  // wheel is below — a drag fires dozens of inputs a second and each would otherwise re-paint the page.
+  // The readout follows the drag at once, rather than waiting for the renderer to catch up.
+  const pdfZoomTo = useCallback((raw: number) => {
+    const z = clampPdfZoom(raw, ctrlRef.current?.pdfZoomBounds());
+    pdfZoomPending.current = z;
+    setPdfScaleShown(Math.round(z * 100) / 100);
+    if (pdfZoomRaf.current !== undefined) return;
+    pdfZoomRaf.current = requestAnimationFrame(() => {
+      pdfZoomRaf.current = undefined;
+      const v = pdfZoomPending.current;
+      pdfZoomPending.current = null;
+      if (v != null) applyPdfZoom(v);
+    });
+  }, [applyPdfZoom]);
   const pdfZoomByWheel = useCallback((deltaY: number) => {
     const from = pdfZoomPending.current ?? currentPdfScale();
-    pdfZoomPending.current = zoomForWheel(from, deltaY);
+    // Held to the renderer's range HERE as well, so a long gesture past either end does not pile up
+    // travel that must be wound back before the page moves again.
+    pdfZoomPending.current = zoomForWheel(from, deltaY, ctrlRef.current?.pdfZoomBounds());
     if (pdfZoomRaf.current !== undefined) return;
     pdfZoomRaf.current = requestAnimationFrame(() => {
       pdfZoomRaf.current = undefined;
@@ -1747,6 +2416,25 @@ export function Reader({
   const [searching, setSearching] = useState(false);
   const [searchProgress, setSearchProgress] = useState(0); // RAWY-89: scan fraction (0..1) for the live indicator
   const [spoilerSafe, setSpoilerSafe] = useState(true); // ON by default (the whole point), per book
+  /**
+   * WHOLE-WORD SEARCH — OFF by default, so a reader who never touches it searches exactly as before.
+   * Per book and persisted, the same convention as spoiler-safe above (and loaded on the same path, in
+   * `openBook`). It is a MATCHING option, so it belongs to the query rather than to the results: flipping
+   * it re-runs the search, and the hits it returns are the only hits there are — count, snippets,
+   * highlight and jump all read that one list.
+   */
+  const [searchWholeWord, setSearchWholeWord] = useState(false);
+  /**
+   * WHICH WAY SEARCH READS THE BOOK. Off (the default) is the scan Sard has always run: first
+   * section to last. On, it starts where the reader is STANDING and steps back to the beginning,
+   * so the chapters after them are never opened.
+   *
+   * It is a SEARCH control and nothing else. «Furthest you've read» in this same panel is a
+   * reading-progress control — it says how deep the reader has been and offers the way back — and
+   * the two are deliberately not wired together: flipping back to an earlier chapter changes where
+   * a backward search STARTS, and changes nothing about the furthest point reached.
+   */
+  const [searchBackward, setSearchBackward] = useState(false);
   const [revealAhead, setRevealAhead] = useState(false); // "show them anyway" — this once
   const [activeHitCfi, setActiveHitCfi] = useState<string | null>(null);
   const searchEpoch = useRef(0);
@@ -1776,6 +2464,14 @@ export function Reader({
       searchAbort.current = ac;
       // RAWY-89: stream partial results + scan progress as foliate scans, so the panel feels alive.
       ctrl.searchBook(q, {
+        wholeWord: searchWholeWord,
+        // THE BOUNDARY IS WHERE THE READER IS STANDING — for the seal and for the direction alike,
+        // and never the furthest point they once reached. Having reached chapter 891 and come back to
+        // 500, they are reading 500: spoiler-safe hides what lies past 500, and backward walks 500,
+        // 499, 498 … 1 without opening 501. The furthest-read mark is reading progress and the way
+        // back to it; it decides nothing here, which is why the engine no longer holds one.
+        positionCfi: cfi,
+        backward: searchBackward,
         signal: ac.signal,
         onProgress: (f) => { if (searchEpoch.current === myEpoch) setSearchProgress(f); },
         onBatch: (hits) => { if (searchEpoch.current === myEpoch) setSearchHits(hits); },
@@ -1787,13 +2483,39 @@ export function Reader({
       }).catch(() => { if (searchEpoch.current === myEpoch) setSearching(false); });
     }, 320);
     return () => { if (searchDebounce.current) clearTimeout(searchDebounce.current); };
-  }, [searchQuery]);
+    // The matching mode is part of the query: changing it supersedes the in-flight scan and searches again.
+    // `cfi` is deliberately NOT a dependency. A search — sealed or backward — is anchored where the
+    // reader stood when they ASKED for it, and re-running it under them on every page turn would be a
+    // different search each time, with rows appearing and vanishing as they read. Typing again, or
+    // changing a switch, re-runs it from wherever they are then. (This is not a freshness compromise:
+    // the `ahead` flags were always baked into the hits by the scan that produced them.)
+  }, [searchQuery, searchWholeWord, searchBackward]);
 
   const toggleSearch = useCallback(() => {
     setLeftPanel((p) => (p === "search" ? null : "search")); // opening Search closes Contents
   }, []);
   // RAWY-175 (AUD-3): STABLE (useCallback) so the memoized SearchPanel/ResultRow can skip re-rendering
   // when only unrelated Reader state changed — the reference doesn't churn every render.
+  /** RAWY-175: STABLE, and it reads `bookRef` rather than a captured id — see `onToggleSpoiler` below. */
+  const onToggleWholeWord = useCallback(() => {
+    setSearchWholeWord((v) => {
+      const next = !v;
+      settingsSet(`search_whole_word:${bookRef.current}`, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  }, []);
+  const onToggleBackward = useCallback(() => {
+    // A «show them anyway» answered for a forward search does not carry over to a backward one, the
+    // same way it does not survive the spoiler switch below. Backward finds nothing ahead to reveal,
+    // so leaving it standing would only change the count line's wording to the one that speaks of a
+    // total, for a search that has no ahead half to total.
+    setRevealAhead(false);
+    setSearchBackward((v) => {
+      const next = !v;
+      settingsSet(`search_backward:${bookRef.current}`, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  }, []);
   const onToggleSpoiler = useCallback(() => {
     setRevealAhead(false);
     setSpoilerSafe((v) => {
@@ -1901,7 +2623,7 @@ export function Reader({
       if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
       if (t && t.closest?.('[role="slider"], input[type="range"]')) return;
       if (!(e.key === "ArrowLeft" || e.key === "ArrowRight")) return;
-      if (ctrlRef.current?.handleNavKey(e.key)) e.preventDefault();
+      if (ctrlRef.current?.handleNavKey(e.key, e.repeat)) e.preventDefault();
     };
     window.addEventListener("keydown", onNavKey);
     return () => window.removeEventListener("keydown", onNavKey);
@@ -2024,26 +2746,29 @@ export function Reader({
       : t("panel.chapter", { n: localeNum(own, lang) });
   })();
 
-  // WHAT THE SPOILER-SAFE BOUNDARY IS CALLED, and whether it is still simply "where you are".
+  // TWO PLACES ARE NAMED HERE, AND THEY ARE NOT THE SAME PLACE.
   //
-  // The three strings the search panel builds from this label all describe the BOUNDARY — what is
-  // hidden past it, what lies before it, where the list divides. They read as "your position" only
-  // because the boundary used to BE the current position. Now that it is the furthest point reached,
-  // the label names that point, and the wording says so whenever the two have parted company —
-  // telling a reader in chapter 320 that their position is chapter 592 would be a plain untruth.
+  // The spoiler-safe boundary is WHERE THE READER IS, so the panel's three boundary strings — what is
+  // hidden past it, what lies before it, where the list divides — are all named by
+  // `searchPositionLabel` and say "your position", which is now simply true. (For a while the boundary
+  // was the furthest point reached and these strings had to switch wording to avoid telling a reader in
+  // chapter 320 that their position was chapter 592. With the boundary back at the reader, there is
+  // nothing to switch.)
   //
-  // Named the way the Contents list names it, and by the same rule as the chrome caption above: the
-  // book's own title for the row, the computed name when it has none, and the neutral name alone
-  // while chapter titles are hidden. A mark whose row cannot be found — a book migrated from before
-  // the mark existed still carries no contents href — falls back to its stored label and then to a
-  // percentage, so the boundary is always nameable.
+  // The furthest-read control names the OTHER place: the deepest point reached, which is where it would
+  // take them. Named the way the Contents list names it, and by the same rule as the chrome caption
+  // above: the book's own title for the row, the computed name when it has none, and the neutral name
+  // alone while chapter titles are hidden. A mark whose row cannot be found — a book migrated from
+  // before the mark existed carries no contents href — falls back to its stored label and then to a
+  // percentage, so the destination is always nameable.
   const furthestTocIndex = useMemo(
     () => (furthestUi?.href ? toc.findIndex((c) => c.href === furthestUi.href) : -1),
     [furthestUi, toc],
   );
-  const boundaryIsFurthest = boundaryHasParted(furthestUi, furthestTocIndex, tocIndex, fraction);
-  const searchBoundaryLabel = (() => {
-    if (!boundaryIsFurthest || !furthestUi) return searchPositionLabel;
+  /** Is the reader BEHIND the deepest point they reached? Only the furthest-read control asks this. */
+  const behindFurthest = boundaryHasParted(furthestUi, furthestTocIndex, tocIndex, fraction);
+  const furthestLabel = (() => {
+    if (!furthestUi) return null;
     if (furthestTocIndex >= 0) {
       const own = tocOwnNumbers ? tocOwnNumbers[furthestTocIndex] : furthestTocIndex + 1;
       const neutral =
@@ -2168,7 +2893,10 @@ export function Reader({
       else startIndex = Math.min(Math.max(0, at), sentences.length - 1);
     }
     // WP-5A: the SNIFFED script rides along so the pre-flight can refuse before any synthesis.
-    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), bookScript: useReader.getState().bookScript, speakSymbols: speakSymbolsNow() });
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), bookScript: useReader.getState().bookScript, speakSymbols: speakSymbolsNow(),
+      // The next chapter's opening, for preparation while this one plays out (see `prepared` in tts.ts).
+      // A function, so a chapter nobody listens to the end of costs nothing.
+      nextUnits: () => ctrlRef.current?.nextSectionFirstUnits(bookLang, 2) ?? Promise.resolve(null) });
   };
   // RAWY-186 (Part A): the Play/Pause gesture (pill button AND Space). Read-aloud audio is decoupled from
   // the view (RAWY-129: you can browse while listening), so pressing Play after navigating to a DIFFERENT
@@ -2272,21 +3000,78 @@ export function Reader({
   // RAWY-74: the page-turn chevrons belong to PAGED mode only — in scrolled mode there are no pages
   // to turn, so they're hidden (they were showing in scrolled mode where next()/prev() jump sections).
   const isPaged = (style?.flowMode ?? "scrolled") === "paged";
-  // RAWY-86: a PDF is fixed-layout — ALWAYS paged (chevrons + wheel-to-page), never scrolled. This
-  // is the stuck-nav fix (RAWY-85 left a PDF with no chevrons + a scroll no-op).
-  const showChevrons = isPaged || isPdf;
+  // RAWY-86: a PDF in PAGES mode is paged, so it carries the page-turn controls (the stuck-nav fix:
+  // RAWY-85 left a PDF with no chevrons + a scroll no-op). A PDF in SCROLL mode is one continuous
+  // document, exactly like a scrolled EPUB above: there is no page to "turn", the scroll IS the
+  // navigation, so the controls are not rendered at all — no hidden buttons, no hit areas, nothing
+  // over the reading surface. The keyboard (Page Down, ↓, Home, End), the contents and the progress bar
+  // still move through it.
+  const showChevrons = isPaged || (isPdf && pdfMode === "pages");
+  // WHERE A PDF STANDS IN ITS OWN PAGES — derived EXACTLY as the toolbar's page readout derives it
+  // (RAWY-86 persists `(pageIndex + 0.5) / count`), so the control and the number can never disagree:
+  // if the bar says page 1, the «previous» affordance is spent, and it says so instead of offering a
+  // press that does nothing. EPUB is left alone — a spine has no cheap, exact "is there a page after
+  // this one", and a chevron that guesses is worse than one that always answers.
+  const pdfPage1 = isPdf && pdfPageCount
+    ? Math.min(pdfPageCount, Math.max(1, Math.round(fraction * pdfPageCount - 0.5) + 1))
+    : 0;
+  const atFirstPage = pdfPage1 === 1;
+  const atLastPage = pdfPage1 > 0 && pdfPage1 === pdfPageCount;
   // RAWY-74: forward wheel events happening over the reading MARGINS (the desk / sheet padding,
   // outside foliate's content iframe) to the book's scroller, so the wheel scrolls anywhere in the
   // reading area — not only over the text. A wheel over the text fires INSIDE the iframe (never
   // bubbles here across the frame boundary), so this can't double-scroll. Paged mode ignores it.
+  /**
+   * ONE OWNER FOR EVERY PDF WHEEL IN THE MAIN DOCUMENT.
+   *
+   * A wheel over a PAGE fires inside that page's own document and never reaches here: in Scroll mode the
+   * platform scrolls it, in Pages mode the page document's listener does. Everything else — the desk, the
+   * gutter between pages, a page-turn rail, the margin outside the reading area — arrives HERE, and here
+   * it is handled exactly once.
+   *
+   * WHY NATIVE AND NON-PASSIVE. React registers wheel listeners as passive, so a `preventDefault` from
+   * `onWheel` is ignored and the platform scrolls as well — MEASURED: a 20-notch burst over a rail moved
+   * the document 9600px for 4800px of wheel. And whether the platform scrolls from a given spot at all
+   * was measured to be inconsistent: over a rail, one wheel moved nothing while a burst moved the full
+   * amount; over the Pages-mode gutter, nothing. Cancelling the default here takes the platform out of
+   * these regions entirely, so the forward below is the ONLY thing that moves the document from them —
+   * the platform's own delta, unscaled: no threshold, no accumulation, and in Pages mode never a turn.
+   */
+  const deskRef = useRef<HTMLDivElement | null>(null);
+  // The frame follows the page: laid out again on open, mode switch, frame/surround change, and any resize
+  // of the reading area (a side panel, the window). Scroll, page turns and zoom call it directly.
+  useEffect(() => {
+    if (!isPdf) return;
+    layoutPdfBand();
+    const settle = window.setTimeout(layoutPdfBand, 700); // the renderer's first layout after an open
+    const ro = new ResizeObserver(() => layoutPdfBand());
+    const desk = deskRef.current;
+    const host = desk?.querySelector(".page-host");
+    if (desk) ro.observe(desk);
+    if (host) ro.observe(host);
+    return () => { window.clearTimeout(settle); ro.disconnect(); };
+  }, [isPdf, pdfFrame, pdfSurround, pdfMode, layoutPdfBand]);
+  useEffect(() => {
+    const el = deskRef.current;
+    if (!isPdf || !el) return;
+    const pdfDeskWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) { zoomIntentRef.current(e.deltaY); return; }
+      if (pdfModeRef.current === "scroll") ctrlRef.current?.scrollPdfBy(e.deltaY, e.deltaX, e.shiftKey);
+      else ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX, e.shiftKey);
+    };
+    el.addEventListener("wheel", pdfDeskWheel, { passive: false });
+    return () => el.removeEventListener("wheel", pdfDeskWheel);
+  }, [isPdf]);
+
   const onDeskWheel = (e: React.WheelEvent) => {
+    // A PDF's wheel is owned by the native, NON-passive listener below — see `pdfDeskWheel`.
+    if (isPdf) return;
     // Zoom is answered before the PDF and paged branches, so Ctrl+Wheel behaves the same everywhere
     // in the reading area. (A PDF is fixed-layout and has no ReadingStyle, so it keeps paging.)
     // RAWY-291: Ctrl+Wheel now zooms a PDF as well. It previously fell through to the paging branch
     // below, so the gesture every reader expects to magnify a scan turned the page instead.
     if (e.ctrlKey || e.metaKey) { e.preventDefault(); (isPdf ? pdfZoomByWheel : zoomByWheel)(e.deltaY); return; }
-    // RAWY-86 / RAWY-293: scrolls the zoomed page first, turns the page only at its edge.
-    if (isPdf) { e.preventDefault(); ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX); return; }
     if (isPaged) return;
     ctrlRef.current?.scrollByWheel(e.deltaY);
   };
@@ -2341,6 +3126,38 @@ export function Reader({
     restoreReadingFocus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restoreReadingFocus]);
+
+  // THE LIVE POSITION, MIRRORED FOR THE STABLE CALLBACK BELOW. The panels are memoised and their
+  // handlers are deliberately identity-stable (see `onToggleSpoiler`), so a callback closing over `cfi`
+  // directly would change on every relocate and re-render every row of a long result list. Same mirror
+  // pattern the chapter-marker callbacks already use. `sec` is display/diagnostics only and the
+  // chapter tracker already holds the live one.
+  const posRef = useRef<FurthestMark | null>(null);
+  posRef.current = cfi
+    ? { cfi, fraction, label: chapterLabel, href: chapterHref, sec: chapTrackRef.current?.sec ?? -1 }
+    : null;
+
+  /**
+   * RESET THE FURTHEST-READ MARK TO WHERE THE READER IS STANDING.
+   *
+   * It writes the progress mark and NOTHING else. The reader does not move, the saved reading position
+   * a resume depends on is untouched, the panel stays open, and searching cannot change — the search
+   * boundary is the live position, which this does not move. So after resetting in chapter 500 the
+   * reader is still in chapter 500, spoiler-safe still hides 501 onward, the direction switch is as it
+   * was, and no future chapter becomes searchable.
+   *
+   * Once the mark is here the reader is no longer behind it, so the way-back row retires itself:
+   * `offerReturn` has nothing to offer. That is the same rule that already hides it at the frontier,
+   * which is also why pressing this while already AT the frontier cannot be reached from the UI — and
+   * why it would be harmless if it were, since it would store the mark that is already stored.
+   */
+  const resetFurthestToHere = useCallback(() => {
+    const next = posRef.current ? resetFurthest(posRef.current) : null;
+    if (!next) return;
+    furthestRef.current = next;
+    setFurthestUi(next);
+    settingsSet(`furthest_read:${bookRef.current}`, serialiseFurthest(next)).catch(() => {});
+  }, []);
   // RAWY-250 (PART 4): record a chapter as READ (idempotent) and persist the set for this book.
   // RAWY-256 (addendum, case 6 — owner's decision): remember that this chapter's BEGINNING has been seen,
   // and PERSIST it per book. A 1432-chapter book is read across many sessions; if the fact died with the
@@ -2537,10 +3354,130 @@ export function Reader({
    * paint because there is nothing to fall through to, and `:root` is left to the Library. A
    * per-book `pageColor` still wins — it is the same slot, written last.
    */
-  const readingTheme = resolveTheme(bookThemeId);
+  /**
+   * THE DRAFT'S OWN PALETTE, when there is one.
+   *
+   * `resolveTheme` reads the registry, and the registry holds SAVED هيئات — which is right, because
+   * everything outside this book resolves from it. A draft is deliberately not registered: putting it
+   * there would repaint every other surface that names the same id, which is the opposite of what an
+   * unsaved change means. So the Reader builds the draft's palette directly, from the same function
+   * that registers the saved one, and nothing else in the application sees it.
+   */
+  const liveActiveId = useProfiles((st) => st.activeId);
+  const liveDraft = useAppearanceDraft((st) => st.current);
+  // THE OWNER'S ID — the book's own هيئة, else the one the Library wears. A FOLLOWING book has no id
+  // of its own, and keying the draft on that alone meant its draft never painted: the reader changed
+  // a colour, the هيئة was correctly drafted, and the page went on showing the saved palette.
+  const ownerId = bookAppearanceId ?? liveActiveId;
+  // A DRAFT IN PROGRESS IS WHAT THE BOOK SHOWS, and it is not conditioned on the id the book would
+  // otherwise resolve to. Gating on `liveDraft.id === ownerId` meant that changing the Library's
+  // هيئة under a dirty draft made the page repaint to the NEW هيئة while the draft — and every
+  // further edit — still belonged to the old one: one appearance on screen, another being edited.
+  // A draft only ever exists for the book in front of the reader (`clearAppearanceDraft` runs on
+  // open and on every door out), so there is no other book it could speak for.
+  const readingTheme = liveDraft ? profileReadingTheme(liveDraft.draft) : resolveTheme(bookThemeId);
+  /**
+   * THE PALETTE BEHIND AN UNCHANGED ID CAN MOVE, and that is new.
+   *
+   * Every repaint until now was triggered by the book's theme ID changing. Editing the paper of a
+   * هيئة a book is wearing changes no id at all — `u:…~r` is still `u:…~r` — while the colours it
+   * resolves to are completely different. Without this the reader-scoped vars would update on the
+   * re-render and the BOOK'S OWN DOCUMENT would keep the old paper, because only `ctrl.applyTheme`
+   * reaches inside the frame.
+   *
+   * Keyed on the palette's own values rather than on the object, which is rebuilt every render.
+   */
+  const paletteKey = `${readingTheme.id}|${readingTheme.dark}|${readingTheme.colors.paperBg}`
+    + `|${readingTheme.colors.text}|${readingTheme.colors.accent}|${readingTheme.colors.surfaceBg}`;
+  useEffect(() => {
+    if (status !== "ready") return;
+    // SAVING A DRAFT ON THE WAY OUT MOVES THIS PALETTE — the draft is cleared and the saved هيئة
+    // arrives in the registry, both of which change `paletteKey` — during the last render before the
+    // Reader unmounts. Painting then queues a frame the vendored paginator cannot survive (see
+    // `leaveWithDraft`), and there is nothing left to see the result anyway.
+    if (leavingRef.current) return;
+    ctrlRef.current?.applyTheme(readingTheme, { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paletteKey]);
+  /**
+   * WHOSE INTERFACE THIS IS — the book's own هيئة when it wears one, the worn هيئة otherwise.
+   *
+   * Only two things need the هيئة OBJECT rather than its palette: the interface face and the texture
+   * step, neither of which is a colour. Subscribed rather than read imperatively because both change
+   * when a هيئة is saved or switched, and the Reader must repaint when they do.
+   */
+  const allProfiles = useProfiles((st) => st.profiles);
+  // THE DRAFT HERE TOO, or the interface face and the texture would keep the saved هيئة's while the
+  // page in front of them wore the draft's — one appearance, rendered from two objects. Resolved from
+  // the OWNER, so a following book is covered exactly as a book with its own هيئة is.
+  const uiProfile = liveDraft?.draft ?? resolveAppearance(ownerId, allProfiles) ?? null;
+  /**
+   * THE READER WEARS THE هيئة THE BOOK IS READ IN — chrome included.
+   *
+   * `:root` carries the LIBRARY's theme and keeps carrying it: the Library is the application's own
+   * environment and does not belong to any book. But the Reader is not the Library, and its toolbar,
+   * drawers, panels, pills and controls were reading `:root` — so a book wearing هيئة B was drawn on
+   * B's paper inside A's interface.
+   *
+   * Custom properties INHERIT, so naming the same ten tokens on `.reader-root` re-points every rule
+   * below it without touching one of them: measured on the stylesheet, 575 reader rules read these,
+   * `--accent` in 99 of them, `--text` in 91, `--muted` in 67, `--chrome-border` in 44. The Library's
+   * own 409 rules resolve against `:root` exactly as before.
+   *
+   * THIS IS WHY THE OLD «BLEED» DOES NOT RETURN. RAWY-48/D29 removed a version of this that wrote the
+   * reading palette to `:root`, where the Library's chrome read it too and the book's paper became the
+   * colour of the highlight button. Scoped to `.reader-root` the two palettes never meet: the reading
+   * chrome contrasts against the reading paper, which is the pair the هيئة's author actually chose.
+   *
+   * `themeVars` is the SAME derivation `applyTheme` uses — the muted floor and both marker registers —
+   * so the two surfaces cannot drift apart.
+   */
+  /**
+   * THE CHROME WEARS THE هيئة'S INTERFACE PALETTE — NOT ITS PAGE.
+   *
+   * REGRESSION, and this is where it lived. The block below used to name `themeVars(readingTheme)`,
+   * which is the هيئة's READING palette: the page's own colours. Custom properties inherit and, by
+   * the note above, 575 reader rules read these tokens — so `--chrome-bg`, `--app-bg`, `--muted` and
+   * the rest of the interface became functions of the PAGE.
+   *
+   * That is worse than it sounds, because those three are not independent of the page: `deriveColors`
+   * steps `surfaceBg` and `chromeBg` away FROM `paperBg` and floors `muted` between paper and ink. So
+   * a هيئة with a pale page did not merely put a pale tint on the toolbar — it derived the whole
+   * interface from the paper, and the drawers, the contents list and the controls washed out with it.
+   * A reader could not choose a light page and keep a legible interface around it.
+   *
+   * The intent of the original change is kept in full, and it was a real one: the reader must wear the
+   * هيئة the book is read in, so that a book wearing هيئة B is not drawn inside هيئة A's interface.
+   * A هيئة carries TWO palettes, and that is the whole answer — the interface one dresses the
+   * interface, the reading one dresses the page. Naming the reading palette here was reaching for the
+   * wrong one of the two.
+   *
+   * THE PAGE AND ITS DESK ARE UNAFFECTED: `--reader-page` and `--reader-bg` below still come from the
+   * reading palette, and the book's own document is themed inside its frame by `ctrl.applyTheme`.
+   * Nothing about how the page looks changes. With no هيئة in force nothing is named at all and the
+   * reader inherits `:root`, which is what it did before the regression.
+   */
+  const chromeTheme = uiProfile ? profileTheme(uiProfile) : null;
   const rootVars = {
+    ...(chromeTheme ? themeVars(chromeTheme) : {}),
+    // ...AND ITS INTERFACE FACE AND ITS TEXTURE, which are the هيئة's too. The face is only named when
+    // the هيئة names one; absent, the token simply inherits from `:root` as it always did. The
+    // texture's floor is measured against THIS book's desk scrim, which a book with a reading picture
+    // of its own does not share with the Library.
+    // THE INTERFACE FACE, through the SAME stack builder the document root uses. A bare family name
+    // would have dropped the fallbacks — and `chromeStack` also knows to keep the Latin face in front
+    // of an Arabic-only pick, which is coverage logic this file has no business repeating.
+    // Only `--ui-font` is scoped: `--ar-font` and `--book-font` have two consumers between them and
+    // neither is on the reading surface.
+    ...(uiProfile?.data.type.ui ? { "--ui-font": chromeStack(uiProfile.data.type.ui) } : {}),
+    // MEASURED AGAINST THE CHROME IT WILL PAINT. The texture's floor is a contrast guarantee for the
+    // panel's own colours, so it follows the palette the panel now wears rather than the page's.
+    ...(uiProfile && chromeTheme ? textureVars(uiProfile.data.texture, chromeTheme.colors, deskScrim) : {}),
     "--reading-shift": `${(leftPad - rightPad) / 2}px`,
-    "--reader-page": style?.pageColor ?? readingTheme.colors.paperBg,
+    // THE هيئة'S PAPER, FULL STOP. `style.pageColor` was a shared override read ahead of it, so a
+    // colour chosen in one book painted every other and no Discard could reach it. One owner now —
+    // the legacy row values are cleared by migration 20260924210000.
+    "--reader-page": readingTheme.colors.paperBg,
     // THE DESK IS THE PAGE'S ENVIRONMENT, NOT THE APP'S. `.reader-root` and `.reader-desk` paint
     // `var(--reader-bg, var(--app-bg))`, and that fallback used to land on the reading palette only
     // because the reading palette was being written to `:root`. It no longer is, so the desk is named
@@ -2572,12 +3509,19 @@ export function Reader({
       // Left alone it would have inverted — appearing when the LIBRARY is Moonlit and vanishing when
       // the book is. This is the reader's own copy of the same question.
       data-book-theme={readingTheme.id}
-      className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
+      className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${immersiveDim ? " im-dim" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div
+        ref={deskRef}
         // RAWY-294: `pdf-view` marks EVERY PDF (it carries the scroll containment); the theme itself
         // is applied inside the page document, not by a class on this ancestor.
         className={`reader-desk${isPdf ? " pdf-view" : ""}${overlayPaint.tint ? " custom-bg" : ""}`}
+        // Which PDF renderer is on the desk, for the few presentation rules that differ between them.
+        data-pdf-mode={isPdf ? pdfMode : undefined}
+        // How much of the sheet shows around the page. Absent for Normal, so the default is unchanged.
+        data-pdf-surround={isPdf && pdfSurround !== "normal" ? pdfSurround : undefined}
+        // ...and, once the reader has set one, a frame of that width instead of the whole column.
+        data-pdf-frame={isPdf && pdfSurround !== "none" && pdfFrame != null ? "" : undefined}
         // `off` drops the scrim pseudo-element, so the picture is composited under nothing at all.
         // Absent in the other two states, which keeps every existing book byte-identical.
         data-overlay={overlayPaint.paint ? undefined : "off"}
@@ -2587,6 +3531,9 @@ export function Reader({
         {showChevrons && (
           <button
             className="page-chevron page-chevron-left"
+            type="button"
+            disabled={atFirstPage}
+            aria-label={t("reader.prev")}
             // ‹ is ALWAYS the previous page and › ALWAYS the next one, in every book. These used to
             // move the page PHYSICALLY (left chevron = goLeft), so in an Arabic book ‹ advanced and
             // › went back — the same inversion the keyboard arrows had, and the same complaint. The
@@ -2595,7 +3542,15 @@ export function Reader({
             onClick={() => ctrlRef.current?.backward()}
             title={t("reader.prev")}
           >
-            ‹
+            {/* THE MARK COMES FROM SARD'S OWN SET, not from a glyph in whatever face happens to be
+                loaded. `‹` and `›` were text: they inherited `--ui-font`, so their weight, size and
+                optical centre changed with the interface face and with every fallback the system
+                substituted — and they could not take the icon system's stroke token at all. The
+                drawn caret is one stroke at one weight on all sixteen papers.
+                It is NOT mirrored in Arabic, and must not be: this button is «previous» in every
+                book (see the note above), and the reading area is pinned LTR, so the drawing points
+                the way the button physically moves. */}
+            <Icon name="caretLeft" size="lg" />
           </button>
         )}
         <div className={`page-sheet${fitWindow ? " fitw" : ""}`}>
@@ -2608,10 +3563,13 @@ export function Reader({
         {showChevrons && (
           <button
             className="page-chevron page-chevron-right"
+            type="button"
+            disabled={atLastPage}
+            aria-label={t("reader.next")}
             onClick={() => ctrlRef.current?.forward()}
             title={t("reader.next")}
           >
-            ›
+            <Icon name="caretRight" size="lg" />
           </button>
         )}
       </div>
@@ -2636,6 +3594,7 @@ export function Reader({
         furthestHref={furthestUi?.href ?? null}
         furthestOffered={furthestAhead}
         onGoFurthest={goToFurthest}
+        onResetFurthest={resetFurthestToHere}
       />
 
       {!isPdf && (
@@ -2643,9 +3602,11 @@ export function Reader({
           open={searchOpen}
           onClose={closeSearch}
           bookTitle={bookTitle}
-          positionLabel={searchBoundaryLabel}
-          boundaryIsFurthest={boundaryIsFurthest}
+          positionLabel={searchPositionLabel}
+          behindFurthest={behindFurthest}
+          furthestLabel={furthestLabel}
           onGoFurthest={goToFurthest}
+          onResetFurthest={resetFurthestToHere}
           bookDir={isRtlBook ? "rtl" : "ltr"}
           query={searchQuery}
           onQuery={setSearchQuery}
@@ -2654,6 +3615,10 @@ export function Reader({
           hits={searchHits}
           spoilerSafe={spoilerSafe}
           onToggleSpoiler={onToggleSpoiler}
+          wholeWord={searchWholeWord}
+          onToggleWholeWord={onToggleWholeWord}
+          backward={searchBackward}
+          onToggleBackward={onToggleBackward}
           revealAhead={revealAhead}
           onRevealAhead={setRevealAhead}
           activeCfi={activeHitCfi}
@@ -2663,9 +3628,12 @@ export function Reader({
 
       <AnnotationsPanel
         open={annoOpen}
+        // THE BOOK'S OWN PALETTE, the same object `ctrl.applyTheme` is given below — so a swatch in
+        // this panel and the mark on the page are the one palette rather than two.
+        readingTheme={readingTheme}
         onClose={() => setAnnoOpen(false)}
         onJump={jumpCfi}
-        onOpenBook={onOpenBook}
+        onOpenBook={openOtherBook}
         initialTab={annoTab}
       />
 
@@ -2675,7 +3643,7 @@ export function Reader({
         bookTitle={bookTitle}
         chapter={chapter}
         fraction={fraction}
-        onBack={onExit}
+        onBack={exitBook}
         onContents={toggleChapters}
         onSearch={toggleSearch}
         searchOpen={searchOpen}
@@ -2708,13 +3676,26 @@ export function Reader({
         section={settingsSection}
         onSection={setSettingsSection}
         bookThemeId={bookThemeId}
+        appearanceThemeId={defaultBookTheme}
         onPickTheme={setBookTheme}
+        onPickReadingColour={setReadingColour}
+        bookAppearanceId={bookAppearanceId}
+        onPickBookAppearance={setThisBookAppearance}
         isPdf={isPdf}
         pdfThemeId={pdfThemeId}
         onPdfTheme={choosePdfTheme}
         pdfZoom={pdfZoom}
-        onPdfZoomStep={pdfZoomStep}
         onPdfZoomMode={(m) => applyPdfZoom(m)}
+        pdfMode={pdfMode}
+        pdfScale={pdfScaleShown}
+        onPdfZoomTo={pdfZoomTo}
+        pdfZoomRange={pdfZoomRange}
+        onPdfMode={choosePdfMode}
+        pdfSurround={pdfSurround}
+        onPdfSurround={choosePdfSurround}
+        pdfFrame={pdfFrame}
+        pdfFrameInfo={pdfFrameInfo}
+        onPdfFrame={choosePdfFrame}
         speakSymbolsOverride={speakSymbolsOverride}
         speakSymbolsAppearance={style?.ttsSpeakSymbols ?? ARABIC_DEFAULTS.ttsSpeakSymbols}
         onSpeakSymbols={setBookSpeakSymbols}
@@ -2722,7 +3703,7 @@ export function Reader({
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
-      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
+      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} readingTheme={readingTheme} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
       {(!isPdf || pdfCanListen) && (
         <TtsPlayer
@@ -2828,9 +3809,9 @@ export function Reader({
             classified={error}
             handlers={{
               retry: () => openBook(initial),
-              back: onExit,
-              reimport: onExit, // re-importing happens in the Library — take them there
-              "remove-book": onExit, // deletion lives in the Library's own two-step confirm (D31)
+              back: exitBook,
+              reimport: exitBook, // re-importing happens in the Library — take them there
+              "remove-book": exitBook, // deletion lives in the Library's own two-step confirm (D31)
               "update-runtime": () => void openWebView2Help(),
             }}
             diagnosticsText={diagText}

@@ -18,7 +18,7 @@ import {
   type BookmarkShapeKey,
 } from "../../../lib/bookmarkStyle";
 import {
-  BG_DEFAULT_PARAMS,
+  bgDefaultsFor,
   BG_NO_OVERLAY,
   presenceMaxFor,
   type BgParams,
@@ -356,6 +356,61 @@ export const isDefaultIconFrame = (i: ProfileIcon): boolean =>
 
 /** The mark a `diamond` seal draws. The design's own character. */
 export const SEAL_DIAMOND = "◆";
+
+/** The two surfaces' background state, as the binding rules below operate on it. */
+type ProfileBackgrounds = { library: ProfileSurfaceBg; reading: ProfileReadingBg };
+
+/**
+ * WHAT BINDING A PICTURE TO ONE SURFACE MEANS FOR THE OTHER.
+ *
+ * A هيئة is designed around a picture, and a reader who chooses one means it for the application in
+ * front of them — not for the library, and then again, separately, for the page. Before this,
+ * choosing a library picture left the book page bare and choosing a book picture left the LIBRARY
+ * bare; the second also stranded the design brief, which measures the library's picture and so
+ * reported that Sard knew of no picture at all. Either way the reader had to bind twice to get what
+ * they had asked for once.
+ *
+ * So the first picture dresses both. The rules only ever act where there is nothing to overwrite, so
+ * an arrangement the reader has already separated is never silently merged:
+ *
+ *   to the LIBRARY, book has no picture of its own  ->  link them; the book follows.
+ *   to the LIBRARY, book has its own                ->  library only. Their choice stands.
+ *   to the BOOK, library is empty                   ->  it becomes the SHARED picture. With no
+ *                                                       library picture there is nothing for "its
+ *                                                       own" to be distinct from.
+ *   to the BOOK, library has one                    ->  the book's own, and the link breaks.
+ *
+ * It is a function rather than four lines inside a click handler because these four cases are the
+ * whole of the product decision, and `profileBackgrounds.test.ts` asserts them one by one.
+ */
+export function bindPicture(bg: ProfileBackgrounds, surface: "library" | "reading", id: string): void {
+  if (surface === "library") {
+    bg.library.ref = id;
+    if (!bg.reading.ref) bg.reading.sameAsLibrary = true;
+    return;
+  }
+  if (!bg.library.ref) {
+    bg.library.ref = id;
+    bg.reading.ref = null;
+    bg.reading.sameAsLibrary = true;
+    return;
+  }
+  bg.reading.ref = id;
+  bg.reading.sameAsLibrary = false;
+}
+
+/**
+ * The reader asking for the two surfaces to be linked, or to part.
+ *
+ * PARTING MUST NOT UNDRESS THE PAGE. Turning the book onto a picture of its own used to leave its
+ * reference null, so the page it was wearing went blank and the reader had to go and find the same
+ * file again. It keeps what it had, and the library's own reference is untouched — which is what
+ * makes a picture chosen for the book afterwards unable to reach back into the library.
+ */
+export function linkPictures(bg: ProfileBackgrounds, together: boolean): void {
+  if (!together && !bg.reading.ref) bg.reading.ref = bg.library.ref;
+  bg.reading.sameAsLibrary = together;
+}
 
 export interface ProfileData {
   v: number;
@@ -752,16 +807,19 @@ const refOr = (v: unknown): string | null =>
  */
 function parseBgParams(v: unknown, surface: BgSurface): BgParams {
   const o = (v ?? {}) as Record<string, unknown>;
+  // PER SURFACE, because presence starts at the clear end of each surface's own scale and those ends
+  // are not the same number. Everything a stored appearance DOES carry still wins, as always.
+  const D = bgDefaultsFor(surface);
   const num = (x: unknown, lo: number, hi: number, d: number) =>
     typeof x === "number" && Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d;
   return {
-    presence: num(o.presence, 0, presenceMaxFor(surface), BG_DEFAULT_PARAMS.presence),
-    blur: num(o.blur, 0, 40, BG_DEFAULT_PARAMS.blur),
-    flip: typeof o.flip === "boolean" ? o.flip : BG_DEFAULT_PARAMS.flip,
-    focalX: num(o.focalX, 0, 100, BG_DEFAULT_PARAMS.focalX),
-    focalY: num(o.focalY, 0, 100, BG_DEFAULT_PARAMS.focalY),
-    pageOpacity: num(o.pageOpacity, 0, 1, BG_DEFAULT_PARAMS.pageOpacity),
-    immersiveBlur: typeof o.immersiveBlur === "boolean" ? o.immersiveBlur : BG_DEFAULT_PARAMS.immersiveBlur,
+    presence: num(o.presence, 0, presenceMaxFor(surface), D.presence),
+    blur: num(o.blur, 0, 40, D.blur),
+    flip: typeof o.flip === "boolean" ? o.flip : D.flip,
+    focalX: num(o.focalX, 0, 100, D.focalX),
+    focalY: num(o.focalY, 0, 100, D.focalY),
+    pageOpacity: num(o.pageOpacity, 0, 1, D.pageOpacity),
+    immersiveBlur: typeof o.immersiveBlur === "boolean" ? o.immersiveBlur : D.immersiveBlur,
   };
 }
 
@@ -916,25 +974,13 @@ export function readingPatch(p: Profile): ReadingPatch {
   // previous choice standing in `reading_style` with nothing able to drop it. `null` is a real value
   // here — it means the theme's own colour — so writing it is what "follow the theme" persists as.
   out.backgroundColor = p.data.bg.reading.overlay;
-  // THE PAGE COLOUR, ALWAYS WRITTEN, AND ALWAYS NULL — the third field here that must be, for the
-  // same reason as the two above and with a sharper consequence.
-  //
-  // A profile has no `pageColor` field, and it should not: its opinion about what colour the page is
-  // IS its reading paper, which travels as a palette. So the profile's position on this row is "no
-  // page-colour override", and `null` is how that is spelled.
-  //
-  // Omitting it was not neutral. `reading_style.pageColor` is written only by the Reader's own
-  // page-colour control, `.page-sheet` resolves `style.pageColor ?? readingTheme.colors.paperBg`, and
-  // the profile's paper sits on the LOSING side of that. So one page colour, set once, outranked
-  // every profile's reading paper for ever and no profile switch could reach it. Measured on the
-  // owner's own configuration: a stored `#2C37BC` survived A -> B -> A with the book open and the
-  // page never moved off it — the reading palette was simply unreachable.
-  //
-  // Writing null restores the documented order, with the active هيئة's reading paper below it. (The
-  // per-book override that used to sit above both is gone with the book-style scope; there is one
-  // reading style now.) A page colour chosen in the reading drawer still holds, and lasts until the
-  // next هيئة switch — the same contract as the number ink and the overlay.
-  out.pageColor = null;
+  // THE PAGE COLOUR IS NOT WRITTEN HERE ANY MORE, and the line that used to be was a workaround for
+  // a defect that is now fixed at its source. `reading_style.pageColor` was a SHARED override read
+  // ahead of every هيئة's own paper, so one colour outranked every هيئة for ever; activation wrote
+  // `null` over it to force the palette back through. The override is gone — the page resolves from
+  // `theme.reading.colors.paperBg` alone and the drawer's control edits that — so there is nothing
+  // left to defeat, and writing a null would only put the obsolete key back into the row on every
+  // switch. The same is true of the ink.
   // THE MEASURE: every field, every time — the هيئة's own where it has one, and CLEARED where it has
   // not, so Sard's own default resolves instead of the last هيئة's value. A هيئة is the complete
   // reading appearance; it cannot be worn in another's margins.

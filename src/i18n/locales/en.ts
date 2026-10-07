@@ -521,6 +521,16 @@ export const en = {
   "lib.import.unsupported": "{n} unsupported",
   "lib.import.error": "{n} failed",
   "lib.import.none": "Nothing to import",
+  "lib.import.replaced": "{n} replaced",
+  // A book the reader already has: asked about, not just announced (ConfirmReplace).
+  "lib.replace.title": "This book is already in your library",
+  "lib.replace.titleMany": "{n} of these books are already in your library",
+  "lib.replace.question": "Do you want to replace it? Its notes, highlights, reading position and shelves are kept.",
+  "lib.replace.questionMany": "Do you want to replace them? Their notes, highlights, reading positions and shelves are kept.",
+  "lib.replace.andMore": "and {n} more",
+  "lib.replace.keep": "Keep existing",
+  "lib.replace.replace": "Replace",
+  "lib.replace.failed": "Couldn’t replace “{title}” — the book in your library is unchanged.",
 
   // Edit book (RAWY-19)
   "edit.edit": "Edit",

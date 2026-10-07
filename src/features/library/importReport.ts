@@ -79,6 +79,28 @@ export function buildImportReport(results: readonly ImportResult[], runtimeBlock
 /** `true` when the whole batch succeeded — the caller can then use the quiet toast. */
 export const isCleanImport = (r: ImportReport): boolean => r.problems.length === 0;
 
+/** A book the reader already has, named by the file that just arrived for it. */
+export interface DuplicateOffer {
+  id: string;
+  title: string;
+  source: string;
+}
+
+/**
+ * The books a batch found already in the library, each once, with the file it could be replaced
+ * from. A duplicate with no file to name cannot be replaced from anything, so it is not offered.
+ */
+export function duplicatesToOffer(results: readonly ImportResult[]): DuplicateOffer[] {
+  const seen = new Set<string>();
+  const out: DuplicateOffer[] = [];
+  for (const r of results) {
+    if (r.status !== "duplicate" || !r.source || !r.id || seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push({ id: r.id, title: r.title || fileName(r.source), source: r.source });
+  }
+  return out;
+}
+
 function fileName(path: string): string {
   const base = path.split(/[\\/]/).pop() ?? path;
   return base.replace(/\.(epub|pdf)$/i, "");

@@ -786,6 +786,20 @@ pub async fn import_folder(
     Ok(books::import_folder(&conn, &app_data_dir, &dir))
 }
 
+/// The reader answered «Replace» to a book that is already in their library: replace its stored copy
+/// from `path`, keeping the book — its id, place, annotations and position. See `books::replace_file`.
+/// `async` for the same reason as `import_books`: it reads and hashes a whole book file.
+#[tauri::command]
+pub async fn book_replace_file(
+    id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<books::ReplaceOutcome, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    books::replace_file(&conn, &app_data_dir, &id, &path)
+}
+
 /// RAWY-19 — editable metadata patch (all optional; absent = leave unchanged).
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

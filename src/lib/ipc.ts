@@ -600,7 +600,23 @@ export interface ImportResult {
   title: string;
   status: ImportStatus;
   message: string | null;
+  /** The file this result is about — what a duplicate's stored copy is replaced from. */
+  source?: string | null;
 }
+
+/** What a confirmed «Replace» did. The book keeps its id, place, annotations and position. */
+export interface ReplaceOutcome {
+  id: string;
+  /** The stored copy was missing or damaged, and was written again from the chosen file. */
+  restored_file: boolean;
+  /** The book's extracted cover was missing, and was extracted again. */
+  restored_cover: boolean;
+}
+
+/** Replace the stored copy of book `id` from `path` — the same book's bytes, checked again in Rust.
+ *  Rejects (and changes nothing) for a file that is not this book, or one that cannot be read. */
+export const bookReplaceFile = (id: string, path: string): Promise<ReplaceOutcome> =>
+  invoke<ReplaceOutcome>("book_replace_file", { id, path });
 
 /** Import EPUB files (copy-in, hash/dedup, extract metadata + cover). One result per path. */
 export const importBooks = (paths: string[]): Promise<ImportResult[]> =>

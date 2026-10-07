@@ -518,6 +518,15 @@ export const ar: Record<TKey, string> = {
   "lib.import.unsupported": "{n} غير مدعوم",
   "lib.import.error": "{n} فشل",
   "lib.import.none": "لا شيء للاستيراد",
+  "lib.import.replaced": "{n} مُستبدَل",
+  "lib.replace.title": "هذا الكتاب موجود في مكتبتك مسبقًا",
+  "lib.replace.titleMany": "من هذه الكتب {n} موجودة في مكتبتك مسبقًا",
+  "lib.replace.question": "هل تريد استبداله؟ تبقى ملاحظاته وتظليلاته وموضع قراءته ورفوفه كما هي.",
+  "lib.replace.questionMany": "هل تريد استبدالها؟ تبقى ملاحظاتها وتظليلاتها ومواضع قراءتها ورفوفها كما هي.",
+  "lib.replace.andMore": "و{n} غيرها",
+  "lib.replace.keep": "إبقاء الموجود",
+  "lib.replace.replace": "استبدال",
+  "lib.replace.failed": "تعذّر استبدال «{title}» — بقي الكتاب في مكتبتك كما هو.",
 
   // Edit book (RAWY-19)
   "edit.edit": "تحرير",

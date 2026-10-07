@@ -1,14 +1,14 @@
-// A BOOK THAT IS ALREADY HERE IS ASKED ABOUT: «Keep existing» or «Replace».
+// A BOOK THAT IS ALREADY HERE IS ASKED ABOUT — WHEN THE READER IMPORTED IT: «Keep existing» or «Replace».
 //
 // What «Replace» does to the book is held by the Rust tests (`books::replace_tests`): same id, same
 // row, same annotations and shelves, only a missing or damaged stored copy rewritten. These hold the
-// frontend half — which results are offered, that every import path asks the same question, and that
-// the question cannot be answered «Replace» by accident.
+// frontend half — which results are offered, that every IMPORT path asks the same question while a
+// double-click never does, and that the question cannot be answered «Replace» by accident.
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { duplicatesToOffer } from "../../src/features/library/importReport";
+import { duplicatesToOffer, offersReplace } from "../../src/features/library/importReport";
 import type { ImportResult } from "../../src/lib/ipc";
 import { en } from "../../src/i18n/locales/en";
 import { ar } from "../../src/i18n/locales/ar";
@@ -55,17 +55,52 @@ describe("the question, in both languages", () => {
   });
 });
 
-describe("every import path asks the same question", () => {
-  it("the batch import and the folder import both ask before summarising", () => {
-    const asks = [...LIB.matchAll(/const \{ replaced, failed \} = await offerReplace\(results\);/g)];
-    expect(asks).toHaveLength(2);
-    // ...and the summary then reports what the answer did.
+// WHO IS ASKED. Keep / Replace is for a reader who IMPORTED a book they already have — the file picker,
+// a folder, a drop. A double-click in Windows Explorer is a request to READ: an existing book opens
+// directly, and a new one is imported and then opened, with no question in between.
+describe("who is asked: an explicit import, never a double-click", () => {
+  const RUN = LIB.slice(LIB.indexOf("const runImport = useCallback("), LIB.indexOf("runImportRef.current = (paths)"));
+  const PICKER = LIB.slice(LIB.indexOf("const addBooks = useCallback("), LIB.indexOf("const addFolder = useCallback("));
+  const FOLDER = LIB.slice(LIB.indexOf("const addFolder = useCallback("), LIB.indexOf("// DEV: import"));
+  const OPEN = LIB.slice(LIB.indexOf("const pendingFiles = useOpenFileRequest"), LIB.indexOf("const addBooks = useCallback("));
+
+  it("the rule: an import asks, a request to read does not", () => {
+    expect(offersReplace("add")).toBe(true);
+    expect(offersReplace("open")).toBe(false);
+  });
+
+  it("the batch import asks exactly when the rule says so; the folder import always asks", () => {
+    expect(RUN).toMatch(/intent: ImportIntent = "add"/);
+    expect(RUN).toContain("offersReplace(intent) ? await offerReplace(results) : { replaced: 0, failed: [] }");
+    expect(FOLDER).toContain("const { replaced, failed } = await offerReplace(results);");
+    // ...and both summaries then report what the answer did.
     expect([...LIB.matchAll(/summarize\(results, t, lang, replaced\)/g)]).toHaveLength(2);
   });
 
-  it("a double-clicked book goes through the same import, then opens — a kept duplicate opens the copy already here", () => {
-    expect(LIB).toContain('const results = await runImport(paths, "open");');
-    expect(LIB).toMatch(/r\.status === "imported" \|\| r\.status === "duplicate"/);
+  it("explicit import (the file picker) of an existing book → Keep / Replace", () => {
+    // No intent passed, so the import is an "add", which the rule asks about.
+    expect(PICKER).toContain("runImport(Array.isArray(sel) ? sel : [sel]);");
+  });
+
+  it("drag and drop of an existing book → Keep / Replace", () => {
+    expect(LIB).toContain('if (p.type === "drop") void routeDroppedPaths(p.paths, runImportRef.current);');
+    expect(LIB).toContain("runImportRef.current = (paths) => void runImport(paths);"); // an "add"
+  });
+
+  it("double-click of an existing book → opens it directly, no Replace dialog", () => {
+    expect(OPEN).toContain('const results = await runImport(paths, "open");');
+    // The existing copy ("duplicate") is usable and is what opens.
+    expect(OPEN).toMatch(/r\.status === "imported" \|\| r\.status === "duplicate"/);
+    expect(OPEN).toContain("if (row) openBook(row);");
+    // "open" is passed from the double-click path and from nowhere else.
+    expect([...LIB.matchAll(/runImport\([^)]*"open"\)/g)]).toHaveLength(1);
+  });
+
+  it("double-click of a new book → imported normally, then opened", () => {
+    // The same consumer: an "imported" result is usable too, and its row is looked up UNFILTERED,
+    // so no shelf or search filter can stop the book the reader asked for from opening.
+    expect(OPEN).toContain('libraryListBooks({ sort: "date_added", order: "desc" })');
+    expect(OPEN).toContain("const row = rows.find((b) => b.id === usable[0].id);");
   });
 
   it("the question is asked while the import still holds `importing`, so a second arrival waits", () => {

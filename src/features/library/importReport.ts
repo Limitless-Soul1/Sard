@@ -79,6 +79,18 @@ export function buildImportReport(results: readonly ImportResult[], runtimeBlock
 /** `true` when the whole batch succeeded — the caller can then use the quiet toast. */
 export const isCleanImport = (r: ImportReport): boolean => r.problems.length === 0;
 
+/** What an import is FOR: a book the reader added, or one they asked to read (a double-click). */
+export type ImportIntent = "add" | "open";
+
+/**
+ * WHO IS ASKED «Keep existing / Replace». A reader who IMPORTED a book they already have — the file
+ * picker, a folder, a drop — is asked. A reader who double-clicked a book in Explorer asked to READ
+ * it: a copy already here opens directly, and a new one is imported and then opened, with no
+ * question in between. Answering "read this" with "replace this?" would put a decision in front of
+ * every book a reader opens from their files.
+ */
+export const offersReplace = (intent: ImportIntent): boolean => intent === "add";
+
 /** A book the reader already has, named by the file that just arrived for it. */
 export interface DuplicateOffer {
   id: string;

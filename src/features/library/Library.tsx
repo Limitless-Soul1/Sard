@@ -23,7 +23,8 @@ import {
 } from "../../lib/ipc";
 // RESILIENCE-1 / WP-1
 import {
-  buildImportReport, duplicatesToOffer, isCleanImport, splitByCapability, type DuplicateOffer, type ImportReport,
+  buildImportReport, duplicatesToOffer, isCleanImport, offersReplace, splitByCapability, type DuplicateOffer,
+  type ImportIntent, type ImportReport,
 } from "./importReport";
 import { ConfirmReplace } from "./ConfirmReplace";
 import { WindowedGrid } from "./design/rowWindow";
@@ -571,11 +572,12 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     toastTimer.current = window.setTimeout(() => setToast(null), 3600);
   }, []);
 
-  // A BOOK THAT IS ALREADY HERE IS ASKED ABOUT, NOT JUST ANNOUNCED. Every way a book arrives — a
-  // drop, the picker, a folder, a double-clicked file — ends in `runImport` or `addFolder`, and both
-  // ask here, so there is one question and one way to answer it. It is asked while `importing` is
-  // still held, so a second arrival (a double-click while the question is open) waits for the answer
-  // rather than racing it. Keeping is the default, and keeping changes nothing.
+  // A BOOK THAT IS ALREADY HERE IS ASKED ABOUT, NOT JUST ANNOUNCED — when the reader IMPORTED it. A
+  // drop, the picker and a folder all end in `runImport` or `addFolder`, and both ask here, so there
+  // is one question and one way to answer it. A double-clicked file is not an import but a request
+  // to read, and is never asked (`offersReplace`). The question is asked while `importing` is still
+  // held, so a second arrival (a double-click while it is open) waits for the answer rather than
+  // racing it. Keeping is the default, and keeping changes nothing.
   const [replaceAsk, setReplaceAsk] = useState<{ books: DuplicateOffer[]; answer: (replace: boolean) => void } | null>(null);
   const offerReplace = useCallback(
     async (results: ImportResult[]): Promise<{ replaced: number; failed: string[] }> => {
@@ -634,7 +636,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   // refusals, the report, the diagnostics and the refresh are identical, because they are the same
   // import.
   const runImport = useCallback(
-    async (paths: string[], intent: "add" | "open" = "add"): Promise<ImportResult[]> => {
+    async (paths: string[], intent: ImportIntent = "add"): Promise<ImportResult[]> => {
       if (!paths.length || importing) return [];
       setImporting(true);
       try {
@@ -660,9 +662,10 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             context: { file: p.name },
           });
         }
-        // Asked before the summary, so the summary can say what the answer did. For a double-clicked
-        // book this also comes before the open: keeping opens the copy already here, as it always did.
-        const { replaced, failed } = await offerReplace(results);
+        // Asked before the summary, so the summary can say what the answer did — and only for an
+        // import. A double-clicked book (`intent === "open"`) is never asked: a copy already here
+        // opens directly, and a new one is imported and opened, by the consumer below.
+        const { replaced, failed } = offersReplace(intent) ? await offerReplace(results) : { replaced: 0, failed: [] };
         if (failed.length) flashToast(t("lib.replace.failed", { title: failed[0] }));
         else if (isCleanImport(report)) flashToast(summarize(results, t, lang, replaced));
         if (!isCleanImport(report)) setImportReport(report);

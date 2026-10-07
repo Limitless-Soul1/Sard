@@ -320,16 +320,29 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   useEffect(() => {
     (async () => {
       if (!prefsCache) {
-        const [v, s, o, c, sh] = await Promise.all([
+        const [v, s, o, c] = await Promise.all([
           settingsGet("lib_view"), settingsGet("lib_sort"), settingsGet("lib_order"),
-          settingsGet("lib_cover"), settingsGet("lib_shelf"),
+          settingsGet("lib_cover"),
         ]);
         prefsCache = {
           view: v === "list" || v === "grid" || v === "rows" ? v : "grid",
           sort: s && (SORTS as string[]).includes(s) ? (s as SortKey) : "date_read",
           order: o === "asc" || o === "desc" ? o : "desc",
           cover: c === "crop" || c === "fit" ? c : "crop",
-          shelf: sh || null,
+          // THE OLD SHELF FILTER IS RETIRED, NOT RESTORED. `lib_shelf` is the shelf the reader last
+          // picked in the flat Library of 1.2.2 and earlier. Since the Library was rebuilt around the
+          // design surface (4d49bbe) nothing can pick or clear it, yet restoring it still narrowed the
+          // main list to that one shelf — under a heading that says «Library» and a count that looks
+          // like the whole library. A reader who updated while standing in a shelf lost every other
+          // book from view, permanently: a re-add answered «already in library», because duplicate
+          // detection rightly asks the whole `books` table, and a double-clicked book opened (its
+          // lookup is unfiltered) yet never appeared. A shelf that was later deleted left a filter
+          // matching nothing: «0 books». So the stored value is not read at all. The persist effect
+          // below then writes the empty value over it on this first hydration, which retires it in
+          // the database too — no migration, and an older build cannot resurrect it. The shelf a
+          // reader is looking at now is the design surface's own scope (`libd_scope`), which shows
+          // its name and can always be left.
+          shelf: null,
         };
         setView(prefsCache.view);
         setSort(prefsCache.sort);
@@ -350,6 +363,8 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.sort = sort; settingsSet("lib_sort", sort).catch(console.error); } }, [sort, hydrated]);
   useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.order = order; settingsSet("lib_order", order).catch(console.error); } }, [order, hydrated]);
   useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.cover = coverMode; settingsSet("lib_cover", coverMode).catch(console.error); } }, [coverMode, hydrated]);
+  // `shelf` is never restored (see the hydration above), so on a first hydration this writes the empty
+  // value over a stale `lib_shelf` left by 1.2.2 or earlier — the retirement, not a preference.
   useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.shelf = shelf; settingsSet("lib_shelf", shelf ?? "").catch(console.error); } }, [shelf, hydrated]);
 
   // Shelves + books load on mount and re-load on import; books also re-query on sort/filter.

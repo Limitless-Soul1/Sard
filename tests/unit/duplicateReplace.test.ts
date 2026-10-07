@@ -89,6 +89,12 @@ describe("who is asked: an explicit import, never a double-click", () => {
 
   it("double-click of an existing book → opens it directly, no Replace dialog", () => {
     expect(OPEN).toContain('const results = await runImport(paths, "open");');
+    // THE REGRESSION ITSELF. The import a double-click runs must not ask: it consults the rule, and the
+    // rule never offers a replacement to a request to read. (Before this, `runImport` asked whatever
+    // its intent, so a double-clicked book already in the library met the dialog before it opened.)
+    expect(RUN).toContain("offersReplace(intent) ? await offerReplace(results) : { replaced: 0, failed: [] }");
+    expect(RUN).not.toMatch(/const \{ replaced, failed \} = await offerReplace\(results\);/);
+    expect(offersReplace("open")).toBe(false);
     // The existing copy ("duplicate") is usable and is what opens.
     expect(OPEN).toMatch(/r\.status === "imported" \|\| r\.status === "duplicate"/);
     expect(OPEN).toContain("if (row) openBook(row);");

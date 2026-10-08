@@ -145,23 +145,6 @@ function ReadingBackgroundSection() {
   // shown boldly; one that fights the desk arrives restrained).
   const bookThemeId = useTheme((s) => s.bookThemeId);
   const deskGround = resolveTheme(bookThemeId).colors.surfaceBg;
-  // RAWY-278: the immersive blur step only exists while immersive mode is on, so its toggle follows
-  // the same disabled + inert-note treatment the other immersive sub-options already use.
-  const immersive = useTheme((s) => s.immersive);
-
-  // RAWY-278 (fix) — make the boost OBSERVABLE while it is being set.
-  // Opening this drawer clears `scrolledAway` (Reader.tsx:589 → setHold → setVis → setScrolledAway),
-  // and that is the only state the boost renders in — so the control looked dead. Raising this
-  // attribute while the row is hovered or focused reproduces the receded FILTER only; the scrim step
-  // and every transition are untouched, and the selector cannot match once the attribute is gone.
-  // The cleanup is not optional: the section unmounts when the drawer closes, and a leaked attribute
-  // would leave the desk previewing forever (Memory Rules — cleanup must always exist).
-  const previewImmersiveBlur = (on: boolean) => {
-    const r = document.documentElement;
-    if (on) r.dataset.bgImmPreview = "1";
-    else delete r.dataset.bgImmPreview;
-  };
-  useEffect(() => () => { delete document.documentElement.dataset.bgImmPreview; }, []);
   const { reading, readingParams, setParams, choose, clear, resetParams } = useBackground();
   // The overlay lives in the reading STYLE, not in the background params, so this section has to
   // subscribe to it — the same value the editor reads, through the same function.
@@ -269,24 +252,6 @@ function ReadingBackgroundSection() {
               onInput={(v) => setParams("reading", { blur: v })}
             />
           </Section>
-
-          {/* RAWY-278 — the immersive blur STEP. Placed directly under the Blur slider because it
-              modifies that exact control; separating them would hide the relationship. Reading-only,
-              like `pageOpacity` — the library surface has no immersive mode, so this row is
-              deliberately absent from GlobalSettings.
-              `disabled` + the EXISTING `inert.immersiveOff` string reproduce the treatment the other
-              two immersive sub-options already use, so the row is honest about when it applies rather
-              than silently doing nothing. (Those siblings are equally inert in paged flow and in PDF,
-              where no scroll-intent is emitted; matching them is the consistent choice.) */}
-          <ToggleRow
-            label={t("gs.bg.immBlur")}
-            hint={t("gs.bg.immBlurHint")}
-            on={readingParams.immersiveBlur}
-            onToggle={() => setParams("reading", { immersiveBlur: !readingParams.immersiveBlur })}
-            disabled={!immersive}
-            onPreview={previewImmersiveBlur}
-          />
-          {!immersive && <div className="rs-inert">{t("inert.immersiveOff")}</div>}
 
           {/* RAWY-265 (Phase 3) — PAGE OPACITY. The slider's MINIMUM is the measured AAA floor, not
               zero: below PAGE_OPACITY_MIN body text would stop clearing 7:1 against the worst image
@@ -470,21 +435,13 @@ export function Segmented<T extends string | number>({
 // RAWY-212: `sub` = the inset/muted sub-toggle style (reused from RAWY-200's `rs-track-subtoggle`);
 // `disabled` dims it and blocks interaction (native <button disabled>) when its master is off.
 // RAWY-216: `scope` appends the shared scope suffix for the ONE row whose scope differs from its tab.
-// RAWY-278 (fix): `onPreview` is OPTIONAL and only the immersive-boost row passes it. Where it is
-// undefined React attaches no handler at all, so every other ToggleRow in this file is byte-identical
-// to before — no listener, no cost. It exists because that one control governs an effect that is only
-// visible in a state the open drawer cancels (see the CSS note on `[data-bg-imm-preview]`).
-function ToggleRow({ label, scope, hint, on, onToggle, sub, disabled, onPreview }: { label: string; scope?: string; hint?: string; on: boolean; onToggle: () => void; sub?: boolean; disabled?: boolean; onPreview?: (v: boolean) => void }) {
+function ToggleRow({ label, scope, hint, on, onToggle, sub, disabled }: { label: string; scope?: string; hint?: string; on: boolean; onToggle: () => void; sub?: boolean; disabled?: boolean }) {
   return (
     <button
       className={`rs-toggle-row${sub ? " rs-track-subtoggle" : ""}`}
       onClick={onToggle}
       aria-pressed={on}
       disabled={disabled}
-      onPointerEnter={onPreview && (() => onPreview(true))}
-      onPointerLeave={onPreview && (() => onPreview(false))}
-      onFocus={onPreview && (() => onPreview(true))}
-      onBlur={onPreview && (() => onPreview(false))}
     >
       <span className="rs-toggle-text">
         <span className="rs-toggle-label">{label}{scope && <> <span className="rs-scope">{scope}</span></>}</span>

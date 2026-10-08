@@ -1349,11 +1349,6 @@ export const en = {
   "gs.bg.hidden": "The image is set but currently hidden — raise Presence to see it.",
   "gs.bg.flat": "This image is very close to the theme's own tone, so it may be hard to make out.",
   "gs.bg.formats": "JPEG, PNG or WebP.",
-  // RAWY-278. A LOOK preference, and the copy must stay one: measured, turning it off changes no
-  // frame time at any blur radius, so it must never read as a performance setting. It names immersive
-  // mode and the scroll because that is the exact condition — the step is invisible until both hold.
-  "gs.bg.immBlur": "Extra blur in immersive mode",
-  "gs.bg.immBlurHint": "In immersive mode, the background blurs a little more once you scroll into the page. Turn this off to keep the blur exactly where you set it.",
   // RAWY-278. Import is not instant on a large source — MEASURED 1.8 s for a 29 MP photo and 4.3 s
   // for a 115.68 MP one — and until now the only feedback was a greyed button whose label did not
   // change, which reads as a hang. These expose the REAL state only: "preparing" is the actual

@@ -292,12 +292,12 @@ describe("the stylesheet gate", () => {
     expect(CSS.slice(CSS.indexOf(t), CSS.indexOf(t) + 200)).toContain("transition: filter 220ms");
   });
 
-  it("the hover-preview rules are untouched", () => {
-    // They belong to the now-inert "extra blur" control in the Appearance panel and are reported
-    // separately. Not changing them is the point: this task added a preference, it did not retire
-    // another control.
-    expect(CSS).toContain(':root[data-bg-reading="on"][data-bg-imm-preview] .reader-desk::before {');
-    expect(CSS).toContain(':root[data-bg-reading="on"][data-bg-imm-preview] .reader-desk {');
+  it("the hover-preview rules went with the retired \"extra blur\" control they belonged to", () => {
+    // This test used to pin them in place, because the task that added this preference was not the
+    // one to retire that control. It has since been retired (see legacyImmersiveBlurControl.test.ts),
+    // and nothing else ever raised `data-bg-imm-preview`, so rules for it would only be dead weight.
+    // The recede rules themselves are asserted above and are untouched.
+    expect(CSS).not.toContain("data-bg-imm-preview");
   });
 });
 

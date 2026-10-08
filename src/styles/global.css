@@ -7191,27 +7191,6 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 :root[data-bg-reading="on"] .reader-root.immersive.scrolled-away.im-dim .reader-desk::before {
   filter: blur(calc(var(--bg-rd-blur, 0px) + var(--bg-rd-immstep, 4px)));
 }
-/* RAWY-278 (fix) — PREVIEW, so the boost can actually be SEEN while it is being set.
-   ROOT CAUSE of "the toggle does nothing": opening the Reading Settings drawer calls
-   `setHold(true)` (Reader.tsx:589) → `setVis(true)` (useChromeOnIntent:151) → `setScrolledAway(false)`
-   (useChromeOnIntent:74, RAWY-211). `.scrolled-away` is the ONLY state this boost exists in, so the
-   act of opening the panel that contains the control switches off the effect the control governs.
-   The mechanism was never broken — measured, enabled computes blur(16px) and disabled blur(12px) —
-   it was unobservable at the exact moment of use.
-   This rule reproduces the receded FILTER (and nothing else — no scrim step, no transition change)
-   while the control is hovered or focused. It is gated on an attribute that exists ONLY during that
-   interaction and is removed on unmount, so RUNTIME BEHAVIOUR IS UNCHANGED: outside the drawer this
-   selector can never match. `.scrolled-away` is deliberately NOT relaxed — that would be a real
-   behaviour change, and RAWY-211 exists to keep the pill and scrollbar alive under an open drawer. */
-:root[data-bg-reading="on"][data-bg-imm-preview] .reader-desk::before {
-  filter: blur(calc(var(--bg-rd-blur, 0px) + var(--bg-rd-immstep, 4px)));
-}
-/* The preview mirrors the scrim step too, now that the preference gates both. Showing only the blur
-   half would preview 1.20/255 of a 3.49/255 effect — i.e. it would under-report what the switch does,
-   which is the same failure being fixed. */
-:root[data-bg-reading="on"][data-bg-imm-preview] .reader-desk {
-  --bg-rd-scrim: calc(var(--bg-rd-scrim-base, 100%) + var(--bg-rd-immscrim, 14%));
-}
 /* The scrim step: ONE value change, on the registered property, so it interpolates. Additive
    so the measured floor is only ever moved UP — the recede can never make the desk more exposed.
 

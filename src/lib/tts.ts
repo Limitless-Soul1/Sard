@@ -2214,14 +2214,16 @@ export const useTts = create<TtsState>((set, get) => ({
   },
 
   // RAWY-193: the "Edge unavailable" state's Retry — re-attempt the CURRENT sentence on the SAME engine
-  // (the voice was never changed). Clears the cache so a stale failed synth from the outage can't
-  // instantly re-trip the error, and resumes from the current index. Retry is the only action offered.
+  // (the voice was never changed), and resume from the current index. Retry is the only action offered.
   resumeEdge: () => {
     const st = get();
     if (!st.active) return;
     // Failure isolation: NOT `clearCache()` — the sentences prepared past the failed one are kept, so once
     // it is produced they play from cache. `userAction` makes every waiting sentence eligible now; if the
     // background already recovered the failed one, `playFrom` finds it ready and resumes at once.
+    // A sentence that failed PERMANENTLY is not waiting but dead, and only this press re-attempts it:
+    // without `retryDead` Retry failed again at once, with no request made, until a new Listen.
+    scheduler.retryDead();
     scheduler.userAction();
     const myGen = ++gen;
     stopSource();

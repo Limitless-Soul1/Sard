@@ -404,12 +404,26 @@ export class SynthScheduler<T> {
     if (this.health === "open") this.lastProbeAt = -Infinity;
     this.pump();
   }
+  /** The listener pressed Retry. A sentence that failed PERMANENTLY is dead: nothing re-attempts it on its
+   *  own, and `request`/`recover` reject it at once without a dispatch — so a Retry that kept it found the
+   *  same dead entry and failed again instantly, while a new Listen (which drops the whole cache) worked.
+   *  The press is the listener asking for exactly that attempt, so the dead entries are dropped and are
+   *  requested afresh; ready and waiting sentences are kept (failure isolation). Dispatches nothing itself. */
+  retryDead(): void {
+    for (const [idx, e] of this.cache) if (e.state === "dead") this.drop(idx, e);
+  }
 
   request(i: number): Promise<T> {
     if (!this.running) return Promise.reject(new Error(DROPPED));
     const e = this.entry(i);
     if (e.state === "ready") return Promise.resolve(e.value as T);
-    if (e.state === "dead") return Promise.reject(e.lastError ?? new Error("permanent"));
+    if (e.state === "dead") {
+      // The same rule as a waiter below: a caller that does not observe it (the one-ahead lead, which the
+      // start gate skips when it is dead) must not surface it as an unhandled rejection.
+      const p = Promise.reject(e.lastError ?? new Error("permanent"));
+      p.catch(() => {});
+      return p;
+    }
     const p = new Promise<T>((resolve, reject) => e.waiters.push({ resolve, reject }));
     p.catch(() => {}); // an unobserved waiter (prefetch) must never surface as an unhandled rejection
     this.pump();
@@ -771,7 +785,14 @@ export class SynthScheduler<T> {
       const r = this.rec;
       r.lastError = err;
       if (ctx.role === "recovery") r.attempts = ctx.attempt; // counted at start; the in-flight-at-arrival call was attempt 1
-      if (permanent) { e.state = "dead"; this.failRecovery("permanent"); return; }
+      if (permanent) {
+        // Settled like the permanent branch below: a dead entry holds no waiters (`checkInvariants`).
+        e.state = "dead";
+        for (const w of e.waiters) w.reject(err);
+        e.waiters = [];
+        this.failRecovery("permanent");
+        return;
+      }
       e.state = "waiting";
       if (r.attempts >= this.policy.maxRecoveryAttempts) { this.failRecovery("attempts"); return; }
       const spacing = this.policy.recoverySpacing[Math.min(r.attempts, this.policy.recoverySpacing.length - 1)] ?? 0;

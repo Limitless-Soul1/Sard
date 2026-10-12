@@ -23,7 +23,7 @@ import { familiesOnce, useFonts } from "../../lib/fonts";
 import { THEME_ORDER, resolveTheme, type ThemeId } from "../../theme";
 import { BRAND_ARABIC, BRAND_LATIN, CHROME, displayFace } from "../../lib/typography";
 import {
-  brandBand, COMPOSITION_VERSION, formatSize, GROUND_SCALE_MAX, GROUND_SCALE_MIN, referencedAssets,
+  brandBand, COMPOSITION_VERSION, formatSize, GROUND_SCALE_MAX, GROUND_SCALE_MIN, paperColour, referencedAssets,
   serializeComposition, type Composition, type TextElement,
 } from "./composition";
 import { OVERLAY_HOST_CLASS } from "../library/design/overlay";
@@ -198,9 +198,7 @@ function PhotoCard({
   const c = resolveTheme(themeId).colors;
   // A paper the user typed a colour for beats the theme's. The ink and every ornament still come
   // from the theme, which is what keeps a custom paper a PAPER rather than a whole new palette.
-  const paperBg = composition.ground.kind === "theme" && composition.ground.paper
-    ? composition.ground.paper
-    : c.paperBg;
+  const paperBg = paperColour(composition.ground, c.paperBg);
   const dark = resolveTheme(themeId).dark; // RAWY-152: the Moonlit style's night ornaments only make sense on dark papers
   const crescentId = `pc-crescent-${useId().replace(/[^a-zA-Z0-9]/g, "")}`; // RAWY-152: unique mask id for the SVG crescent
   const arabic = data.dir === "rtl";
@@ -1568,14 +1566,17 @@ export function PhotoComposer({
     window.setTimeout(() => setToast(null), 1900);
   };
 
-  // WYSIWYG raster: the on-screen card node → PNG bytes at export resolution.
+  // WYSIWYG raster: the on-screen card node → PNG bytes at export resolution. Save, Copy and Save in
+  // app all come through here, so the background is the card's OWN paper — html-to-image writes it
+  // over the card's background and fills the canvas with it, so passing the theme's paper here is
+  // what turned every custom-coloured card back into the theme's colour on the way out.
   const rasterize = async (): Promise<Blob> => {
     const node = cardRef.current!;
     await document.fonts.ready;
     const blob = await toBlob(node, {
       pixelRatio: EXPORT_RATIO,
       cacheBust: true,
-      backgroundColor: resolveTheme(themeId).colors.paperBg,
+      backgroundColor: paperColour(compRef.current.ground, resolveTheme(themeId).colors.paperBg),
     });
     if (!blob) throw new Error("render produced no image");
     return blob;

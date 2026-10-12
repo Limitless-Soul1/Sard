@@ -11,6 +11,7 @@ import {
   collectionsList,
   importBooks,
   importFolder,
+  bookReplaceFile,
   libraryListBooks,
   settingsGet,
   settingsSet,
@@ -21,7 +22,11 @@ import {
   type SortOrder,
 } from "../../lib/ipc";
 // RESILIENCE-1 / WP-1
-import { buildImportReport, isCleanImport, splitByCapability, type ImportReport } from "./importReport";
+import {
+  buildImportReport, duplicatesToOffer, isCleanImport, offersReplace, splitByCapability, type DuplicateOffer,
+  type ImportIntent, type ImportReport,
+} from "./importReport";
+import { ConfirmReplace } from "./ConfirmReplace";
 import { WindowedGrid } from "./design/rowWindow";
 import { parseScope } from "./design/model";
 import { classifyBookError } from "../../lib/bookErrors";
@@ -40,6 +45,7 @@ import { BookActions, type BookActionsProps } from "./design/BookActions";
 import { useBookContextMenu } from "./design/bookContextMenu";
 import { UpdateRosette } from "../updater/UpdateRosette";
 import { UpdateDialog } from "../updater/UpdateDialog";
+import { WhatsNewDialog } from "../updater/WhatsNewDialog";
 import { LibraryDesign } from "./design/LibraryDesign";
 import "../../styles/library-design.css";
 import { displayTitle, resolveBookMeta } from "../../lib/bookMeta"; // WP-3
@@ -183,12 +189,15 @@ async function persistedOpenShelf(): Promise<string | null> {
   return raw ? parseScope(raw).shelfId : null;
 }
 
-/** The quiet one-line summary — used ONLY when every file was handled without a problem. */
-function summarize(results: ImportResult[], t: TFn, lang: string): string {
+/** The quiet one-line summary — used ONLY when every file was handled without a problem.
+ *  `replaced` duplicates are reported as replaced rather than as already in the library. */
+function summarize(results: ImportResult[], t: TFn, lang: string, replaced = 0): string {
   const c = { imported: 0, duplicate: 0, unsupported: 0, error: 0 };
   for (const r of results) c[r.status]++;
+  c.duplicate = Math.max(0, c.duplicate - replaced);
   const parts: string[] = [];
   if (c.imported) parts.push(t("lib.import.imported", { n: localeNum(c.imported, lang) }));
+  if (replaced) parts.push(t("lib.import.replaced", { n: localeNum(replaced, lang) }));
   if (c.duplicate) parts.push(t("lib.import.duplicate", { n: localeNum(c.duplicate, lang) }));
   if (c.unsupported) parts.push(t("lib.import.unsupported", { n: localeNum(c.unsupported, lang) }));
   if (c.error) parts.push(t("lib.import.error", { n: localeNum(c.error, lang) }));
@@ -320,16 +329,29 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   useEffect(() => {
     (async () => {
       if (!prefsCache) {
-        const [v, s, o, c, sh] = await Promise.all([
+        const [v, s, o, c] = await Promise.all([
           settingsGet("lib_view"), settingsGet("lib_sort"), settingsGet("lib_order"),
-          settingsGet("lib_cover"), settingsGet("lib_shelf"),
+          settingsGet("lib_cover"),
         ]);
         prefsCache = {
           view: v === "list" || v === "grid" || v === "rows" ? v : "grid",
           sort: s && (SORTS as string[]).includes(s) ? (s as SortKey) : "date_read",
           order: o === "asc" || o === "desc" ? o : "desc",
           cover: c === "crop" || c === "fit" ? c : "crop",
-          shelf: sh || null,
+          // THE OLD SHELF FILTER IS RETIRED, NOT RESTORED. `lib_shelf` is the shelf the reader last
+          // picked in the flat Library of 1.2.2 and earlier. Since the Library was rebuilt around the
+          // design surface (4d49bbe) nothing can pick or clear it, yet restoring it still narrowed the
+          // main list to that one shelf — under a heading that says «Library» and a count that looks
+          // like the whole library. A reader who updated while standing in a shelf lost every other
+          // book from view, permanently: a re-add answered «already in library», because duplicate
+          // detection rightly asks the whole `books` table, and a double-clicked book opened (its
+          // lookup is unfiltered) yet never appeared. A shelf that was later deleted left a filter
+          // matching nothing: «0 books». So the stored value is not read at all. The persist effect
+          // below then writes the empty value over it on this first hydration, which retires it in
+          // the database too — no migration, and an older build cannot resurrect it. The shelf a
+          // reader is looking at now is the design surface's own scope (`libd_scope`), which shows
+          // its name and can always be left.
+          shelf: null,
         };
         setView(prefsCache.view);
         setSort(prefsCache.sort);
@@ -350,6 +372,8 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.sort = sort; settingsSet("lib_sort", sort).catch(console.error); } }, [sort, hydrated]);
   useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.order = order; settingsSet("lib_order", order).catch(console.error); } }, [order, hydrated]);
   useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.cover = coverMode; settingsSet("lib_cover", coverMode).catch(console.error); } }, [coverMode, hydrated]);
+  // `shelf` is never restored (see the hydration above), so on a first hydration this writes the empty
+  // value over a stale `lib_shelf` left by 1.2.2 or earlier — the retirement, not a preference.
   useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.shelf = shelf; settingsSet("lib_shelf", shelf ?? "").catch(console.error); } }, [shelf, hydrated]);
 
   // Shelves + books load on mount and re-load on import; books also re-query on sort/filter.
@@ -549,6 +573,46 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     toastTimer.current = window.setTimeout(() => setToast(null), 3600);
   }, []);
 
+  // A BOOK THAT IS ALREADY HERE IS ASKED ABOUT, NOT JUST ANNOUNCED — when the reader IMPORTED it. A
+  // drop, the picker and a folder all end in `runImport` or `addFolder`, and both ask here, so there
+  // is one question and one way to answer it. A double-clicked file is not an import but a request
+  // to read, and is never asked (`offersReplace`). The question is asked while `importing` is still
+  // held, so a second arrival (a double-click while it is open) waits for the answer rather than
+  // racing it. Keeping is the default, and keeping changes nothing.
+  const [replaceAsk, setReplaceAsk] = useState<{ books: DuplicateOffer[]; answer: (replace: boolean) => void } | null>(null);
+  const offerReplace = useCallback(
+    async (results: ImportResult[]): Promise<{ replaced: number; failed: string[] }> => {
+      const books = duplicatesToOffer(results);
+      if (!books.length) return { replaced: 0, failed: [] };
+      const replace = await new Promise<boolean>((answer) => setReplaceAsk({ books, answer }));
+      setReplaceAsk(null);
+      if (!replace) return { replaced: 0, failed: [] };
+      let replaced = 0;
+      const failed: string[] = [];
+      for (const b of books) {
+        try {
+          await bookReplaceFile(b.id, b.source);
+          replaced++;
+        } catch (e) {
+          // The core refuses before touching anything, so a failure here leaves the book as it was.
+          failed.push(b.title);
+          recordDiagnostic({
+            at: Date.now(),
+            scope: "import",
+            kind: "replace",
+            fault: "book",
+            raw: String(e),
+            context: { file: b.title },
+          });
+        }
+      }
+      // A cover restored from the file is drawn by the same refresh every import already makes.
+      if (replaced) loadBooks();
+      return { replaced, failed };
+    },
+    [loadBooks],
+  );
+
   // RAWY-81 (#3): after a SINGLE new book is imported, surface its Edit dialog (rename / cover) so
   // the user can fix it up right away — a dismissible modal, never forced. A batch (>1 imported) or
   // a pure-duplicate import is left alone (just the summary toast): a bulk add isn't a moment to
@@ -573,7 +637,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   // refusals, the report, the diagnostics and the refresh are identical, because they are the same
   // import.
   const runImport = useCallback(
-    async (paths: string[], intent: "add" | "open" = "add"): Promise<ImportResult[]> => {
+    async (paths: string[], intent: ImportIntent = "add"): Promise<ImportResult[]> => {
       if (!paths.length || importing) return [];
       setImporting(true);
       try {
@@ -599,8 +663,13 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             context: { file: p.name },
           });
         }
-        if (isCleanImport(report)) flashToast(summarize(results, t, lang));
-        else setImportReport(report);
+        // Asked before the summary, so the summary can say what the answer did — and only for an
+        // import. A double-clicked book (`intent === "open"`) is never asked: a copy already here
+        // opens directly, and a new one is imported and opened, by the consumer below.
+        const { replaced, failed } = offersReplace(intent) ? await offerReplace(results) : { replaced: 0, failed: [] };
+        if (failed.length) flashToast(t("lib.replace.failed", { title: failed[0] }));
+        else if (isCleanImport(report)) flashToast(summarize(results, t, lang, replaced));
+        if (!isCleanImport(report)) setImportReport(report);
         if (intent === "add") await surfaceEditForNew(results);
         return results;
       } catch (e) {
@@ -613,7 +682,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         setImporting(false);
       }
     },
-    [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew, fileIntoOpenShelf],
+    [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew, fileIntoOpenShelf, offerReplace],
   );
   useEffect(() => {
     runImportRef.current = (paths) => void runImport(paths);
@@ -714,8 +783,10 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             context: { file: p.name, source: "folder" },
           });
         }
-        if (isCleanImport(report)) flashToast(summarize(results, t, lang));
-        else setImportReport(report);
+        const { replaced, failed } = await offerReplace(results);
+        if (failed.length) flashToast(t("lib.replace.failed", { title: failed[0] }));
+        else if (isCleanImport(report)) flashToast(summarize(results, t, lang, replaced));
+        if (!isCleanImport(report)) setImportReport(report);
         await surfaceEditForNew(results);
       } finally {
         setImporting(false);
@@ -725,7 +796,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       recordDiagnostic(toDiagnostic("import", c));
       flashToast(t(c.presentation.titleKey));
     }
-  }, [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew, fileIntoOpenShelf]);
+  }, [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew, fileIntoOpenShelf, offerReplace]);
 
   // DEV: import a `;`-separated path list from the `dev_import` setting once (for capture/
   // verification, since PrintWindow can't drive a live OS drag), then clear it. RAWY-80 adds
@@ -881,6 +952,14 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         onDeleteShelf={removeShelf}
       />
       {drag && <DropOverlay count={drag.count} t={t} lang={lang} />}
+      {replaceAsk && (
+        <ConfirmReplace
+          books={replaceAsk.books}
+          t={t}
+          onKeep={() => replaceAsk.answer(false)}
+          onReplace={() => replaceAsk.answer(true)}
+        />
+      )}
       {toast && <div className="lib-toast">{toast}</div>}
       {importReport && (
         <ImportResultsPanel report={importReport} onDismiss={() => setImportReport(null)} t={t} lang={lang} />
@@ -888,6 +967,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <UpdateRosette />
       <UpdateDialog />
+      <WhatsNewDialog />
     </>
   );
 

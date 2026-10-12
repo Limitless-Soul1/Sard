@@ -17,7 +17,7 @@ import { useEffect, useRef } from "react";
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
 import { useUpdater } from "../../lib/updater";
-import { whatsNewFor } from "./whatsNew";
+import { manifestSections } from "./whatsNew";
 
 /** Bytes -> a short human string. `localeDigits`, not `localeNum`: this is a composed string with a
  *  decimal point, and localeNum rounds to an integer. Unit text comes from the locale. */
@@ -58,9 +58,11 @@ export function UpdateDialog() {
 
   if (!open) return null;
 
-  // Which notes this dialog has to show. Resolved once, here, so the markup below states the
-  // preference rather than working it out twice.
-  const localNotes = state.k === "available" ? whatsNewFor(state.version) : null;
+  // Which notes this dialog has to show: the manifest's, for the version on offer. This build's own
+  // notes describe THIS build — the reader already has them — so they are never shown here; they
+  // appear once after updating instead (`WhatsNewDialog`). Resolved once, here, so the markup below
+  // states the choice rather than working it out twice.
+  const offered = state.k === "available" ? manifestSections(state.notes, lang) : null;
 
   const scrimClick = () => {
     if (state.k === "installing" || state.k === "downloading") return; // never lose a running job to a stray click
@@ -88,21 +90,19 @@ export function UpdateDialog() {
               </div>
             </div>
 
-            {/* WHAT'S NEW, IN THE READER'S OWN LANGUAGE WHERE SARD HAS IT.
-                The manifest's `body` is one string in one language, so an Arabic reader was shown
-                whatever was written that day. Where this build carries notes for the offered
-                version they are read through `t()` and laid out in the interface's direction;
-                otherwise the body is rendered exactly as it always was, `dir="auto"` and all, so an
-                update from a version this file does not describe still explains itself. */}
-            {(localNotes || state.notes) && (
+            {/* WHAT'S NEW IN THE OFFERED VERSION, IN THE READER'S OWN LANGUAGE.
+                The release publishes its notes in both languages; the block in the reader's
+                language is laid out as sections, like the notes shown after updating. Text that
+                is not in that shape is rendered exactly as it arrived, `dir="auto"` and all. */}
+            {(offered || state.notes) && (
               <div className="upd-notes">
                 <div className="upd-notes-label">{t("upd.notes")}</div>
-                {localNotes ? (
+                {offered ? (
                   <div className="upd-notes-body upd-notes-local" dir={dir}>
-                    {localNotes.map((s) => (
-                      <section className="upd-note" key={s.h}>
-                        <h3 className="upd-note-h">{t(s.h)}</h3>
-                        <p className="upd-note-b">{t(s.b)}</p>
+                    {offered.map((s, i) => (
+                      <section className="upd-note" key={i} dir="auto">
+                        {s.h && <h3 className="upd-note-h">{s.h}</h3>}
+                        <p className="upd-note-b">{s.b}</p>
                       </section>
                     ))}
                   </div>

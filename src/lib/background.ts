@@ -206,21 +206,13 @@ export interface BgParams {
    *  AAA floor. Default 1, and that default is load-bearing: at 1 nothing downstream changes at all. */
   pageOpacity: number;
   /**
-   * RAWY-278. READING SURFACE ONLY. Whether the immersive RECEDE adds its extra blur step.
+   * RAWY-278, RETIRED. Once "Extra blur in immersive mode"; it governs nothing now and no control sets
+   * it. Whether immersive mode dims the reading background is the Background Dimming preference
+   * (`useTheme.immersiveDim`, see `theme/store.ts`), which no هيئة can move.
    *
-   * `true` = today's behaviour exactly: in immersive mode, once the reader deliberately scrolls into
-   * the page, the desk image goes from `blur` to `blur + 4px`. `false` removes ONLY that step — the
-   * base blur above is untouched, and the recede's +14% scrim step is untouched, so the environment
-   * still steps back, just without the extra softening.
-   *
-   * A USER PREFERENCE, NOT A PERFORMANCE OPTION, and the distinction is measured rather than assumed:
-   * on the WebView2 runtime's own Chromium at a 240 Hz frame budget, a blur sweep from 0 px to 40 px
-   * held p50 4.2 ms / p95 4.3 ms / worst 4.4 ms with zero dropped frames at both a 1076x628 and a
-   * 1896x988 window, and the recede measured mean 4.17 ms with the step ON versus 4.17 ms with it OFF.
-   * Turning this off buys nothing and must never be presented as if it did.
-   *
-   * Default `true`, and that default is load-bearing: a params blob written before this field existed
-   * has no such key, reads as `true`, and emits no CSS at all — see `applyBackgrounds`.
+   * KEPT ONLY SO WHAT WAS WRITTEN STAYS READABLE: existing هيئات and packages carry it, so it is still
+   * parsed (absent reads as `true`), stored and carried on an image replace. Removing it would change
+   * the profile and package format for no behaviour at all.
    */
   immersiveBlur: boolean;
 }
@@ -792,8 +784,8 @@ export function applyBackgrounds(theme: { paperBg: string; text: string; muted: 
     // previously-worn هيئة — otherwise the stale pair would outlive the هيئة that wrote it.
     //
     // `immersiveBlur` IS STILL PARSED AND STILL STORED (here and in profile.ts) so existing هيئات and
-    // packages stay readable and nothing migrates. It simply no longer gates anything, which leaves
-    // the "Extra blur in immersive mode" control inert and wanting a decision of its own.
+    // packages stay readable and nothing migrates. It no longer gates anything, and the "Extra blur in
+    // immersive mode" control that once set it has been retired.
     r.style.removeProperty("--bg-rd-immstep");
     r.style.removeProperty("--bg-rd-immscrim");
     r.dataset.bgReading = "on";

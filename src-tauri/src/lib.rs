@@ -163,6 +163,7 @@ macro_rules! sard_invoke_handler {
             commands::category_delete,
             commands::import_books,
             commands::import_folder,
+            commands::book_replace_file,
             commands::book_get,
             commands::book_update,
             commands::book_set_extracted,

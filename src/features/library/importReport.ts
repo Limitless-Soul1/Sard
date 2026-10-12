@@ -79,6 +79,40 @@ export function buildImportReport(results: readonly ImportResult[], runtimeBlock
 /** `true` when the whole batch succeeded — the caller can then use the quiet toast. */
 export const isCleanImport = (r: ImportReport): boolean => r.problems.length === 0;
 
+/** What an import is FOR: a book the reader added, or one they asked to read (a double-click). */
+export type ImportIntent = "add" | "open";
+
+/**
+ * WHO IS ASKED «Keep existing / Replace». A reader who IMPORTED a book they already have — the file
+ * picker, a folder, a drop — is asked. A reader who double-clicked a book in Explorer asked to READ
+ * it: a copy already here opens directly, and a new one is imported and then opened, with no
+ * question in between. Answering "read this" with "replace this?" would put a decision in front of
+ * every book a reader opens from their files.
+ */
+export const offersReplace = (intent: ImportIntent): boolean => intent === "add";
+
+/** A book the reader already has, named by the file that just arrived for it. */
+export interface DuplicateOffer {
+  id: string;
+  title: string;
+  source: string;
+}
+
+/**
+ * The books a batch found already in the library, each once, with the file it could be replaced
+ * from. A duplicate with no file to name cannot be replaced from anything, so it is not offered.
+ */
+export function duplicatesToOffer(results: readonly ImportResult[]): DuplicateOffer[] {
+  const seen = new Set<string>();
+  const out: DuplicateOffer[] = [];
+  for (const r of results) {
+    if (r.status !== "duplicate" || !r.source || !r.id || seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push({ id: r.id, title: r.title || fileName(r.source), source: r.source });
+  }
+  return out;
+}
+
 function fileName(path: string): string {
   const base = path.split(/[\\/]/).pop() ?? path;
   return base.replace(/\.(epub|pdf)$/i, "");

@@ -26,6 +26,8 @@ mod corpus_tests;
 #[cfg(test)]
 mod placement_tests;
 #[cfg(test)]
+mod replace_tests;
+#[cfg(test)]
 mod wp2_tests;
 use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
@@ -76,17 +78,23 @@ pub struct ImportResult {
     pub title: String,
     pub status: String,
     pub message: Option<String>,
+    /// The file this result is about. A duplicate is answered with an offer to replace the stored
+    /// copy from it, and a folder import is the one path where the caller never held the paths.
+    pub source: Option<String>,
 }
 
 impl ImportResult {
     fn of(status: &str, id: &str, title: &str, message: Option<String>) -> Self {
-        ImportResult { id: id.into(), title: title.into(), status: status.into(), message }
+        ImportResult { id: id.into(), title: title.into(), status: status.into(), message, source: None }
     }
 }
 
 /// Import a batch; never fails as a whole — each file gets its own result.
 pub fn import_books(conn: &Connection, app_data_dir: &Path, paths: &[String]) -> Vec<ImportResult> {
-    paths.iter().map(|p| import_one(conn, app_data_dir, p)).collect()
+    paths
+        .iter()
+        .map(|p| ImportResult { source: Some(p.clone()), ..import_one(conn, app_data_dir, p) })
+        .collect()
 }
 
 /// RAWY-80 (audit #7): collect every `.epub`/`.pdf` under `dir` (recursively, depth-capped, symlinks
@@ -438,6 +446,140 @@ fn book_title(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
 fn duplicate_of(conn: &Connection, id: &str, title: &str) -> ImportResult {
     let _ = crate::library::placement::settle_unfiled(conn, id);
     ImportResult::of("duplicate", id, title, Some("Already in your library".into()))
+}
+
+// ---------------------------------------------------------------------------
+// Replace — the answer to a duplicate the reader chose to replace
+// ---------------------------------------------------------------------------
+
+/// What a confirmed «Replace» did to a book the reader already has.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+pub struct ReplaceOutcome {
+    pub id: String,
+    /// The stored copy was missing or damaged, and has been written again from the chosen file.
+    pub restored_file: bool,
+    /// The book's extracted cover was missing, and has been extracted again.
+    pub restored_cover: bool,
+}
+
+/// REPLACE THE STORED COPY OF A BOOK THE READER ALREADY HAS — AND KEEP THE BOOK.
+///
+/// WHY THE BOOK CAN STAY EXACTLY WHO IT IS. A book's id is the SHA-256 of its file's bytes, and a
+/// duplicate is recognised by that id, so a file that reached this question IS the book: the same
+/// bytes the library imported. The replacement therefore never needs a new identity, and every
+/// position stored against the old one — reading progress, highlights, notes, bookmarks, references,
+/// replacements, cards, all addressed by CFI into those bytes — stays exactly as valid as it was.
+/// The check is repeated here rather than trusted, because the file is read again at the moment of
+/// the reader's answer and may have changed since: a file whose bytes are not this book's is refused
+/// and nothing is touched. A different edition of a book is a different book to this library, as it
+/// always has been; it is imported beside the first and never arrives here.
+///
+/// WHAT IT TOUCHES, AND ONLY WHEN IT MUST:
+///  · the stored copy — rewritten only if it is missing or no longer matches (a damaged or deleted
+///    managed file is how a book stops opening), through a temporary file renamed over the old one,
+///    so a failure at any point leaves the previous file exactly as it was;
+///  · the extracted cover — extracted again only if the file it points to is gone. A reader's own
+///    cover, spine image or edited title live in `metadata_overrides` and are never reached.
+///
+/// WHAT IT NEVER TOUCHES: the `books` row's metadata, its `added_at` (so the book keeps its place in
+/// date order), its placement and shelves, and every table hung off its id. The row is never deleted
+/// and re-inserted — thirteen tables cascade from it, and that is the one operation that would lose
+/// them.
+pub fn replace_file(conn: &Connection, app_data_dir: &Path, id: &str, src: &str) -> Result<ReplaceOutcome, String> {
+    let row: Option<(String, Option<String>)> = conn
+        .query_row(
+            &format!("SELECT b.file_path, b.cover_path FROM books b WHERE b.id = ?1 AND {IS_A_BOOK}"),
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("Database error: {e}"))?;
+    let Some((file_path, cover_path)) = row else {
+        return Err("That book is no longer in your library.".into());
+    };
+
+    let bytes = std::fs::read(src).map_err(|e| format!("Couldn't read the file: {e}"))?;
+    if hex_sha256(&bytes) != id {
+        return Err("This file is not the same book, so nothing was replaced.".into());
+    }
+    let ext = if bytes.starts_with(b"%PDF") {
+        "pdf"
+    } else if bytes.starts_with(b"PK\x03\x04") {
+        "epub"
+    } else {
+        return Err("Not an EPUB or PDF file".into());
+    };
+
+    let library_dir = app_data_dir.join("library");
+    let stored = PathBuf::from(&file_path);
+    let restored_file = if file_is(&stored, id) {
+        false
+    } else if stored.starts_with(&library_dir) {
+        write_replacing(&stored, &bytes)?;
+        true
+    } else {
+        // A row whose stored copy lives outside this library (an older layout) and is gone: the copy
+        // goes where every import puts one, and the row is pointed at it only once it is there.
+        let canonical = library_dir.join(format!("{id}.{ext}"));
+        write_replacing(&canonical, &bytes)?;
+        conn.execute(
+            "UPDATE books SET file_path = ?2 WHERE id = ?1",
+            rusqlite::params![id, canonical.to_string_lossy()],
+        )
+        .map_err(|e| format!("Database error: {e}"))?;
+        true
+    };
+
+    let cover_there = cover_path
+        .as_deref()
+        .is_some_and(|c| Path::new(&crate::library::resolve_cover(app_data_dir, c)).is_file());
+    let restored_cover = ext == "epub" && !cover_there && restore_cover(conn, app_data_dir, id, &bytes);
+
+    Ok(ReplaceOutcome { id: id.into(), restored_file, restored_cover })
+}
+
+/// Whether the file at `path` is, byte for byte, the book `id`.
+fn file_is(path: &Path, id: &str) -> bool {
+    std::fs::read(path).map(|b| hex_sha256(&b) == id).unwrap_or(false)
+}
+
+/// Write `bytes` over `target` so that a reader of `target` only ever sees the old file or the new
+/// one: written whole to a temporary file beside it, flushed, then renamed over it. Any failure
+/// removes the temporary file and leaves `target` as it was.
+fn write_replacing(target: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let dir = target.parent().ok_or_else(|| "Storage error: no folder for the book".to_string())?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("Storage error: {e}"))?;
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = dir.join(format!(".{name}.replacing-{}", std::process::id()));
+    let written = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()
+    })()
+    .and_then(|_| std::fs::rename(&tmp, target));
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Couldn't store the file: {e}"));
+    }
+    Ok(())
+}
+
+/// Extract an EPUB's own cover again, exactly as import does, and point the row at it. Best-effort:
+/// a book without its extracted cover still opens, and the library draws its auto-cover.
+fn restore_cover(conn: &Connection, app_data_dir: &Path, id: &str, bytes: &[u8]) -> bool {
+    let Ok(mut zip) = zip::ZipArchive::new(Cursor::new(bytes)) else { return false };
+    let Some(meta) = parse_epub(&mut zip) else { return false };
+    let covers_dir = app_data_dir.join("library").join("covers");
+    if std::fs::create_dir_all(&covers_dir).is_err() {
+        return false;
+    }
+    let Some(out) = extract_cover(&mut zip, &meta, &covers_dir, id) else { return false };
+    conn.execute(
+        "UPDATE books SET cover_path = ?2 WHERE id = ?1",
+        rusqlite::params![id, out.to_string_lossy()],
+    )
+    .is_ok()
 }
 
 // ---- EPUB parsing (container.xml → OPF) -----------------------------------

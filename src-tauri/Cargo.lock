@@ -2351,8 +2351,6 @@ dependencies = [
 [[package]]
 name = "msedge-tts"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5ee3d00bfd237fac2dcd03050c073d60769c9d1f2718545854374f1aa4d6d5b"
 dependencies = [
  "chrono",
  "rustls",
@@ -3408,7 +3406,7 @@ dependencies = [
 
 [[package]]
 name = "sard"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "discord-rich-presence",
  "image",
@@ -3426,6 +3424,8 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tungstenite",
+ "ureq",
  "webview2-com",
  "windows",
  "windows-core 0.61.2",

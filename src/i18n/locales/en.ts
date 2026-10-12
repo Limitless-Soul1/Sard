@@ -521,6 +521,16 @@ export const en = {
   "lib.import.unsupported": "{n} unsupported",
   "lib.import.error": "{n} failed",
   "lib.import.none": "Nothing to import",
+  "lib.import.replaced": "{n} replaced",
+  // A book the reader already has: asked about, not just announced (ConfirmReplace).
+  "lib.replace.title": "This book is already in your library",
+  "lib.replace.titleMany": "{n} of these books are already in your library",
+  "lib.replace.question": "Do you want to replace it? Its notes, highlights, reading position and shelves are kept.",
+  "lib.replace.questionMany": "Do you want to replace them? Their notes, highlights, reading positions and shelves are kept.",
+  "lib.replace.andMore": "and {n} more",
+  "lib.replace.keep": "Keep existing",
+  "lib.replace.replace": "Replace",
+  "lib.replace.failed": "Couldn’t replace “{title}” — the book in your library is unchanged.",
 
   // Edit book (RAWY-19)
   "edit.edit": "Edit",
@@ -1278,6 +1288,9 @@ export const en = {
   "upd.current": "You have",
   "upd.new": "New",
   "upd.notes": "What's new",
+  // Shown once, by the new version, after it has been installed — see `WhatsNewDialog`.
+  "upd.after.title": "What's new in Sard {v}",
+  "upd.after.ok": "Continue",
   "upd.ask": "Would you like to update now? Sard will restart when it's done, and your library, notes and reading positions stay exactly as they are.",
   "upd.updateNow": "Update now",
   "upd.later": "Later",
@@ -1339,11 +1352,6 @@ export const en = {
   "gs.bg.hidden": "The image is set but currently hidden — raise Presence to see it.",
   "gs.bg.flat": "This image is very close to the theme's own tone, so it may be hard to make out.",
   "gs.bg.formats": "JPEG, PNG or WebP.",
-  // RAWY-278. A LOOK preference, and the copy must stay one: measured, turning it off changes no
-  // frame time at any blur radius, so it must never read as a performance setting. It names immersive
-  // mode and the scroll because that is the exact condition — the step is invisible until both hold.
-  "gs.bg.immBlur": "Extra blur in immersive mode",
-  "gs.bg.immBlurHint": "In immersive mode, the background blurs a little more once you scroll into the page. Turn this off to keep the blur exactly where you set it.",
   // RAWY-278. Import is not instant on a large source — MEASURED 1.8 s for a 29 MP photo and 4.3 s
   // for a 115.68 MP one — and until now the only feedback was a greyed button whose label did not
   // change, which reads as a hang. These expose the REAL state only: "preparing" is the actual
@@ -1466,39 +1474,32 @@ export const en = {
   // Sard, to the book or to the machine only where the classifier actually determined it — see
   // `internal` below, which determines none of the three.
   // ── WHAT'S NEW ────────────────────────────────────────────────────────────────────────────────
-  // The release notes Sard carries itself, read through t() like every other string, so they follow
-  // the reader's chosen language and its direction. `features/updater/whatsNew.ts` decides which
-  // offered version they are shown for, and keeps the manifest's own body as the fallback.
-  "wn.profiles.h": "Profiles",
-  "wn.profiles.b":
-    "Save the whole look of Sard exactly as you like it: library and reading colours, the library "
-    + "background and the book's own, fonts and text settings, the shape of your marks, and the "
-    + "reading voice. You are no longer limited to the sixteen ready-made looks — press any colour "
-    + "and change it. A profile packs into a single file you can share and receive like any other.",
-  "wn.replacements.h": "Replacements",
-  "wn.replacements.b":
-    "Replace any word or phrase in a book with whatever you would rather read, and turn a "
-    + "replacement off or back on whenever you like.",
-  "wn.views.h": "Five ways to see your library",
-  "wn.views.b": "Grid, Covers, Spines, Details and Vista.",
-  "wn.deposit.h": "Share a book with what you have read into it",
-  "wn.deposit.b":
-    "Send a book together with whichever of your highlights, notes, references and replacements you "
-    + "choose — not just the file.",
-  "wn.presence.h": "Discord Activity",
-  "wn.presence.b":
-    "Show what you are reading on your Discord profile, and choose what appears: the book's name, "
-    + "the chapter and how far you have read, or simply that you are browsing your library.",
-  "wn.marks.h": "Highlights and Notes",
-  "wn.marks.b":
-    "Your own highlight colours, margin notes pinned to the exact place, and tags to sort your notes "
-    + "and move between them — in this book or across every book.",
-  "wn.cards.h": "Image cards",
-  "wn.cards.b":
-    "Backgrounds, images and far more control over the design — and a brand-new card you can start "
-    + "from nothing and fill with whatever you want, with no quote from a book.",
-  "wn.more.h": "And more",
-  "wn.more.b": "Refinements and polish throughout the app.",
+  // This release's notes, read through t() like every other string, so they follow the reader's
+  // chosen language and its direction. Shown once after updating to the version they describe, and
+  // published by the release workflow as the update manifest's notes — see
+  // `features/updater/whatsNew.ts`. Rewritten, in both locales, for every release.
+  "wn.readAloud.h": "Read aloud is dependable again",
+  "wn.readAloud.b":
+    "Since 10 October, Microsoft's voice service has been refusing many connections, so listening "
+    + "kept stopping and Try again didn't help. Sard now connects the way Microsoft Edge does, "
+    + "retries a refused connection on its own, and Try again continues from the sentence that stopped.",
+  "wn.keepReplace.h": "Keep or replace a book you already have",
+  "wn.keepReplace.b":
+    "Importing a book that's already in your library now asks whether to keep the existing copy or "
+    + "replace it. Replacing keeps the book's shelves, notes, highlights and reading position. "
+    + "Opening a book from File Explorer simply opens it.",
+  "wn.wholeLibrary.h": "Your whole library after updating",
+  "wn.wholeLibrary.b":
+    "If you updated from Sard 1.2.2 or earlier while a shelf was selected, the library could stay "
+    + "limited to that shelf. It now shows all your books again, with nothing for you to do.",
+  "wn.cardPaper.h": "Photo cards keep their paper colour",
+  "wn.cardPaper.b":
+    "A photo card with a custom paper colour now keeps that exact colour when you save, export or "
+    + "copy it. Cards saved earlier get the right colour the next time you save them.",
+  "wn.fewerSettings.h": "One setting fewer",
+  "wn.fewerSettings.b":
+    "The \"Extra blur in immersive mode\" switch no longer did anything and has been removed. "
+    + "Immersive scrolling and Dim the background work as before.",
 
   "err.runtime.title": "Your Windows WebView2 needs updating",
   // Nobody is declared innocent here. What was established is that capabilities the rendering

@@ -705,9 +705,9 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string, unit: n
     fault.times--;
     const mode = fault.mode;
     if (mode === "permanent") {
-      // A 4xx — the class that cannot succeed on a later attempt (a retired voice, a rejected request).
-      // `isPermanentFailure` matches the status code, so this must never enter the ladder.
-      throw new Error("edge synth: HTTP 403 Forbidden (RAWY-257 fault)");
+      // A 4xx answer to the upgrade — the class that cannot succeed on a later attempt (a retired voice, a
+      // rejected request). Shaped exactly as the engine reports it, so `isPermanentFailure` reads the status.
+      throw new Error("edge connect: http 401; injected (RAWY-257 fault)");
     }
     if (mode === "fail-fast") {
       // A REFUSED connection — returns in milliseconds. This is the C3 case: the RAWY-193 retry assumes the
@@ -828,23 +828,42 @@ export const TTS_MAX_RETRIES = 3;
 /** RULE 2's total budget, in ms — the hard maximum a listener waits on a sentence before the failure shows. */
 export const TTS_RECOVERY_BUDGET_MS = 12000;
 
+// THE HTTP STATUS, AS THE ENGINE READ IT FROM THE RESPONSE. When the service answers a call with an HTTP
+// status — the WebSocket upgrade or the voice-list fetch — the engine writes `<phase>: http <status>;` right
+// after the phase (`edge_error` in src-tauri/src/tts.rs), and this marker is the only place a status is read
+// from. Digits anywhere else in an error's text are never a status: the rule this replaces scanned the whole
+// debug text for a 4xx-looking number, so a header value such as `Content-Length: 434` on a 5xx would have
+// turned a server blip into a permanent rejection.
+const HTTP_STATUS = /\bedge (connect|voices|synth): http (\d{3});/;
+
 // RAWY-257 2B (C3): a PERMANENT failure must never enter the ladder — retrying it only delays the dialog the
 // user has to act on anyway. Deliberately NARROW: only failures that cannot succeed on a later attempt.
 // A 5xx is NOT here (a server-side blip is exactly what the ladder is for).
-const isPermanentFailure = (e: unknown): boolean => {
+export const isPermanentFailure = (e: unknown): boolean => {
   const s = String(e);
   if (s.includes("unknown edge voice")) return true;
   // WP-5B: a voice that cannot render this script will not learn to on a later attempt. Sits here,
   // beside the existing permanent class, rather than anywhere inside the ladder — WP-5D's rule is
   // that the ladder, its constants and every other classifier stay untouched.
   if (s.includes(VOICE_MISMATCH_MARKER)) return true;
+  const http = HTTP_STATUS.exec(s);
+  if (!http) return false; // no HTTP answer at all: a connection, stream or timeout fault
+  const phase = http[1];
+  const status = Number(http[2]);
+  if (status < 400 || status > 499) return false; // only a 4xx is a rejection
   // RAWY-257 (C1 — regression fix): 429 "Too Many Requests" is a RATE LIMIT, not a rejection. It is the one
-  // 4xx that CAN succeed on a later attempt, and a spaced retry is the canonical response to it — so the
-  // blanket 4xx rule was swallowing exactly the failure the D68 ladder exists to absorb. MEASURED: a
+  // 4xx that CAN succeed on a later attempt, and a spaced retry is the canonical response to it. MEASURED: a
   // handshake carrying 429 classified `permanent`, skipped the ladder, and reached the user as a hard stop
-  // with no retry indicator at all. Stripping the token before the test keeps every OTHER 4xx permanent,
-  // including a string that carries both (e.g. a 403 alongside a 429 in the same debug text).
-  return /\b4\d\d\b/.test(s.replace(/\b429\b/g, ""));
+  // with no retry indicator at all.
+  if (status === 429) return false;
+  // A REFUSED HANDSHAKE. Since 2026-10-10 the original endpoint answers a share of fresh WebSocket upgrades
+  // with 403 and accepts the next connection — measured: 19 of 33 refused, interleaved at random,
+  // independent of the token window, the version string and the clock. Classified permanent, each one killed
+  // its sentence on the first attempt. It is a connection failure: the bounded round (three attempts inside
+  // the 12 s budget) and, ahead of playback, the same backoff and outage breaker as any connection fault. A
+  // 403 from the voice list, and every other 4xx, stays permanent.
+  if (status === 403 && phase === "connect") return false;
+  return true;
 };
 
 // RAWY-266 (stage 3): the retry decision, now made on the PHASE rather than on one ambiguous phrase.
@@ -2214,14 +2233,16 @@ export const useTts = create<TtsState>((set, get) => ({
   },
 
   // RAWY-193: the "Edge unavailable" state's Retry — re-attempt the CURRENT sentence on the SAME engine
-  // (the voice was never changed). Clears the cache so a stale failed synth from the outage can't
-  // instantly re-trip the error, and resumes from the current index. Retry is the only action offered.
+  // (the voice was never changed), and resume from the current index. Retry is the only action offered.
   resumeEdge: () => {
     const st = get();
     if (!st.active) return;
     // Failure isolation: NOT `clearCache()` — the sentences prepared past the failed one are kept, so once
     // it is produced they play from cache. `userAction` makes every waiting sentence eligible now; if the
     // background already recovered the failed one, `playFrom` finds it ready and resumes at once.
+    // A sentence that failed PERMANENTLY is not waiting but dead, and only this press re-attempts it:
+    // without `retryDead` Retry failed again at once, with no request made, until a new Listen.
+    scheduler.retryDead();
     scheduler.userAction();
     const myGen = ++gen;
     stopSource();

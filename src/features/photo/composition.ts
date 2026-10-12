@@ -246,6 +246,19 @@ export type Ground =
       scrim?: number;
     };
 
+/**
+ * THE COLOUR THE CARD'S PAPER IS PAINTED — the one answer the card on screen and every exported image
+ * share. A paper the user chose outright wins over the theme's; otherwise it is the theme's paper.
+ *
+ * It exists because there were two answers. The card drew the user's colour, while the rasteriser
+ * handed html-to-image the THEME's paper as `backgroundColor` — which html-to-image writes over the
+ * cloned card's own background and fills the canvas with. Saved, exported and copied cards therefore
+ * came out in the theme's paper whatever colour the user had picked. Both now ask here.
+ */
+export function paperColour(ground: Ground, themePaper: string): string {
+  return ground.kind === "theme" && ground.paper ? ground.paper : themePaper;
+}
+
 /** The preset layer — today's card, kept as the starting point rather than as the ceiling. */
 /**
  * WHICH FORM THE SARD MARK TAKES.

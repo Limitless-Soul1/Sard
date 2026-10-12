@@ -1,29 +1,30 @@
-// WHAT'S NEW — the release notes Sard carries itself, in the reader's own language.
+// WHAT'S NEW — each release's own notes, in the reader's own language.
 //
-// WHY NOT THE RELEASE BODY. The dialog has always shown `update.body`, the text from the update
-// manifest. That is one string, published once, in one language — so an Arabic reader was shown
-// English notes, or an English reader Arabic ones, depending on what was written that day. Notes
-// that live here are looked up through `t()` like every other string in the product, so they follow
-// the language the reader chose and the direction that language reads in.
+// THE NOTES DESCRIBE THE BUILD THAT CARRIES THEM. They used to be offered for any update newer than
+// the version they were written against — but the dialog that offers an update is drawn by the copy
+// the reader already has, which cannot know what a FUTURE release contains. So an installed 1.4.0
+// showed its own highlights for whatever it was offered next: news the reader already had.
 //
-// THE REMOTE BODY IS NOT REMOVED. It stays as the fallback, and it is what an older Sard keeps
-// showing: a build that predates this file has no local notes and reads the manifest exactly as
-// before. Nothing about the update protocol changes, and nothing needs to be published differently.
+// Two places show them now, and both describe a version that actually contains the change:
 //
-// KEEPING THEM HONEST. `WHATS_NEW_SINCE` is the last version these notes were written against, so
-// they are offered only for an update NEWER than that. When the next release is prepared, that
-// constant moves and the sections below are rewritten; until then a version that is not newer falls
-// back to the manifest rather than showing a reader the highlights of an update they already have.
+//   AFTER UPDATING — `WhatsNewDialog` shows these sections once, in the build they describe.
+//   BEFORE UPDATING — the update prompt shows the manifest's notes, because only the manifest can
+//                     speak for the version on offer. The release workflow renders that manifest text
+//                     from these same sections (`manifestNotes.ts`), in both languages, so the two
+//                     cannot drift: one set of strings, read here and published there.
+//
+// When a release is prepared, `WHATS_NEW_VERSION` moves to it and the sections are rewritten. The
+// release workflow refuses to publish a version these notes do not describe.
 
+import type { Lang } from "../../i18n";
 import type { TKey } from "../../i18n/locales/en";
+import { isArabicText } from "../../lib/typography";
 
-/**
- * The released version these notes describe the changes SINCE.
- *
- * Not the version they will ship AS — that number is chosen when the release is cut, and writing it
- * here would mean guessing it. Any offered version newer than this one gets these notes.
- */
-export const WHATS_NEW_SINCE = "1.2.2";
+/** The version these notes describe: the release that contains them. */
+export const WHATS_NEW_VERSION = "1.4.1";
+
+/** The settings row recording the version whose notes this installation has already been shown. */
+export const SEEN_KEY = "whats_new_seen_version";
 
 /** One highlight: a heading and a sentence or two. Both are ordinary translation keys. */
 export interface WhatsNewSection {
@@ -32,21 +33,18 @@ export interface WhatsNewSection {
 }
 
 /**
- * The highlights of this update, in the order a reader meets them.
+ * The highlights of this release, in the order a reader meets them.
  *
  * Deliberately short. This is what changed that a reader would notice and use — not a list of
  * everything that moved. The keys are written out rather than built from a template, so a missing
  * one is a compile error instead of an identifier printed into the dialog.
  */
 export const WHATS_NEW: readonly WhatsNewSection[] = [
-  { h: "wn.profiles.h", b: "wn.profiles.b" },
-  { h: "wn.replacements.h", b: "wn.replacements.b" },
-  { h: "wn.views.h", b: "wn.views.b" },
-  { h: "wn.deposit.h", b: "wn.deposit.b" },
-  { h: "wn.presence.h", b: "wn.presence.b" },
-  { h: "wn.marks.h", b: "wn.marks.b" },
-  { h: "wn.cards.h", b: "wn.cards.b" },
-  { h: "wn.more.h", b: "wn.more.b" },
+  { h: "wn.readAloud.h", b: "wn.readAloud.b" },
+  { h: "wn.keepReplace.h", b: "wn.keepReplace.b" },
+  { h: "wn.wholeLibrary.h", b: "wn.wholeLibrary.b" },
+  { h: "wn.cardPaper.h", b: "wn.cardPaper.b" },
+  { h: "wn.fewerSettings.h", b: "wn.fewerSettings.b" },
 ];
 
 /** `1.2.10` is newer than `1.2.9`, which a string comparison gets wrong. Missing parts read as 0. */
@@ -73,12 +71,71 @@ export function isNewer(offered: string, base: string): boolean {
   return false;
 }
 
+/** The same release, written with or without a leading `v`. */
+export function sameVersion(a: string, b: string): boolean {
+  return a.trim().replace(/^v/i, "") === b.trim().replace(/^v/i, "");
+}
+
 /**
- * The notes to show for this offered version, or `null` to use the manifest's own body.
+ * Should this launch show the after-update notes?
  *
- * A version that cannot be read as a number at all falls back rather than guessing.
+ * Only in the build the notes describe — a development build still numbered as the last release
+ * must not present the next one's notes as news — and only when this version has not been shown
+ * yet: no record at all (an installation that predates the record, i.e. one that was just updated),
+ * or a record of an older version. A first run records its own version before the library opens,
+ * so a fresh install never reaches this with nothing recorded.
  */
-export function whatsNewFor(offered: string | null | undefined): readonly WhatsNewSection[] | null {
-  if (!offered) return null;
-  return isNewer(offered, WHATS_NEW_SINCE) ? WHATS_NEW : null;
+export function shouldShowAfterUpdate(
+  appVersion: string | null | undefined,
+  seen: string | null | undefined,
+  notesVersion: string = WHATS_NEW_VERSION,
+): boolean {
+  if (!appVersion || !sameVersion(appVersion, notesVersion)) return false;
+  if (!seen || !seen.trim()) return true;
+  return isNewer(appVersion, seen);
+}
+
+// ---- the manifest's notes ----------------------------------------------------------------------
+//
+// The workflow publishes the notes as plain text, readable as it stands on the release page and in
+// any older Sard that shows it verbatim: the English block, a divider line, then the Arabic block.
+// Each block is a sequence of sections separated by a blank line — a heading line, then its body.
+
+/** The line between the English and the Arabic block. */
+export const NOTES_DIVIDER = "⁂";
+
+/** One section of the manifest's notes, as text. */
+export interface NoteSection {
+  h: string;
+  b: string;
+}
+
+const DIVIDER_LINE = /^[ \t]*⁂[ \t]*$/m;
+
+/** A block's sections: blank-line separated, heading first. Any line ending is accepted. */
+function sections(block: string): NoteSection[] {
+  const out: NoteSection[] = [];
+  for (const chunk of block.split(/\r?\n[ \t]*\r?\n/)) {
+    const lines = chunk.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) continue;
+    out.push(lines.length === 1 ? { h: "", b: lines[0] } : { h: lines[0], b: lines.slice(1).join(" ") });
+  }
+  return out;
+}
+
+/**
+ * The manifest's notes for this reader: the block in their language, as sections.
+ *
+ * A block is Arabic when its first line is. Notes with a single block — anything published before the
+ * notes carried both languages — are shown as they are. `null` when there is nothing to show, so the
+ * dialog can fall back to the text exactly as it arrived.
+ */
+export function manifestSections(body: string | null | undefined, lang: Lang): NoteSection[] | null {
+  if (!body || !body.trim()) return null;
+  const blocks = body.split(DIVIDER_LINE).map((b) => b.trim()).filter(Boolean);
+  if (blocks.length === 0) return null;
+  const isArabic = (b: string) => isArabicText(b.split(/\r?\n/, 1)[0]);
+  const chosen = blocks.length === 1 ? blocks[0] : (blocks.find((b) => isArabic(b) === (lang === "ar")) ?? blocks[0]);
+  const out = sections(chosen);
+  return out.length ? out : null;
 }

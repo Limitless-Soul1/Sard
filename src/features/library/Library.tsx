@@ -45,6 +45,7 @@ import { BookActions, type BookActionsProps } from "./design/BookActions";
 import { useBookContextMenu } from "./design/bookContextMenu";
 import { UpdateRosette } from "../updater/UpdateRosette";
 import { UpdateDialog } from "../updater/UpdateDialog";
+import { WhatsNewDialog } from "../updater/WhatsNewDialog";
 import { LibraryDesign } from "./design/LibraryDesign";
 import "../../styles/library-design.css";
 import { displayTitle, resolveBookMeta } from "../../lib/bookMeta"; // WP-3
@@ -966,6 +967,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <UpdateRosette />
       <UpdateDialog />
+      <WhatsNewDialog />
     </>
   );
 

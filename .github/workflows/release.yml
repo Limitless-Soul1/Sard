@@ -219,23 +219,32 @@ jobs:
           echo "SARD_BUILD_ID=$ID" >> "$GITHUB_ENV"
           echo "build id: $ID"
 
-      # The release notes come from the ANNOTATED TAG's message. They end up in two places that
-      # matter: the GitHub release page, and the `notes` field of latest.json — which is the text
-      # the in-app update dialog shows the reader. Writing them at `git tag -a` time is what keeps
-      # those two in step without anyone editing a manifest afterwards.
-      - name: Read release notes from the tag
+      # THE RELEASE NOTES ARE THE APP'S OWN WHAT'S NEW, AND THE RELEASE REFUSES ANY OTHER.
+      #
+      # They end up in two places that matter: the GitHub release page, and the `notes` field of
+      # latest.json — the text an installed Sard shows when it offers this update. They are rendered
+      # from the same `wn.*` strings the new version shows after it is installed
+      # (src/features/updater/manifestNotes.ts), English then Arabic, so the notes before the update
+      # and after it are one source. The tag's annotation is no longer read for them.
+      #
+      # `manifestNotes` throws when WHATS_NEW_VERSION is not the version being released: a release
+      # whose notes describe another version is stopped here, before anything is built. The version
+      # is the Tauri one, which the step above has already matched to the tag. esbuild is the copy
+      # `npm ci` installed for Vite; nothing is added.
+      - name: Release notes from the app's What's New
         id: notes
         shell: bash
         run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            git fetch --force origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}" || true
-            BODY="$(git tag -l --format='%(contents:body)' "${{ github.ref_name }}")"
-            [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ] && \
-              BODY="$(git tag -l --format='%(contents)' "${{ github.ref_name }}")"
+          VERSION="$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+          npx esbuild src/features/updater/manifestNotes.ts --bundle --platform=node --format=esm \
+            --log-level=warning --outfile="$RUNNER_TEMP/manifest-notes.mjs"
+          BODY="$(node --input-type=module -e "import { pathToFileURL } from 'node:url'; const m = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(m.manifestNotes(process.argv[2]));" "$RUNNER_TEMP/manifest-notes.mjs" "$VERSION")"
+          if [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+            echo "::error::the What's New notes for $VERSION rendered empty."
+            exit 1
           fi
-          # A tag with no annotation still has to produce something honest rather than an empty box.
-          [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ] && \
-            BODY="Download the installer below. See the repository for what changed."
+          echo "release notes for $VERSION:"
+          printf '%s\n' "$BODY"
           {
             echo "body<<SARD_NOTES_EOF"
             printf '%s\n' "$BODY"

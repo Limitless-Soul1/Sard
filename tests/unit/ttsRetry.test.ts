@@ -119,13 +119,19 @@ vi.mock("../../src/lib/ipc", () => ({
   ttsSynthStreaming: async () => false,
 }));
 
-import { ttsStats, useTts } from "../../src/lib/tts";
+import { isPermanentFailure, ttsStats, useTts, VOICE_MISMATCH_MARKER } from "../../src/lib/tts";
 
-// The error text, verbatim in shape, that the Rust side returns (`format!("edge connect: {e:?}")`):
-// a WebSocket handshake the service refused. Its status code makes it a PERMANENT failure to the
-// classifier, so the scheduler never retries it on its own.
-const HANDSHAKE_403 =
-  'edge connect: TungsteniteError(Http(Response { status: 403, version: HTTP/1.1, headers: {"content-length": "0"}, body: None }))';
+// The error text, verbatim in shape, that the Rust side returns (`format!("edge connect: {e:?}")`) when the
+// service answers the WebSocket upgrade with an HTTP status instead of accepting it. Captured in the app:
+// the real headers follow, and nothing before `headers` varies.
+const handshake = (status: number) =>
+  `edge connect: TungsteniteError(Http(Response { status: ${status}, version: HTTP/1.1, headers: {"strict-transport-security": "max-age=31536000; includeSubDomains", "content-length": "0"}, body: None }))`;
+// A refused handshake: the service turns a share of fresh connections away and accepts the next one, so it
+// is retried inside the bounded round like any connection fault.
+const HANDSHAKE_403 = handshake(403);
+// Any other status on the handshake keeps the 4xx rule: PERMANENT, so the scheduler never retries it on its
+// own and only Retry makes a new attempt. The Retry-lifecycle tests below use it for that reason.
+const HANDSHAKE_401 = handshake(401);
 // A transient failure: the host could not be reached.
 const HOST_DOWN = 'edge connect: TungsteniteError(Io(Os { code: 11001, kind: Uncategorized, message: "No such host is known." }))';
 
@@ -141,6 +147,10 @@ const st = () => useTts.getState();
 const requestsFor = (i: number) => h.calls.filter((c) => c.text === S[i]).length;
 const run = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 let played: number[] = [];
+/** Every status the player passed through in this test, so "never paused" is a measured claim. */
+let statuses: string[] = [];
+let unsubscribe: (() => void) | null = null;
+const pauses = () => statuses.filter((s) => s === "edge-error").length;
 
 async function listen(startIndex = 0) {
   void st().start({ sentences: S, lang: "en", startIndex, chapterLabel: "Chapter" });
@@ -167,8 +177,11 @@ beforeEach(() => {
   h.script = () => ({ ok: true });
   played = [];
   h.onPlay = () => played.push(st().index);
+  statuses = [];
+  unsubscribe = useTts.subscribe((s, prev) => { if (s.status !== prev.status) statuses.push(s.status); });
 });
 afterEach(async () => {
+  unsubscribe?.();
   st().stop();
   await run(1_000);
   const s = ttsStats();
@@ -190,7 +203,7 @@ describe("Listen", () => {
 
 describe("Retry after a failure the classifier calls permanent", () => {
   it("REGRESSION: the first request fails — Retry sends a NEW request for that sentence and plays it", async () => {
-    h.script = (text, nth) => (text === S[0] && nth === 1 ? { ok: false, err: HANDSHAKE_403 } : { ok: true });
+    h.script = (text, nth) => (text === S[0] && nth === 1 ? { ok: false, err: HANDSHAKE_401 } : { ok: true });
     await listen();
     await until(() => st().status === "edge-error");
     expect(st().index).toBe(0);
@@ -205,7 +218,7 @@ describe("Retry after a failure the classifier calls permanent", () => {
   });
 
   it("REGRESSION: after partial playback, Retry re-attempts the failed sentence and keeps the ones prepared after it", async () => {
-    h.script = (text, nth) => (text === S[3] && nth === 1 ? { ok: false, err: HANDSHAKE_403 } : { ok: true });
+    h.script = (text, nth) => (text === S[3] && nth === 1 ? { ok: false, err: HANDSHAKE_401 } : { ok: true });
     await listen();
     await until(() => st().status === "edge-error");
     expect(st().index).toBe(3);
@@ -223,7 +236,7 @@ describe("Retry after a failure the classifier calls permanent", () => {
   });
 
   it("REGRESSION: two sentences that failed as look-ahead are both re-attempted by ONE Retry", async () => {
-    h.script = (text, nth) => ((text === S[2] || text === S[3]) && nth === 1 ? { ok: false, err: HANDSHAKE_403 } : { ok: true });
+    h.script = (text, nth) => ((text === S[2] || text === S[3]) && nth === 1 ? { ok: false, err: HANDSHAKE_401 } : { ok: true });
     await listen();
     await until(() => st().status === "edge-error");
     expect(st().index).toBe(2);
@@ -238,7 +251,7 @@ describe("Retry after a failure the classifier calls permanent", () => {
   });
 
   it("a failure that persists: each Retry makes exactly one request, and nothing retries it in between", async () => {
-    h.script = (text) => (text === S[0] ? { ok: false, err: HANDSHAKE_403 } : { ok: true });
+    h.script = (text) => (text === S[0] ? { ok: false, err: HANDSHAKE_401 } : { ok: true });
     await listen();
     await until(() => st().status === "edge-error");
     expect(requestsFor(0)).toBe(1);
@@ -262,7 +275,7 @@ describe("Retry after a failure the classifier calls permanent", () => {
   it("cancellation followed by retry: ✕ during the retry discards it; the next Listen starts clean", async () => {
     h.script = (text, nth) => {
       if (text !== S[0]) return { ok: true };
-      if (nth === 1) return { ok: false, err: HANDSHAKE_403 };
+      if (nth === 1) return { ok: false, err: HANDSHAKE_401 };
       if (nth === 2) return { stall: true }; // the retry is still waiting when the listener closes the player
       return { ok: true };
     };
@@ -329,7 +342,7 @@ describe("Retry after a transient failure (unchanged behaviour)", () => {
 
 describe("Listen after a failure is a different operation from Retry", () => {
   it("a fresh Listen re-synthesizes the sentences Retry would have kept", async () => {
-    h.script = (text, nth) => (text === S[3] && nth === 1 ? { ok: false, err: HANDSHAKE_403 } : { ok: true });
+    h.script = (text, nth) => (text === S[3] && nth === 1 ? { ok: false, err: HANDSHAKE_401 } : { ok: true });
     await listen();
     await until(() => st().status === "edge-error");
     expect(requestsFor(4)).toBe(1);
@@ -341,6 +354,152 @@ describe("Listen after a failure is a different operation from Retry", () => {
     expect(played).toEqual([3, 4, 5]);
     expect(requestsFor(3)).toBe(2);
     expect(requestsFor(4)).toBe(2); // re-synthesized — unlike Retry, which keeps it
+    expectEngineSound();
+  });
+});
+
+describe("what the classifier calls permanent", () => {
+  it("a refused handshake (403 on the upgrade) is a connection failure; every other 4xx keeps its rule", () => {
+    // The text captured in the app, as the engine sent it.
+    const captured = 'edge connect: TungsteniteError(Http(Response { status: 403, version: HTTP/1.1, headers: {"strict-transport-security": "max-age=31536000; includeSubDomains", "access-control-allow-origin": "*", "x-cache": "CONFIG_NOCACHE"}, body: None }))';
+    expect(isPermanentFailure(captured)).toBe(false);
+    expect(isPermanentFailure(HANDSHAKE_403)).toBe(false);
+    // unchanged
+    expect(isPermanentFailure(handshake(401))).toBe(true);
+    expect(isPermanentFailure(handshake(404))).toBe(true);
+    expect(isPermanentFailure(handshake(429))).toBe(false); // the rate limit, already retryable
+    expect(isPermanentFailure("edge synth: HTTP 403 Forbidden")).toBe(true); // a 403 that is not the upgrade
+    expect(isPermanentFailure("edge voices: http status: 403")).toBe(true);
+    expect(isPermanentFailure("unknown edge voice: en-US-TestNeural")).toBe(true);
+    expect(isPermanentFailure(`${VOICE_MISMATCH_MARKER}: en-US-TestNeural returned 6 bytes for 40 chars`)).toBe(true);
+    expect(isPermanentFailure(HOST_DOWN)).toBe(false);
+    expect(isPermanentFailure("edge synth stalled: no audio")).toBe(false);
+  });
+});
+
+describe("a refused handshake is absorbed by the bounded round", () => {
+  // Measured handshake refusals answer in ~0.7–0.9 s.
+  const refused = { ok: false as const, err: HANDSHAKE_403, ms: 750 };
+
+  it("first handshake refused, second accepted: the reader is never interrupted", async () => {
+    h.script = (text, nth) => (text === S[0] && nth === 1 ? refused : { ok: true });
+    await listen();
+    await until(() => st().status === "chapter-end");
+    expect(pauses()).toBe(0);
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(S.map((_, i) => requestsFor(i))).toEqual([2, 1, 1, 1, 1, 1]);
+    expectEngineSound();
+  });
+
+  it("first two refused, third accepted: still no interruption", async () => {
+    h.script = (text, nth) => (text === S[0] && nth <= 2 ? refused : { ok: true });
+    await listen();
+    await until(() => st().status === "chapter-end");
+    expect(pauses()).toBe(0);
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(requestsFor(0)).toBe(3);
+    expectEngineSound();
+  });
+
+  it("all three refused: the round is spent, the pause appears inside the budget, and Retry recovers", async () => {
+    h.script = (text, nth) => (text === S[0] && nth <= 3 ? refused : { ok: true });
+    const t0 = performance.now();
+    await listen();
+    await until(() => st().status === "edge-error");
+    expect(performance.now() - t0).toBeLessThanOrEqual(12_000);
+    expect(requestsFor(0)).toBe(3); // the round's three attempts, no more
+
+    st().resumeEdge();
+    await until(() => st().status === "chapter-end");
+    expect(pauses()).toBe(1);
+    expect(requestsFor(0)).toBe(4);
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expectEngineSound();
+  });
+
+  it("a refusal that persists stays bounded: one pause, a limited attempt rate, never an automatic resume", async () => {
+    h.script = (text) => (text === S[0] ? refused : { ok: true });
+    await listen();
+    await until(() => st().status === "edge-error");
+    const pausedAt = performance.now();
+    await run(15 * 60_000);
+    const attempts = h.calls.filter((c) => c.text === S[0]).length;
+    expect(st().status).toBe("edge-error"); // still waiting for the listener
+    expect(pauses()).toBe(1);
+    expect(played).toEqual([]);
+    // Background attempts at the backoff rate (2 s doubling to 30 s) for the 10-minute background limit,
+    // then none: the same bound a network outage already has.
+    expect(attempts).toBeLessThanOrEqual(3 + 30);
+    const before = h.calls.filter((c) => c.text === S[0]).length;
+    await run(10 * 60_000);
+    expect(h.calls.filter((c) => c.text === S[0]).length).toBe(before); // nothing after the limit
+    expect(performance.now() - pausedAt).toBeGreaterThan(20 * 60_000);
+    expectEngineSound();
+  });
+
+  it("persistent non-retryable errors are unchanged: one attempt, the pause, nothing more on their own", async () => {
+    for (const err of ["unknown edge voice: en-US-TestNeural", handshake(401), "edge synth: HTTP 403 Forbidden"]) {
+      h.calls.length = 0;
+      h.script = (text) => (text === S[0] ? { ok: false, err } : { ok: true });
+      await listen();
+      await until(() => st().status === "edge-error");
+      expect(requestsFor(0)).toBe(1);
+      await run(120_000);
+      expect(requestsFor(0)).toBe(1);
+      st().stop();
+      await run(1_000);
+    }
+    expectEngineSound();
+  });
+
+  it("cancellation during the round: ✕ ends it, nothing is dispatched afterwards, and the next Listen starts clean", async () => {
+    h.script = (text, nth) => {
+      if (text !== S[0]) return { ok: true };
+      if (nth === 1) return refused;
+      if (nth === 2) return { stall: true }; // the round's second attempt is still waiting
+      return { ok: true };
+    };
+    await listen();
+    await until(() => requestsFor(0) === 2);
+    st().stop();
+    await run(30_000);
+    expect(h.calls.filter((c) => c.text === S[0]).map((c) => c.settled)).toEqual(["err", "cancelled"]);
+    expect(st().status).toBe("idle");
+    expect(played).toEqual([]);
+    expect(pauses()).toBe(0);
+
+    await listen();
+    await until(() => st().status === "chapter-end");
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expectEngineSound();
+  });
+
+  it("timeout during the round: a refusal then a stalled attempt — the pause comes at the budget, Retry recovers", async () => {
+    h.script = (text, nth) => {
+      if (text !== S[0]) return { ok: true };
+      if (nth === 1) return refused;
+      if (nth === 2) return { stall: true };
+      return { ok: true };
+    };
+    const t0 = performance.now();
+    await listen();
+    await until(() => st().status === "edge-error");
+    expect(performance.now() - t0).toBeLessThanOrEqual(12_000 + 1_000);
+
+    st().resumeEdge();
+    await until(() => st().status === "chapter-end");
+    expect(requestsFor(0)).toBe(3);
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expectEngineSound();
+  });
+
+  it("a look-ahead refused once is retried before playback reaches it; the sentences after it are synthesized once", async () => {
+    h.script = (text, nth) => (text === S[3] && nth === 1 ? refused : { ok: true });
+    await listen();
+    await until(() => st().status === "chapter-end");
+    expect(pauses()).toBe(0);
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(S.map((_, i) => requestsFor(i))).toEqual([1, 1, 1, 2, 1, 1]);
     expectEngineSound();
   });
 });

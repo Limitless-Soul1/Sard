@@ -828,16 +828,34 @@ export const TTS_MAX_RETRIES = 3;
 /** RULE 2's total budget, in ms — the hard maximum a listener waits on a sentence before the failure shows. */
 export const TTS_RECOVERY_BUDGET_MS = 12000;
 
+// A REFUSED HANDSHAKE: the endpoint answered the WebSocket upgrade itself with 403, before any request was
+// written. The engine reports exactly this shape (`format!("edge connect: {e:?}")` over the crate's error).
+//
+// Since 2026-10-10 the endpoint refuses a share of fresh connections this way and accepts the next one —
+// measured from here: 19 of 33 handshakes refused, interleaved at random with accepted ones, independent of
+// the token window, the version string and the clock. Classified permanent, every one of them killed its
+// sentence on the first attempt: the round's other two attempts never ran, and a refused background
+// reconnect turned a sentence still seconds ahead into an instant pause when playback reached it.
+//
+// Matched on the whole prefix, so it covers the upgrade response and nothing else: a 403 anywhere else, any
+// other status on the handshake, or a future change to this text all fall through to the rule below, which
+// is the behaviour before this existed.
+const HANDSHAKE_REFUSED = "edge connect: TungsteniteError(Http(Response { status: 403,";
+
 // RAWY-257 2B (C3): a PERMANENT failure must never enter the ladder — retrying it only delays the dialog the
 // user has to act on anyway. Deliberately NARROW: only failures that cannot succeed on a later attempt.
 // A 5xx is NOT here (a server-side blip is exactly what the ladder is for).
-const isPermanentFailure = (e: unknown): boolean => {
+export const isPermanentFailure = (e: unknown): boolean => {
   const s = String(e);
   if (s.includes("unknown edge voice")) return true;
   // WP-5B: a voice that cannot render this script will not learn to on a later attempt. Sits here,
   // beside the existing permanent class, rather than anywhere inside the ladder — WP-5D's rule is
   // that the ladder, its constants and every other classifier stay untouched.
   if (s.includes(VOICE_MISMATCH_MARKER)) return true;
+  // A refused handshake is a connection failure, and the next connection is a fresh chance: it goes to the
+  // bounded round (three attempts inside the 12 s budget) and, ahead of playback, to the same backoff and
+  // outage breaker as any connection fault. A refusal that persists still surfaces when the round is spent.
+  if (s.includes(HANDSHAKE_REFUSED)) return false;
   // RAWY-257 (C1 — regression fix): 429 "Too Many Requests" is a RATE LIMIT, not a rejection. It is the one
   // 4xx that CAN succeed on a later attempt, and a spaced retry is the canonical response to it — so the
   // blanket 4xx rule was swallowing exactly the failure the D68 ladder exists to absorb. MEASURED: a

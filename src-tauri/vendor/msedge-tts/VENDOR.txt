@@ -1,15 +1,15 @@
-msedge-tts 0.4.0 vendored from crates.io, with ONE local modification.
+msedge-tts 0.4.0 vendored from crates.io, with TWO local modifications.
 Source:   https://github.com/hs-CN/msedge-tts  (crates.io msedge-tts 0.4.0, published 2026-05-20)
 Checksum: c5ee3d00bfd237fac2dcd03050c073d60769c9d1f2718545854374f1aa4d6d5b (crates.io .crate, as recorded in
           Cargo.lock before vendoring)
 License:  MIT OR Apache-2.0 (see ./LICENSE)
 Wired in: src-tauri/Cargo.toml [patch.crates-io] — the dependency declaration itself is unchanged.
 
-Copied:   Cargo.toml, LICENSE, README.md, src/ — byte-identical to the published crate except the one change
+Copied:   Cargo.toml, LICENSE, README.md, src/ — byte-identical to the published crate except the two changes
           below. Nothing else from the package is needed to build it.
 
 
-=== THE MODIFICATION ===============================================================================
+=== MODIFICATION 1: THE SYNTHESIS HOST ==============================================================
 
 src/constants.rs, WSS_URL only:
 
@@ -37,9 +37,26 @@ accepting v1 tokens, this host will fail like the original one did, and the fix 
 a host change.
 
 
+=== MODIFICATION 2: KEEP-ALIVE FRAMES ===============================================================
+
+src/tts/mod.rs, `Payload::process`: one match arm, before the catch-all —
+
+  tungstenite::Message::Ping(_) | tungstenite::Message::Pong(_) => Ok(None),
+
+WHY. The catch-all turns every frame other than text, binary and close into
+`UnexpectedMessage("unexpected message: ")`, which fails the synthesis being read. The original host was
+never seen sending such frames (no such failure among the production requests recorded before 2026-10-10);
+the new one does. Measured 2026-10-12 on one held connection: an unsolicited, empty Pong
+about every 120 s (at 120.5 s and 240.5 s), and in the application the same error 2.3 minutes into a
+listening session — one failed synthesis and one reconnect per two minutes of continuous reading.
+A keep-alive frame carries no synthesis data, and tungstenite answers a Ping by itself, so both now yield
+no payload. The turn's state is untouched and every other frame keeps its handling.
+
+
 === RE-VENDORING / REMOVING ========================================================================
 
 Remove this directory and the [patch.crates-io] entry once an upstream msedge-tts release connects to a
-working host. To re-vendor: copy the four items above from the new published crate, re-apply the change
-(or none), update this file, and check the copy against the published crate file by file — the only
-expected differences are the ones recorded here. tests/unit/ttsEndpoint.test.ts pins both URLs.
+working host and handles keep-alive frames. To re-vendor: copy the four items above from the new published
+crate, re-apply the changes still needed, update this file, and check the copy against the published crate
+file by file — the only expected differences are the ones recorded here. tests/unit/ttsEndpoint.test.ts pins
+both URLs, the keep-alive arm, and every other byte of the copy against the published crate.

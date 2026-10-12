@@ -134,9 +134,10 @@ windows = { version = "0.61", features = [
 # one copy and the COM vtables stay ABI-identical.
 windows-core = "0.61"
 
-# The Edge read-aloud client, built from a vendored copy with ONE change: the synthesis WebSocket
+# The Edge read-aloud client, built from a vendored copy with two changes: the synthesis WebSocket
 # connects to the host Microsoft Edge itself uses, because the original host began refusing a large
-# share of handshakes on 2026-10-10. The dependency above is unchanged; the copy, the change, the
-# measurements behind it and how to drop it again are in vendor/msedge-tts/VENDOR.txt.
+# share of handshakes on 2026-10-10, and the keep-alive frames that host sends are not treated as
+# failures. The dependency above is unchanged; the copy, the changes, the measurements behind them and
+# how to drop them again are in vendor/msedge-tts/VENDOR.txt.
 [patch.crates-io]
 msedge-tts = { path = "vendor/msedge-tts" }

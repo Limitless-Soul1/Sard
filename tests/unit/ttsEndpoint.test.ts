@@ -44,9 +44,35 @@ describe("the endpoints the Edge client uses", () => {
   });
 });
 
-describe("the vendored copy is the published crate apart from that one change", () => {
-  // sha256 of each file of crates.io msedge-tts 0.4.0, line endings normalised (a Windows checkout may hold
-  // CRLF). constants.rs is the one file allowed to differ, and the tests above say exactly how.
+describe("keep-alive frames are not synthesis failures", () => {
+  it("a Ping or Pong arriving during a synthesis yields no payload instead of an error", () => {
+    expect(read("src/tts/mod.rs")).toMatch(/tungstenite::Message::Ping\(_\) \| tungstenite::Message::Pong\(_\) => Ok\(None\),/);
+  });
+});
+
+const sha = (text: string) => createHash("sha256").update(text.replace(/\r/g, "")).digest("hex");
+
+describe("the vendored copy is the published crate apart from the recorded changes", () => {
+  // Each modified file, with exactly the change VENDOR.txt records taken back out, must be the published
+  // file byte for byte — so nothing else can have changed in it.
+  it("constants.rs differs only by the synthesis host", () => {
+    const original = read("src/constants.rs").replace(/\r/g, "").replace(
+      /\/\/ SARD LOCAL MODIFICATION[^\n]*\n(?:\/\/[^\n]*\n){3}pub const WSS_URL: &str = "[^"]*";/,
+      'pub const WSS_URL: &str = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4&ConnectionId=";',
+    );
+    expect(sha(original)).toBe("4d02b93495aa9108f8f060a6bb336cd72e004683a8fe0c3c177c32f08de5fe99");
+  });
+
+  it("tts/mod.rs differs only by the keep-alive arm", () => {
+    const original = read("src/tts/mod.rs").replace(/\r/g, "").replace(
+      /\n {12}\/\/ SARD LOCAL MODIFICATION[^\n]*\n(?: {12}\/\/[^\n]*\n){2} {12}tungstenite::Message::Ping\(_\) \| tungstenite::Message::Pong\(_\) => Ok\(None\),/,
+      "",
+    );
+    expect(sha(original)).toBe("e34b87af3bde94bfa598ca3a2a1403ea7c945d1fb82383cb11820e38fff25360");
+  });
+
+  // Every other file: sha256 of crates.io msedge-tts 0.4.0, line endings normalised (a Windows checkout may
+  // hold CRLF).
   const PUBLISHED: Record<string, string> = {
     "Cargo.toml": "e314bd2b778e790c6a5e9233d21234ff1b73e7aff1a9f46a68904f2fbfa2eaa6",
     "LICENSE": "1ab49fbef60eb74f02a280f5bcefb187dd040a5ca1ff5dc6e2630bf7fb54fc16",
@@ -57,7 +83,6 @@ describe("the vendored copy is the published crate apart from that one change", 
     "src/tts/client/mod.rs": "d4591da4b02432f6f1ed9c8a52450a7845464ec86eccbbd9bca9994032fecb80",
     "src/tts/client/smol_runtime.rs": "a53a98739167872f35688529747a6a4c9b37fa17e40985f10098895db83c3429",
     "src/tts/client/tokio_runtime.rs": "6600e0fa089794f3995ef9272f18772b2f5666abc9e9e271d994e84b75cf1043",
-    "src/tts/mod.rs": "e34b87af3bde94bfa598ca3a2a1403ea7c945d1fb82383cb11820e38fff25360",
     "src/tts/proxy/blocking.rs": "7bbb83976eea8955c37218a141c9075eccdc00450b785e67122962448b6c2da4",
     "src/tts/proxy/mod.rs": "d312189bdd31f6be9e8eb19831b17d850ae1a01e462fed6fd9a2c426ee1e398c",
     "src/tts/proxy/smol_runtime.rs": "d8e6d263cc7bdb405c7bac9cd5518a1226656c0253a494b8434d0f460783e247",
@@ -74,7 +99,7 @@ describe("the vendored copy is the published crate apart from that one change", 
 
   for (const [file, hash] of Object.entries(PUBLISHED)) {
     it(`${file} is unchanged`, () => {
-      expect(createHash("sha256").update(read(file).replace(/\r/g, "")).digest("hex")).toBe(hash);
+      expect(sha(read(file))).toBe(hash);
     });
   }
 });

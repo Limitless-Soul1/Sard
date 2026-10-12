@@ -72,7 +72,7 @@ THIRD-PARTY COMPONENTS
    msedge-tts 0.4.0 — MIT OR Apache-2.0
    The Edge read-aloud client. https://github.com/hs-CN/msedge-tts
    Location: src-tauri/vendor/msedge-tts/   Licence: src-tauri/vendor/msedge-tts/LICENSE
-   Sard carries one local modification to this copy; see src-tauri/vendor/msedge-tts/VENDOR.txt.
+   Sard carries two local modifications to this copy; see src-tauri/vendor/msedge-tts/VENDOR.txt.
 
    The direct dependencies are declared in src-tauri/Cargo.toml and package.json, and
    the exact resolved versions in src-tauri/Cargo.lock and package-lock.json.

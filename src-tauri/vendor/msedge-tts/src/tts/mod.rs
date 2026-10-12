@@ -125,6 +125,10 @@ impl Payload {
                 *turn_end = true;
                 Ok(None)
             }
+            // SARD LOCAL MODIFICATION — see ../../VENDOR.txt. Keep-alive frames carry no synthesis data:
+            // the synthesis host sends an unsolicited Pong about every 120 s, and tungstenite answers a
+            // Ping by itself. Treated as errors, each one failed the synthesis it arrived during.
+            tungstenite::Message::Ping(_) | tungstenite::Message::Pong(_) => Ok(None),
             _ => Err(Error::UnexpectedMessage(format!(
                 "unexpected message: {}",
                 message

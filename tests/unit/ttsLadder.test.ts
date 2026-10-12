@@ -139,9 +139,10 @@ describe("WP-5B — the mismatch is terminal and never retried", () => {
     expect(thrown.includes(VOICE_MISMATCH_MARKER)).toBe(true);
   });
 
-  it("does not collide with the 4xx rule that governs every other permanent failure", () => {
-    // `isPermanentFailure` also treats a non-429 4xx as permanent. The marker must not accidentally
-    // contain a 4xx-looking token, or the two rules would be indistinguishable in a debug string.
+  it("does not collide with the HTTP-status rule that governs every other permanent failure", () => {
+    // `isPermanentFailure` also treats a 4xx status the engine reports (`<phase>: http <status>;`) as
+    // permanent. The marker must not look like that report, or the two rules would be indistinguishable.
+    expect(/\bhttp \d{3};/.test(VOICE_MISMATCH_MARKER)).toBe(false);
     expect(/\b4\d\d\b/.test(VOICE_MISMATCH_MARKER)).toBe(false);
   });
 });

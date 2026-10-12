@@ -404,6 +404,68 @@ describe("after a failed round — background retries, Retry, Skip", () => {
   });
 });
 
+describe("Retry after a PERMANENT failure — the dead sentence", () => {
+  const FORBIDDEN = "edge synth: HTTP 403";
+
+  it("a permanent failure inside the recovery round leaves no waiter on the dead sentence", async () => {
+    const h = harness((i) => (i === N ? fail(FORBIDDEN) : ok()));
+    const r = await play(h, N, 60_000);
+    expect(r.stoppedAt).toBe(N);
+    expect(h.s.stateOf(N)).toBe("dead");
+    // No waiter is left on the dead sentence (`checkInvariants`: "dead N still has waiters"): one would
+    // settle only when something later dropped the entry.
+    expect(h.s.checkInvariants()).toEqual([]);
+    await expectCleanAfterReset(h);
+  });
+
+  it("REGRESSION: Retry re-attempts a dead sentence once, and keeps the sentences prepared after it", async () => {
+    const h = harness((i, n) => (i === N + 2 && n === 1 ? fail(FORBIDDEN) : ok()));
+    const r = await play(h, N, 90_000);
+    expect(r.stoppedAt).toBe(N + 2);
+    expect(h.s.stateOf(N + 2)).toBe("dead");
+    expect(h.s.isReady(N + 3)).toBe(true);
+    const before = h.calls.length;
+    h.s.retryDead();
+    expect(h.calls.length).toBe(before); // it dispatches nothing itself
+    h.s.userAction(); // the store's Retry: retryDead, userAction, then playFrom → recover
+    const out = await settle(h, h.s.recover(N + 2));
+    expect(out.v).toBeDefined();
+    expect(h.attempts.get(N + 2)).toBe(2);
+    expect(h.attempts.get(N + 3)).toBe(1); // prepared before the failure — not synthesized again
+    expect(h.s.checkInvariants()).toEqual([]);
+    expectInvariants(h);
+    await expectCleanAfterReset(h);
+  });
+
+  it("a sentence refused again: one new attempt per Retry, the same failure, and nothing in between", async () => {
+    const h = harness((i) => (i === N + 2 ? fail(FORBIDDEN) : ok()));
+    const r = await play(h, N, 90_000);
+    expect(r.stoppedAt).toBe(N + 2);
+    for (const attempts of [2, 3]) {
+      h.s.retryDead(); h.s.userAction();
+      const out = await settle(h, h.s.recover(N + 2));
+      expect(String(out.e)).toContain(TTS_EDGE_DOWN);
+      expect(h.attempts.get(N + 2)).toBe(attempts);
+      expect(h.s.stateOf(N + 2)).toBe("dead");
+      await h.clock.run(h.clock.now() + 120_000);
+      expect(h.attempts.get(N + 2)).toBe(attempts); // still never re-attempted on its own
+    }
+    expect(h.s.checkInvariants()).toEqual([]);
+    expectInvariants(h);
+    await expectCleanAfterReset(h);
+  });
+
+  it("only Retry revives it: a user action alone (Play, a skip) leaves the dead sentence as it was", async () => {
+    const h = harness((i) => (i === N + 2 ? fail(FORBIDDEN) : ok()));
+    const r = await play(h, N, 90_000);
+    expect(r.stoppedAt).toBe(N + 2);
+    h.s.userAction();
+    await h.clock.run(h.clock.now() + 120_000);
+    expect(h.attempts.get(N + 2)).toBe(1);
+    expect(h.s.stateOf(N + 2)).toBe("dead");
+  });
+});
+
 describe("navigation and session changes while requests are in flight", () => {
   it("a seek away drops the old window; a late result for the old position is discarded, not stored", async () => {
     const h = harness((i, n) => (i === N + 4 ? ok(8_000) : ok()));

@@ -313,7 +313,7 @@ fn cached_voices(engines: &TtsEngine, budget: Duration, cancel: &AtomicBool) -> 
 }
 
 fn load_edge_voices() -> Result<Vec<Voice>, String> {
-    let fetched = get_voices_list().map_err(|e| format!("edge voices: {e:?}"))?;
+    let fetched = get_voices_list().map_err(|e| edge_error("edge voices", &e))?;
     Ok(merge_arabic_fallback(fetched))
 }
 
@@ -398,6 +398,32 @@ fn remaining(deadline: std::time::Instant, phase: &str) -> Result<std::time::Dur
     }
 }
 
+/// An engine error as the frontend receives it: `<phase>: <debug>`, or `<phase>: http <status>; <debug>`
+/// when the service ANSWERED with an HTTP status.
+///
+/// THE STATUS IS READ FROM THE RESPONSE, never found among the error's digits. Two calls are answered by an
+/// HTTP response before anything else happens: the WebSocket upgrade (tungstenite reports a refused
+/// upgrade as `Http(response)`) and the voice-list fetch (ureq reports a non-success answer as
+/// `StatusCode(code)`). Whether a failure is worth retrying depends partly on that status
+/// (`isPermanentFailure` in src/lib/tts.ts). It used to be recovered by scanning the whole debug text for a
+/// three-digit 4xx number, which also matched header values — a 5xx carrying `Content-Length: 434` would
+/// have read as a permanent rejection. The debug text still follows, for diagnosis.
+fn edge_error(phase: &str, e: &msedge_tts::error::Error) -> String {
+    match http_status(e) {
+        Some(status) => format!("{phase}: http {status}; {e:?}"),
+        None => format!("{phase}: {e:?}"),
+    }
+}
+
+fn http_status(e: &msedge_tts::error::Error) -> Option<u16> {
+    use msedge_tts::error::Error;
+    match e {
+        Error::TungsteniteError(tungstenite::Error::Http(response)) => Some(response.status().as_u16()),
+        Error::UreqError(ureq::Error::StatusCode(code)) => Some(*code),
+        _ => None,
+    }
+}
+
 /// RAWY-257 (C8-lite): the connection opened on a worker thread and bounded. It opens a TCP + TLS +
 /// WebSocket connection with NO timeout of its own, and it is made while `engines.edge` is HELD — so on
 /// a black-holed route it could pin the engine mutex for the OS connect timeout (tens of seconds), far
@@ -413,7 +439,7 @@ fn remaining(deadline: std::time::Instant, phase: &str) -> Result<std::time::Dur
 fn connect_bounded(budget: Duration, cancel: &AtomicBool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(msedge_tts_split().map_err(|e| format!("edge connect: {e:?}")));
+        let _ = tx.send(msedge_tts_split().map_err(|e| edge_error("edge connect", &e)));
     });
     wait_bounded(rx, budget, cancel, "edge connect timed out")
 }
@@ -613,7 +639,7 @@ fn edge_synth_once(mut running: EdgeRunning, text: &str, bounds: Bounds, cancel:
     let worker_cancel = cancel.clone();
     std::thread::spawn(move || {
         if let Err(e) = running.tx.send(&text, &running.config) {
-            let _ = tx.send(Chunk::Err(format!("edge synth: {e:?}")));
+            let _ = tx.send(Chunk::Err(edge_error("edge synth", &e)));
             return;
         }
         loop {
@@ -627,7 +653,7 @@ fn edge_synth_once(mut running: EdgeRunning, text: &str, bounds: Bounds, cancel:
                 Ok(Some(SynthesizedResponse::AudioMetadata(m))) => Some(Chunk::Meta(m)),
                 Ok(None) => None,
                 Err(e) => {
-                    let _ = tx.send(Chunk::Err(format!("edge synth: {e:?}")));
+                    let _ = tx.send(Chunk::Err(edge_error("edge synth", &e)));
                     return;
                 }
             };
@@ -1114,6 +1140,37 @@ mod tests {
             parse_text_of(&payload).is_err(),
             "raw `<<` must not parse — if it does, the escaping test above is vacuous"
         );
+    }
+
+    // ---- the HTTP status the frontend classifies on (`isPermanentFailure`) ----
+
+    fn refused_upgrade(status: u16) -> msedge_tts::error::Error {
+        let response = tungstenite::http::Response::builder()
+            .status(status)
+            .header("content-length", "434") // a header value that LOOKS like a 4xx status
+            .body(None)
+            .unwrap();
+        msedge_tts::error::Error::TungsteniteError(tungstenite::Error::Http(Box::new(response)))
+    }
+
+    #[test]
+    fn a_refused_upgrade_reports_the_status_read_from_the_response() {
+        assert!(super::edge_error("edge connect", &refused_upgrade(403)).starts_with("edge connect: http 403; "));
+        assert!(super::edge_error("edge connect", &refused_upgrade(503)).starts_with("edge connect: http 503; "));
+    }
+
+    #[test]
+    fn a_voice_list_answer_reports_its_status() {
+        let e = msedge_tts::error::Error::UreqError(ureq::Error::StatusCode(503));
+        assert!(super::edge_error("edge voices", &e).starts_with("edge voices: http 503; "));
+    }
+
+    #[test]
+    fn digits_in_an_error_that_is_not_an_http_answer_never_become_a_status() {
+        let e = msedge_tts::error::Error::UnexpectedMessage("unexpected text message: X-RequestId:404".into());
+        let s = super::edge_error("edge synth", &e);
+        assert!(s.starts_with("edge synth: UnexpectedMessage("), "{s}");
+        assert!(!s.contains(": http "), "{s}");
     }
 }
 

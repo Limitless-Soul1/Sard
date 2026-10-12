@@ -121,16 +121,17 @@ vi.mock("../../src/lib/ipc", () => ({
 
 import { isPermanentFailure, ttsStats, useTts, VOICE_MISMATCH_MARKER } from "../../src/lib/tts";
 
-// The error text, verbatim in shape, that the Rust side returns (`format!("edge connect: {e:?}")`) when the
-// service answers the WebSocket upgrade with an HTTP status instead of accepting it. Captured in the app:
-// the real headers follow, and nothing before `headers` varies.
-const handshake = (status: number) =>
-  `edge connect: TungsteniteError(Http(Response { status: ${status}, version: HTTP/1.1, headers: {"strict-transport-security": "max-age=31536000; includeSubDomains", "content-length": "0"}, body: None }))`;
+// The error text the Rust side returns (`edge_error` in tts.rs) when the service answers the WebSocket
+// upgrade with an HTTP status: the status READ FROM THE RESPONSE right after the phase, then the debug text.
+// The debug part is as captured in the app; its own digits never count (see the classifier tests below).
+const upgrade = (status: number, headers = '"content-length": "0"') =>
+  `edge connect: http ${status}; TungsteniteError(Http(Response { status: ${status}, version: HTTP/1.1, headers: {"strict-transport-security": "max-age=31536000; includeSubDomains", ${headers}}, body: None }))`;
+const handshake = (status: number) => upgrade(status);
 // A refused handshake: the service turns a share of fresh connections away and accepts the next one, so it
 // is retried inside the bounded round like any connection fault.
 const HANDSHAKE_403 = handshake(403);
-// Any other status on the handshake keeps the 4xx rule: PERMANENT, so the scheduler never retries it on its
-// own and only Retry makes a new attempt. The Retry-lifecycle tests below use it for that reason.
+// Any other 4xx on the handshake is PERMANENT, so the scheduler never retries it on its own and only Retry
+// makes a new attempt. The Retry-lifecycle tests below use it for that reason.
 const HANDSHAKE_401 = handshake(401);
 // A transient failure: the host could not be reached.
 const HOST_DOWN = 'edge connect: TungsteniteError(Io(Os { code: 11001, kind: Uncategorized, message: "No such host is known." }))';
@@ -359,21 +360,33 @@ describe("Listen after a failure is a different operation from Retry", () => {
 });
 
 describe("what the classifier calls permanent", () => {
-  it("a refused handshake (403 on the upgrade) is a connection failure; every other 4xx keeps its rule", () => {
-    // The text captured in the app, as the engine sent it.
-    const captured = 'edge connect: TungsteniteError(Http(Response { status: 403, version: HTTP/1.1, headers: {"strict-transport-security": "max-age=31536000; includeSubDomains", "access-control-allow-origin": "*", "x-cache": "CONFIG_NOCACHE"}, body: None }))';
-    expect(isPermanentFailure(captured)).toBe(false);
+  it("a refused handshake (403 on the upgrade) is a connection failure; every other 4xx is permanent", () => {
     expect(isPermanentFailure(HANDSHAKE_403)).toBe(false);
-    // unchanged
     expect(isPermanentFailure(handshake(401))).toBe(true);
     expect(isPermanentFailure(handshake(404))).toBe(true);
-    expect(isPermanentFailure(handshake(429))).toBe(false); // the rate limit, already retryable
-    expect(isPermanentFailure("edge synth: HTTP 403 Forbidden")).toBe(true); // a 403 that is not the upgrade
-    expect(isPermanentFailure("edge voices: http status: 403")).toBe(true);
-    expect(isPermanentFailure("unknown edge voice: en-US-TestNeural")).toBe(true);
-    expect(isPermanentFailure(`${VOICE_MISMATCH_MARKER}: en-US-TestNeural returned 6 bytes for 40 chars`)).toBe(true);
+    expect(isPermanentFailure(handshake(429))).toBe(false); // the rate limit
+    expect(isPermanentFailure("edge voices: http 403; UreqError(StatusCode(403))")).toBe(true); // not the upgrade
+    expect(isPermanentFailure("edge voices: http 429; UreqError(StatusCode(429))")).toBe(false);
+  });
+
+  it("a server error is retryable, whatever digits its debug text carries", () => {
+    expect(isPermanentFailure(handshake(503))).toBe(false);
+    // THE DEFECT THE STATUS FIELD CLOSES: a header value that looks like a 4xx status.
+    expect(isPermanentFailure(upgrade(503, '"content-length": "434"'))).toBe(false);
+    expect(isPermanentFailure(upgrade(502, '"retry-after": "404"'))).toBe(false);
+    expect(isPermanentFailure("edge voices: http 500; UreqError(StatusCode(500))")).toBe(false);
+  });
+
+  it("digits are never a status unless the engine reported one", () => {
+    expect(isPermanentFailure("edge synth: UnexpectedMessage(\"unexpected text message: X-RequestId:404\")")).toBe(false);
+    expect(isPermanentFailure("edge synth: HTTP 403 Forbidden")).toBe(false); // no status marker — not an HTTP answer
     expect(isPermanentFailure(HOST_DOWN)).toBe(false);
     expect(isPermanentFailure("edge synth stalled: no audio")).toBe(false);
+  });
+
+  it("the other permanent classes are unchanged", () => {
+    expect(isPermanentFailure("unknown edge voice: en-US-TestNeural")).toBe(true);
+    expect(isPermanentFailure(`${VOICE_MISMATCH_MARKER}: en-US-TestNeural returned 6 bytes for 40 chars`)).toBe(true);
   });
 });
 
@@ -438,7 +451,7 @@ describe("a refused handshake is absorbed by the bounded round", () => {
   });
 
   it("persistent non-retryable errors are unchanged: one attempt, the pause, nothing more on their own", async () => {
-    for (const err of ["unknown edge voice: en-US-TestNeural", handshake(401), "edge synth: HTTP 403 Forbidden"]) {
+    for (const err of ["unknown edge voice: en-US-TestNeural", handshake(401), "edge voices: http 403; UreqError(StatusCode(403))"]) {
       h.calls.length = 0;
       h.script = (text) => (text === S[0] ? { ok: false, err } : { ok: true });
       await listen();

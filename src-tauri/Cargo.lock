@@ -3424,6 +3424,8 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tungstenite",
+ "ureq",
  "webview2-com",
  "windows",
  "windows-core 0.61.2",

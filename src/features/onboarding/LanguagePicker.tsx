@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { useI18n, type Lang } from "../../i18n";
+import { markFirstRun } from "../updater/afterUpdate";
 
 // First-run welcome / language picker (RAWY-84, design Band W). The very first thing a new reader
 // sees, before any language is chosen — so it is deliberately BILINGUAL (both scripts shown at
@@ -8,10 +9,16 @@ import { useI18n, type Lang } from "../../i18n";
 // "Sard · سَرْد" lockup (Arabic in the app's UI Arabic font, sized up to match the Latin), then two
 // equal language cards. Choosing one persists the UI language (D22 — still changeable later in
 // Global Settings) and proceeds straight into the app; there is no Continue step.
+//
+// A first run is not an update: choosing a language also records the installed version as already
+// introduced, before the library opens, so the after-update What's New is never shown to a new reader.
 export function LanguagePicker() {
   const { setLang } = useI18n();
   const [bird, setBird] = useState(true);
-  const choose = (lang: Lang) => setLang(lang);
+  const choose = (lang: Lang) => {
+    void markFirstRun();
+    setLang(lang);
+  };
 
   return (
     <main className="welcome" dir="ltr">

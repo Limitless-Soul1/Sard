@@ -66,7 +66,14 @@ THIRD-PARTY COMPONENTS
 
 4) APPLICATION FRAMEWORK AND LIBRARIES
 
-   Rust crates and npm packages are resolved at build time and are not vendored here.
+   Rust crates and npm packages are resolved at build time and are not vendored here,
+   with one exception:
+
+   msedge-tts 0.4.0 — MIT OR Apache-2.0
+   The Edge read-aloud client. https://github.com/hs-CN/msedge-tts
+   Location: src-tauri/vendor/msedge-tts/   Licence: src-tauri/vendor/msedge-tts/LICENSE
+   Sard carries one local modification to this copy; see src-tauri/vendor/msedge-tts/VENDOR.txt.
+
    The direct dependencies are declared in src-tauri/Cargo.toml and package.json, and
    the exact resolved versions in src-tauri/Cargo.lock and package-lock.json.
 

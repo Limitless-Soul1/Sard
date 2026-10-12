@@ -1,0 +1,45 @@
+msedge-tts 0.4.0 vendored from crates.io, with ONE local modification.
+Source:   https://github.com/hs-CN/msedge-tts  (crates.io msedge-tts 0.4.0, published 2026-05-20)
+Checksum: c5ee3d00bfd237fac2dcd03050c073d60769c9d1f2718545854374f1aa4d6d5b (crates.io .crate, as recorded in
+          Cargo.lock before vendoring)
+License:  MIT OR Apache-2.0 (see ./LICENSE)
+Wired in: src-tauri/Cargo.toml [patch.crates-io] — the dependency declaration itself is unchanged.
+
+Copied:   Cargo.toml, LICENSE, README.md, src/ — byte-identical to the published crate except the one change
+          below. Nothing else from the package is needed to build it.
+
+
+=== THE MODIFICATION ===============================================================================
+
+src/constants.rs, WSS_URL only:
+
+  before  wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=<key>&ConnectionId=
+  after   wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1?Ocp-Apim-Subscription-Key=<key>&ConnectionId=
+
+The key is the same value. Everything `build_websocket_request` appends (the ConnectionId, Sec-MS-GEC,
+Sec-MS-GEC-Version), every header, and the synthesis protocol (speech.config + ssml messages, the
+turn.start / response / audio.metadata / turn.end replies) are untouched. VOICE_LIST_URL is untouched.
+
+WHY. From 2026-10-10 the original host refuses a large share of WebSocket handshakes with HTTP 403 —
+other clients reported the same from that date, total in some regions and intermittent in others — while
+Microsoft Edge itself connects to the host above. Measured from a Windows desktop on 2026-10-12 with this
+crate's own request: the original host refused 16 of 40 handshakes made back to back, in streaks; the new
+host accepted 45 of 45 valid handshakes and completed every synthesis tried, Arabic voices, 1,284-character
+text and word-boundary metadata included.
+
+WHY THE VOICE LIST STAYS. Measured the same day: the original voice-list URL answered 8 of 8 requests
+(322 voices, 32 Arabic). The new host's voice list refuses a request without Sec-MS-GEC, which this crate's
+voice-list call does not send. There is no evidence that it needs to move, so it does not.
+
+KNOWN LIMIT. The new host requires the v1 Sec-MS-GEC token this crate generates and refuses a
+"2-..." Sec-MS-GEC-Version; Edge's own builds have been reported using a newer scheme. If Microsoft stops
+accepting v1 tokens, this host will fail like the original one did, and the fix is a token change, not
+a host change.
+
+
+=== RE-VENDORING / REMOVING ========================================================================
+
+Remove this directory and the [patch.crates-io] entry once an upstream msedge-tts release connects to a
+working host. To re-vendor: copy the four items above from the new published crate, re-apply the change
+(or none), update this file, and check the copy against the published crate file by file — the only
+expected differences are the ones recorded here. tests/unit/ttsEndpoint.test.ts pins both URLs.

@@ -64,7 +64,11 @@ msedge-tts = "0.4"
 # only so tts.rs can read the status field from the error rather than look for digits in its text.
 # No features of their own — msedge-tts enables what it uses.
 tungstenite = { version = "0.29", default-features = false }
-ureq = { version = "3.3", default-features = false }
+# ureq is also the translation downloader's own HTTP client, which opens TLS connections itself, so the
+# two features it relies on are named here rather than inherited silently from msedge-tts: rustls without
+# a bundled crypto provider (the downloader passes aws-lc-rs explicitly) and the platform certificate
+# verifier. Both are already enabled in the tree, so this changes no dependency.
+ureq = { version = "3.3", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
 # RAWY-111: msedge-tts (aws-lc-rs) + ureq 3 (ring) compile TWO rustls crypto providers into one
 # rustls, so `ClientConfig::builder()`'s auto-detection is ambiguous and PANICS (hanging the Edge WS
 # connect). We install aws-lc-rs as the explicit process default at startup to disambiguate.
@@ -127,6 +131,7 @@ windows = { version = "0.61", features = [
     "Win32_System_Diagnostics_ToolHelp",    # the process snapshot the ancestry filter walks
     "Win32_System_Threading",               # the event the worker blocks on, GetCurrentProcessId
     "Win32_Security",                       # SECURITY_ATTRIBUTES, which gates CreateEventW
+    "Win32_Storage_FileSystem",             # GetDiskFreeSpaceExW, checked before a model download
 ] }
 # The `#[implement]` macro expands to `windows_core::` paths resolved at the CRATE root, so the crate
 # has to be nameable here even though we reach the same types through `windows::core`. Pinned to the

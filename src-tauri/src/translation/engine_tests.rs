@@ -643,6 +643,12 @@ mod process {
         answer.split(' ').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0)
     }
 
+    /// A line that must be seen even when the test passes — a case that could not be run, or a measurement.
+    /// The test harness hides what a passing test prints, so this goes to the error stream directly.
+    fn note(line: &str) {
+        let _ = writeln!(std::io::stderr(), "{line}");
+    }
+
     fn wait_for(what: &str, limit: Duration, mut done: impl FnMut() -> bool) {
         let until = Instant::now() + limit;
         while !done() {
@@ -782,7 +788,7 @@ mod process {
             match failure(&f, config(mode)) {
                 EngineError::NotLoopbackOnly(address) => assert!(address.starts_with("[::1]:"), "{mode}: {address}"),
                 EngineError::EarlyExit { log_tail, .. } if log_tail.iter().any(|l| l.contains("FAKE no-ipv6")) => {
-                    eprintln!("{mode}: NOT TESTED — this machine has no IPv6 loopback to open the extra listener on");
+                    note(&format!("NOT TESTED ({mode}): this machine has no IPv6 loopback to open the extra listener on"));
                 }
                 other => panic!("{mode}: {other:?}"),
             }
@@ -1086,7 +1092,7 @@ mod process {
         let t0 = Instant::now();
         host.child.kill().unwrap();
         assert!(engine.gone_within(Duration::from_secs(3)), "the engine outlived its host");
-        eprintln!("engine ended {:?} after its host was killed", t0.elapsed());
+        note(&format!("MEASURED: the engine ended {:?} after its host was killed", t0.elapsed()));
     }
 
     /// The control for the test above: without the Job Object the same engine DOES outlive its host — so it is

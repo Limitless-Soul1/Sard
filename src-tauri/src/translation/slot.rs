@@ -36,8 +36,9 @@ pub(crate) fn serial_for_tests() -> std::sync::MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// Free a slot a test deliberately left taken (a stop that was made to fail keeps it).
-#[cfg(test)]
+/// Free a slot a test deliberately left taken (a stop that was made to fail keeps it). Only the engine's
+/// process tests do that, and those exist only on Windows.
+#[cfg(all(test, windows))]
 pub(crate) fn release_for_tests() {
     *SLOT.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }

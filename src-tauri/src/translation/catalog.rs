@@ -120,6 +120,8 @@ pub struct EngineSpec {
     pub unused: &'static [&'static str],
     /// The server executable, one of `files`.
     pub executable: &'static str,
+    /// The oldest Microsoft Visual C++ runtime this build may be run with, as (major, minor).
+    pub min_vc_runtime: (u16, u16),
     /// Written next to the engine: the licence texts the build itself declares.
     pub notices_name: &'static str,
     pub notices: &'static str,
@@ -155,8 +157,29 @@ pub struct EngineSpec {
 /// * **The release tag** `b11501` resolves to commit `46baf1f1fec5a06d1e52122a9207ca978b720f95`. That matches the
 ///   build's own version string.
 ///
+/// ## The Visual C++ runtime it needs
+///
 /// The system's Visual C++ runtime (`MSVCP140.dll`, `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll`) is NOT part of the
-/// archive. The engine imports it, and Sard itself does not, so its presence is checked before every launch.
+/// archive. The engine imports it, and Sard itself does not, so it is checked before every launch — that it is
+/// there, and that it is recent enough.
+///
+/// `min_vc_runtime` is 14.51, and this is where that comes from:
+///
+/// * **Microsoft's rule.** The installed runtime must be at least as recent as the tools a program was built
+///   with ("Latest supported Visual C++ Redistributable downloads", Microsoft Learn).
+/// * **The tools this build was made with.** The release's own build script builds these binaries with the
+///   Visual Studio 2026 tools, and the one binary that records its linker's version, `ggml-vulkan.dll`, records
+///   14.51.
+/// * **Why it is not a formality.** Five of the binaries lock mutexes through the runtime (`_Mtx_lock`) and none
+///   initialises one through it (`_Mtx_init_in_situ`). That is how code built with the 14.40 tools or later
+///   looks, and Microsoft's standard-library changelog says of it that a program run with an older runtime
+///   "may encounter null dereferences in `mutex` machinery".
+/// * **Why Windows would not catch it.** Every function the engine imports from the runtime is exported by
+///   every version of it back to 2015 (26 versions of `MSVCP140.dll` were compared). An old runtime would load;
+///   the engine would start, and then fail.
+///
+/// 14.40 is the oldest runtime the mutex evidence alone would allow. 14.51 is what Microsoft's rule asks for, and
+/// nothing here was run to show that anything older is enough.
 pub const ENGINE_WINDOWS_X64: EngineSpec = EngineSpec {
     archive: &RUNTIME_WINDOWS_X64,
     files: &[
@@ -216,10 +239,16 @@ pub const ENGINE_WINDOWS_X64: EngineSpec = EngineSpec {
         "llama.exe",
     ],
     executable: "llama-server.exe",
+    min_vc_runtime: (14, 51),
     notices_name: "THIRD-PARTY-NOTICES.txt",
     // The licence texts the build itself declares (`llama.exe licenses`): llama.cpp, LLVM OpenMP, cpp-httplib,
-    // BoringSSL and JSON for Modern C++. Four were checked against the release's own sources; BoringSSL's text
-    // exists only in the build output.
+    // BoringSSL and JSON for Modern C++. Each was compared with its source and found identical:
+    // * four with the release's own source tree;
+    // * BoringSSL's with its upstream repository at the tag the release's build script fetches —
+    //   `0.20260929.0`, commit `427ec40cc8edc545253289232e885708c409e5ea`. The build embeds that tag's `LICENSE`
+    //   file as it stands. It is the Apache License 2.0, and the tag has no `NOTICE` file.
+    //
+    // BoringSSL is compiled into two of the installed files, `llama-server-impl.dll` and `llama-common.dll`.
     notices: include_str!("engine-notices.txt"),
 };
 

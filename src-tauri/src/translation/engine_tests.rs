@@ -165,6 +165,100 @@ fn the_engine_is_given_ordinary_paths_where_one_exists() {
 }
 
 #[test]
+fn a_runtime_that_is_missing_too_old_or_unidentifiable_is_refused_with_what_to_do() {
+    let tmp = super::install_tests::TempDir::new("vc-version");
+    let claims = |version: Option<[u16; 4]>| move |_: &Path| version;
+    const NEEDED: (u16, u16) = (14, 51);
+
+    // Missing comes first: with no files there is no version to speak of.
+    assert_eq!(
+        vc_runtime_problem(&tmp.0, NEEDED, claims(Some([14, 51, 36247, 0]))),
+        Some(EngineError::MissingVcRuntime(VC_RUNTIME.iter().map(|s| s.to_string()).collect()))
+    );
+    for name in VC_RUNTIME {
+        std::fs::write(tmp.0.join(name), b"").unwrap();
+    }
+
+    // Recent enough: exactly the minimum, a later minor, a later major.
+    for recent in [[14, 51, 36247, 0], [14, 51, 0, 0], [14, 52, 0, 0], [15, 0, 0, 0]] {
+        assert_eq!(vc_runtime_problem(&tmp.0, NEEDED, claims(Some(recent))), None, "{recent:?}");
+    }
+    // Too old — the newest that is still too old among them. Being installed is not enough.
+    for old in [[14, 50, 35731, 0], [14, 44, 35215, 0], [14, 36, 32532, 0], [13, 99, 0, 0]] {
+        match vc_runtime_problem(&tmp.0, NEEDED, claims(Some(old))) {
+            Some(EngineError::VcRuntimeTooOld { file, found, needed }) => {
+                assert_eq!(file, "MSVCP140.dll");
+                assert_eq!(found, Some(format!("{}.{}.{}.{}", old[0], old[1], old[2], old[3])));
+                assert_eq!(needed, "14.51");
+            }
+            other => panic!("{old:?}: {other:?}"),
+        }
+    }
+    // One old file among recent ones is enough, and it is the one that is named.
+    let mixed = |file: &Path| Some(if file.ends_with("VCRUNTIME140_1.dll") { [14, 29, 30139, 0] } else { [14, 51, 36247, 0] });
+    assert!(matches!(vc_runtime_problem(&tmp.0, NEEDED, mixed), Some(EngineError::VcRuntimeTooOld { ref file, .. }) if file == "VCRUNTIME140_1.dll"));
+    // A version that cannot be read is not given the benefit of the doubt.
+    let unknown = vc_runtime_problem(&tmp.0, NEEDED, claims(None)).unwrap();
+    assert!(matches!(unknown, EngineError::VcRuntimeTooOld { found: None, .. }), "{unknown:?}");
+
+    // What the user is told: the prerequisite by name and version, and where Microsoft publishes it.
+    let old = vc_runtime_problem(&tmp.0, NEEDED, claims(Some([14, 36, 32532, 0]))).unwrap();
+    let said = old.to_string();
+    assert!(said.contains("MSVCP140.dll") && said.contains("14.36.32532.0") && said.contains("14.51"), "{said}");
+    for error in [&old, &unknown, &EngineError::MissingVcRuntime(vec!["MSVCP140.dll".into()])] {
+        let advice = error.recovery().expect("there is something the user can do");
+        assert!(advice.contains(VC_RUNTIME_PRODUCT) && advice.contains(VC_RUNTIME_SOURCE), "{advice}");
+    }
+    assert!(old.recovery().unwrap().contains("14.51"));
+    assert_eq!(EngineError::Cancelled.recovery(), None);
+}
+
+#[test]
+fn a_file_version_is_read_from_the_file_and_never_guessed() {
+    let text = b"not a program at all, only text, long enough to be indexed into without running off its end".repeat(8);
+    let mut headed = vec![0u8; 4096];
+    headed[..2].copy_from_slice(b"MZ");
+    headed[0x3C] = 0x80;
+    headed[0x80..0x84].copy_from_slice(b"PE\0\0");
+    let junk: [&[u8]; 6] = [b"", b"MZ", &[0u8; 64], &[0xFFu8; 4096], &text, &headed];
+    for bytes in junk {
+        assert_eq!(file_version(bytes), None);
+    }
+
+    // Real files with a real version: on Windows, the system's own copies of the runtime.
+    #[cfg(windows)]
+    {
+        let system = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        for name in VC_RUNTIME {
+            let bytes = std::fs::read(system.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let version = file_version(&bytes).unwrap_or_else(|| panic!("{name} has a version"));
+            assert_eq!(version[0], 14, "{name}: {version:?}");
+            // A damaged copy gives no version rather than a wrong one, and never a panic.
+            for cut in [bytes.len() / 2, bytes.len() / 8, 1024] {
+                let _ = file_version(&bytes[..cut.min(bytes.len())]);
+            }
+            let mut scrambled = bytes.clone();
+            scrambled.iter_mut().skip(0x200).step_by(7).for_each(|b| *b = !*b);
+            let _ = file_version(&scrambled);
+        }
+    }
+}
+
+#[test]
+fn a_line_longer_than_the_read_limit_arrives_in_pieces() {
+    // 300,000 bytes with no line end, then two ordinary lines: what an engine printing progress looks like.
+    let mut printed = vec![b'.'; 300_000];
+    printed.extend_from_slice(b"\nfirst\nsecond\n");
+    let mut pieces: Vec<Vec<u8>> = Vec::new();
+    for_each_line(&printed[..], |piece| pieces.push(piece.to_vec()));
+
+    let longest = pieces.iter().map(Vec::len).max().unwrap();
+    assert!(longest as u64 <= LOG_READ_MAX, "a piece of {longest} bytes was held at once");
+    assert_eq!(pieces.concat(), printed, "nothing is lost or reordered");
+    assert_eq!(&pieces[pieces.len() - 2..], [b"first\n".to_vec(), b"second\n".to_vec()]);
+}
+
+#[test]
 fn a_session_key_is_random_and_never_printed() {
     let (a, b) = (SessionKey::generate().unwrap(), SessionKey::generate().unwrap());
     assert_ne!(a.as_str(), b.as_str());
@@ -324,6 +418,8 @@ mod process {
                     std::process::exit(1);
                 }
                 "missing_library" => std::process::exit(0xC000_0135u32 as i32),
+                // What Windows ends a process with when a library is there but lacks what the process needs.
+                "missing_entry_point" => std::process::exit(0xC000_0139u32 as i32),
                 "leak_then_exit" => {
                     println!("srv          init: api_keys: {key}");
                     std::process::exit(1);
@@ -387,6 +483,11 @@ mod process {
             }
             let load_ms = std::env::var(LOAD_MS).ok().and_then(|v| v.parse().ok()).unwrap_or(300);
             std::thread::sleep(Duration::from_millis(load_ms));
+            if mode == "plant_late" {
+                // A file that appears beside the engine while it is starting — in its own directory, which is
+                // its working directory.
+                fs::write("ggml-late.dll", b"appeared while the engine was starting").unwrap();
+            }
             if mode == "wide_late" {
                 extra_listeners.push(bind_ipv6_loopback());
             }
@@ -717,6 +818,7 @@ mod process {
         assert_eq!(exit("load_fail").1, ExitCause::ModelLoadFailed);
         let (code, cause, _) = exit("missing_library");
         assert_eq!((code, cause), (Some(0xC000_0135u32 as i32), ExitCause::MissingSystemLibrary));
+        assert_eq!(exit("missing_entry_point").1, ExitCause::MissingSystemLibrary, "a runtime too old for the engine");
 
         assert_eq!(failure(&f, config("malformed_health")), EngineError::UnexpectedHealth { status: 200 });
         assert_eq!(failure(&f, config("health_error")), EngineError::UnexpectedHealth { status: 500 });
@@ -748,7 +850,12 @@ mod process {
         fs::create_dir(&empty).unwrap();
         let mut without_runtime = config("normal");
         without_runtime.hooks.system_dir = Some(empty);
-        assert_eq!(run(f.model, cpu(), without_runtime), EngineError::MissingVcRuntime(VC_RUNTIME.iter().map(|s| s.to_string()).collect()));
+        assert_eq!(run(f.model, cpu(), without_runtime.clone()), EngineError::MissingVcRuntime(VC_RUNTIME.iter().map(|s| s.to_string()).collect()));
+        // Files with the right names that are not the runtime: there, but not identifiable — so not accepted.
+        for name in VC_RUNTIME {
+            fs::write(f.fx.tmp.0.join("no-runtime-here").join(name), b"not a library").unwrap();
+        }
+        assert!(matches!(run(f.model, cpu(), without_runtime), EngineError::VcRuntimeTooOld { found: None, .. }));
 
         // A backend library planted beside the engine would be loaded by it: the engine is not launched.
         let planted = f.fx.dir().join("ggml-rpc.dll");
@@ -992,6 +1099,83 @@ mod process {
         let shown = format!("{error} {error:?}");
         assert!(shown.contains("[redacted]"), "{shown}");
         assert!(!shown.contains(&seen));
+    }
+
+    #[test]
+    fn a_runtime_too_old_for_the_engine_stops_the_launch_before_anything_runs() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("old-runtime");
+        // The fake writes this file the moment it starts: if it exists, the engine ran.
+        let ran = f.fx.tmp.0.join("the-engine-ran");
+        let mut outdated = config("normal");
+        outdated.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        // The stand-in's spec accepts any runtime of the 14 family. This one is taken to be older than that.
+        outdated.hooks.runtime_version = Some([13, 0, 0, 0]);
+
+        let error = failure(&f, outdated);
+        assert_eq!(error, EngineError::VcRuntimeTooOld { file: "MSVCP140.dll".into(), found: Some("13.0.0.0".into()), needed: "14.0".into() });
+        assert!(error.recovery().unwrap().contains(VC_RUNTIME_SOURCE));
+        assert!(!ran.exists(), "an engine was started against a runtime known to be too old");
+
+        // The same machine with a runtime that is recent enough: the engine starts.
+        let manager = EngineManager::new(config("normal"));
+        start(&f, &manager).expect("the real runtime on this machine is of the 14 family");
+    }
+
+    // ---- Between hashing and launching ----
+
+    #[test]
+    fn a_file_planted_after_verification_stops_the_launch_before_the_engine_runs() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("planted-early");
+        // The fake writes this file the moment it starts: if it exists, the engine ran.
+        let ran = f.fx.tmp.0.join("the-engine-ran");
+        let planted = f.fx.dir().join("ggml-planted.dll");
+        let mut racing = config("normal");
+        racing.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        racing.hooks.plant_after_verify = Some(planted.clone());
+        // Long enough for a process that was NOT suspended to get going.
+        racing.hooks.hold_before_resume = Duration::from_millis(1500);
+
+        assert!(matches!(failure(&f, racing), EngineError::EngineChanged(_)));
+        assert!(!ran.exists(), "the engine ran before its directory had been checked");
+
+        fs::remove_file(&planted).unwrap();
+        let manager = EngineManager::new(config("normal"));
+        start(&f, &manager).expect("with the planted file gone the engine starts");
+    }
+
+    #[test]
+    fn a_file_that_appears_while_the_engine_starts_stops_it_being_used() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("planted-late");
+        assert!(matches!(failure(&f, config("plant_late")), EngineError::EngineChanged(_)));
+
+        // It is still there, so the next launch is refused before anything runs. Removing it is the recovery.
+        let late = f.fx.dir().join("ggml-late.dll");
+        assert!(late.exists());
+        assert!(matches!(failure(&f, config("normal")), EngineError::EngineNotInstalled(_)));
+        fs::remove_file(&late).unwrap();
+        let manager = EngineManager::new(config("normal"));
+        start(&f, &manager).expect("with the stray file gone the engine starts");
+    }
+
+    #[test]
+    fn while_the_engine_runs_its_files_cannot_be_changed() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("held-running");
+        let manager = EngineManager::new(config("normal"));
+        start(&f, &manager).unwrap();
+        // Not the executable — Windows protects a running program's own file anyway — but a file the engine
+        // merely sits beside.
+        let file = f.fx.dir().join("LICENSE-LLVM-OpenMP");
+        assert!(fs::OpenOptions::new().write(true).open(&file).is_err(), "opened for writing");
+        assert!(fs::remove_file(&file).is_err(), "deleted");
+        assert!(fs::rename(&file, f.fx.dir().join("moved")).is_err(), "renamed");
+        assert!(fs::rename(f.fx.dir(), f.fx.tmp.0.join("engine-moved")).is_err(), "its folder renamed");
+
+        manager.stop().unwrap();
+        fs::OpenOptions::new().append(true).open(&file).expect("released once the engine has stopped");
     }
 
     // ---- A host process: what happens when Sard itself ends, and what Sard's environment can do ----

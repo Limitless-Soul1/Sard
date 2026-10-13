@@ -26,8 +26,27 @@
 //!    staging directory, which is never used and is cleared by the next installation, or a directory without
 //!    a record (`Unverified`), which is never launched until it has been hashed again.
 //!
-//! Every directory this module deletes is first resolved and checked to lie inside the translation root, and
-//! it is refused if it is, or contains, a link or reparse point.
+//! ## What a deletion can reach
+//!
+//! This module deletes three kinds of thing: its record, a leftover of an unfinished installation, and the
+//! engine directory. Each is a fixed name inside `<root>/runtime/<id>/`, and before anything is deleted that
+//! path must resolve to exactly itself — which a link, a junction or any other redirection, at any level
+//! above it, would prevent. Inside a directory being deleted, only plain files are removed, by name; a
+//! subdirectory, a link or any other reparse point there stops the deletion instead of being followed.
+//! Removing a name never follows a link, so the most a planted link can lose is itself.
+//!
+//! These are checks and then actions, not one atomic step. A program running as the same Windows user could
+//! change a folder between the two — and could also simply delete the user's files itself. Nothing here runs
+//! with more rights than the user has, so there is no boundary for such a program to cross.
+//!
+//! ## Between hashing and launching
+//!
+//! `verify` holds every file open from before it is hashed for as long as the caller keeps the result. On
+//! Windows nothing can then write to, delete, rename or replace those files, or rename a folder above them,
+//! whichever user tries: what was hashed is what gets loaded. A file ADDED to the directory is not prevented —
+//! the directory belongs to the user, and any program of theirs may write there — so the caller checks the
+//! directory's exact contents again (`check_unchanged`) at the last moment before the engine runs, and once
+//! more before it is used.
 
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
@@ -124,11 +143,24 @@ struct EngineRecord {
     installed_at_unix: u64,
 }
 
-/// An engine whose every file was hashed and matched just now.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An engine whose every file was hashed and matched just now — and is held open, so that it stays so.
+///
+/// One handle per file is kept for as long as this value lives. On Windows each handle denies writing,
+/// deleting and renaming to every other handle, whoever opens it, and the folders above a held file cannot be
+/// renamed either. So from the moment a file is hashed, what is on disk is what was hashed. What a held file
+/// does NOT prevent is a new file being added beside it; `check_unchanged` looks for that.
+#[derive(Debug)]
 pub struct VerifiedEngine {
     pub dir: PathBuf,
     pub executable: PathBuf,
+    held: Vec<fs::File>,
+}
+
+impl VerifiedEngine {
+    /// How many files are held open.
+    pub fn held(&self) -> usize {
+        self.held.len()
+    }
 }
 
 pub fn engine_dir(store: &Store, spec: &EngineSpec) -> PathBuf {
@@ -160,6 +192,8 @@ fn manifest_sha256(spec: &EngineSpec) -> String {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Faults {
     pub crash_after_files: Option<usize>,
+    /// After the old engine has been moved aside, before the new one has taken its place.
+    pub crash_between_moves: bool,
     pub crash_before_record: bool,
 }
 
@@ -174,8 +208,10 @@ pub(crate) fn install_with(store: &Store, spec: &EngineSpec, cancel: &AtomicBool
     if store.state(spec.archive).map_err(io_err)? != ArtifactState::Installed {
         return Err(InstallError::ArchiveNotInstalled);
     }
+    let base = store.artifact_dir(spec.archive);
     let archive_path = store.installed_path(spec.archive);
-    store.guard_existing(&archive_path).map_err(|e| InstallError::PathRefused(e.to_string()))?;
+    guard_exact(store, &base)?;
+    guard_exact(store, &archive_path)?;
     let bytes = fs::read(&archive_path).map_err(io_err)?;
     let actual = hex(&Sha256::digest(&bytes));
     if actual != spec.archive.sha256 {
@@ -200,7 +236,6 @@ pub(crate) fn install_with(store: &Store, spec: &EngineSpec, cancel: &AtomicBool
         return Err(InstallError::UnreadableArchive("the central directory and the archive disagree on the entries".into()));
     }
 
-    let base = store.artifact_dir(spec.archive);
     clear_leftovers(store, &base)?;
     let staging = base.join(format!("{STAGING_PREFIX}{}", random_hex(8).map_err(io_err)?));
     fs::create_dir(&staging).map_err(io_err)?;
@@ -214,19 +249,18 @@ pub(crate) fn install_with(store: &Store, spec: &EngineSpec, cancel: &AtomicBool
     }
 
     // Swap: unrecord the old engine, move it aside, move the new one in, and only then record it.
-    let record = record_path(store, spec);
-    if record.exists() {
-        store.guard_existing(&record).map_err(|e| InstallError::PathRefused(e.to_string()))?;
-        fs::remove_file(&record).map_err(io_err)?;
-    }
+    remove_name(&record_path(store, spec))?;
     let dir = engine_dir(store, spec);
     let mut old = None;
     if fs::symlink_metadata(&dir).is_ok() {
         check_not_link(&dir)?;
-        store.guard_existing(&dir).map_err(|e| InstallError::PathRefused(e.to_string()))?;
+        guard_exact(store, &dir)?;
         let aside = base.join(format!("{OLD_PREFIX}{}", random_hex(8).map_err(io_err)?));
         fs::rename(&dir, &aside).map_err(io_err)?;
         old = Some(aside);
+    }
+    if faults.crash_between_moves {
+        return Err(InstallError::Io("simulated crash between the two moves".into()));
     }
     fs::rename(&staging, &dir).map_err(io_err)?;
     if faults.crash_before_record {
@@ -314,10 +348,43 @@ fn write_record(store: &Store, spec: &EngineSpec) -> Result<(), InstallError> {
             .map(|d| d.as_secs())
             .unwrap_or(0),
     };
+    let bytes = serde_json::to_vec_pretty(&record).map_err(|e| InstallError::Io(e.to_string()))?;
     let path = record_path(store, spec);
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, serde_json::to_vec_pretty(&record).map_err(|e| InstallError::Io(e.to_string()))?).map_err(io_err)?;
+    // Never through a link. Whatever already has the temporary name is removed as a NAME (a link is not
+    // followed), the file is created new (which fails rather than open anything that reappears), and the
+    // rename replaces the record's own name, not what a link there might point to.
+    remove_name(&tmp)?;
+    let mut file = OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(io_err)?;
+    file.write_all(&bytes).map_err(io_err)?;
+    file.sync_all().map_err(io_err)?;
+    drop(file);
     fs::rename(&tmp, &path).map_err(io_err)
+}
+
+/// Remove one name from a directory this module manages. Removing a name never follows a link: if the name
+/// is a link, the link goes and its target is untouched. A name that is not there is not an error.
+fn remove_name(path: &Path) -> Result<(), InstallError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(io_err(e)),
+    }
+}
+
+/// Refuse `path` unless it is exactly where it appears to be.
+///
+/// The store's root is fully resolved, and every path in this module is built from it with plain names. So a
+/// path that no link, junction or other redirection touches — at ANY level — resolves to itself. Anything
+/// else is refused: a redirection to somewhere outside the translation directory, and equally one to
+/// somewhere else inside it.
+fn guard_exact(store: &Store, path: &Path) -> Result<(), InstallError> {
+    store.guard_existing(path).map_err(|e| InstallError::PathRefused(e.to_string()))?;
+    let resolved = fs::canonicalize(path).map_err(io_err)?;
+    if resolved != path {
+        return Err(InstallError::PathRefused(format!("{} is reached through a link", path.display())));
+    }
+    Ok(())
 }
 
 fn read_record(store: &Store, spec: &EngineSpec) -> Result<EngineRecord, InstallError> {
@@ -353,26 +420,83 @@ pub fn state(store: &Store, spec: &EngineSpec) -> io::Result<EngineState> {
 }
 
 /// Check the installed engine in full — the record, the exact set of files, no links, every size and every
-/// SHA-256 — and return where it is. This runs before every launch.
+/// SHA-256 — and return where it is, with every file held open. This runs before every launch.
+///
+/// Each file is opened first and hashed through that same handle, so what is hashed is what is held; a file
+/// that a writer already has open cannot be held at all, and is refused.
 pub fn verify(store: &Store, spec: &EngineSpec) -> Result<VerifiedEngine, InstallError> {
     read_record(store, spec)?;
     let dir = engine_dir(store, spec);
     check_not_link(&dir)?;
-    store.guard_existing(&dir).map_err(|e| InstallError::PathRefused(e.to_string()))?;
+    guard_exact(store, &dir)?;
     if let Some(reason) = listing_problem(&dir, spec, true) {
         return Err(InstallError::UnexpectedFile(reason));
     }
+    let mut held = Vec::new();
     for (name, size, sha) in expected_files(spec) {
-        let path = dir.join(&name);
-        let (len, digest) = hash_path(&path).map_err(io_err)?;
+        let mut file = open_held(&dir.join(&name)).map_err(io_err)?;
+        // Of the handle, not of the path: this is the file that is held.
+        let meta = file.metadata().map_err(io_err)?;
+        if !meta.is_file() || is_link(&meta) {
+            return Err(InstallError::UnexpectedFile(format!("{name} is not a plain file")));
+        }
+        let (len, digest) = hash_open(&mut file).map_err(io_err)?;
         if len != size {
             return Err(InstallError::WrongSize { name, expected: size, actual: len });
         }
         if digest != sha {
             return Err(InstallError::WrongChecksum { name });
         }
+        held.push(file);
     }
-    Ok(VerifiedEngine { executable: dir.join(spec.executable), dir })
+    Ok(VerifiedEngine { executable: dir.join(spec.executable), dir, held })
+}
+
+/// Whether the engine directory still holds exactly the engine's files, by name, size and kind — without
+/// hashing them again. While a `VerifiedEngine` holds the files their contents cannot change, so what is left
+/// to look for is something ADDED: the engine loads every backend library it finds beside itself.
+pub fn check_unchanged(store: &Store, spec: &EngineSpec) -> Result<(), InstallError> {
+    let dir = engine_dir(store, spec);
+    check_not_link(&dir)?;
+    guard_exact(store, &dir)?;
+    match listing_problem(&dir, spec, true) {
+        None => Ok(()),
+        Some(reason) => Err(InstallError::UnexpectedFile(reason)),
+    }
+}
+
+/// Open a file to hold it: for reading, and — on Windows — sharing it for reading only.
+///
+/// * No other handle can then open it for writing, delete it, or rename it or any folder above it.
+/// * The open itself fails if some handle already has it open for writing.
+/// * A link is opened as itself rather than followed, so the caller's check of the handle sees it.
+fn open_held(path: &Path) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x1;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.share_mode(FILE_SHARE_READ).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(path)
+}
+
+/// SHA-256 and length of an open file, read from its start.
+fn hash_open(file: &mut fs::File) -> io::Result<(u64, String)> {
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 8 << 20];
+    let mut len = 0u64;
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        len += n as u64;
+    }
+    Ok((len, hex(&hasher.finalize())))
 }
 
 /// For an `Unverified` or `Damaged` engine: hash it; record it if it matches, or remove it if it does not.
@@ -383,17 +507,14 @@ pub fn verify_installation(store: &Store, spec: &EngineSpec) -> Result<EngineSta
         return Ok(EngineState::NotInstalled);
     }
     check_not_link(&dir)?;
-    store.guard_existing(&dir).map_err(|e| InstallError::PathRefused(e.to_string()))?;
+    guard_exact(store, &dir)?;
     let complete = listing_problem(&dir, spec, true).is_none()
         && expected_files(spec).iter().all(|(name, size, sha)| matches!(hash_path(&dir.join(name)), Ok((l, d)) if l == *size && d == *sha));
     if complete {
         write_record(store, spec)?;
         Ok(EngineState::Installed)
     } else {
-        let record = record_path(store, spec);
-        if record.exists() {
-            fs::remove_file(&record).map_err(io_err)?;
-        }
+        remove_name(&record_path(store, spec))?;
         remove_tree(store, &dir)?;
         Ok(EngineState::NotInstalled)
     }
@@ -402,11 +523,12 @@ pub fn verify_installation(store: &Store, spec: &EngineSpec) -> Result<EngineSta
 /// Remove the installed engine (not the downloaded archive). Returns the bytes freed.
 pub fn remove(store: &Store, spec: &EngineSpec) -> Result<u64, InstallError> {
     let _slot = slot::claim(Holder::Install).map_err(|_| InstallError::EngineBusy)?;
-    let record = record_path(store, spec);
-    if record.exists() {
-        store.guard_existing(&record).map_err(|e| InstallError::PathRefused(e.to_string()))?;
-        fs::remove_file(&record).map_err(io_err)?;
+    let base = store.artifact_dir(spec.archive);
+    if fs::symlink_metadata(&base).is_err() {
+        return Ok(0);
     }
+    guard_exact(store, &base)?;
+    remove_name(&record_path(store, spec))?;
     let dir = engine_dir(store, spec);
     if fs::symlink_metadata(&dir).is_err() {
         return Ok(0);
@@ -471,11 +593,18 @@ fn check_not_link(path: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
-/// Delete a directory this module created, after checking it lies inside the root. Links and reparse points
-/// are refused rather than followed, and nested directories are not expected.
+/// Delete a directory this module created: the plain files directly inside it, then the directory itself.
+///
+/// What keeps this inside the managed directory:
+/// * the directory must not be a link or any other reparse point, and must resolve to exactly itself — so no
+///   folder above it is a redirection either;
+/// * nothing is entered: a subdirectory, a link, or any reparse point inside it is refused, not followed;
+/// * each file is removed by name, which never follows a link, and removes only that name — a hard link to a
+///   file elsewhere loses this name and nothing else;
+/// * the directory is removed only once it is empty.
 fn remove_tree(store: &Store, dir: &Path) -> Result<u64, InstallError> {
     check_not_link(dir)?;
-    store.guard_existing(dir).map_err(|e| InstallError::PathRefused(e.to_string()))?;
+    guard_exact(store, dir)?;
     let mut freed = 0;
     for entry in fs::read_dir(dir).map_err(io_err)? {
         let path = entry.map_err(io_err)?.path();
@@ -501,9 +630,9 @@ fn clear_leftovers(store: &Store, base: &Path) -> Result<(), InstallError> {
             let meta = fs::symlink_metadata(&path).map_err(io_err)?;
             if meta.is_file() && !is_link(&meta) {
                 // Not something an installation leaves — but left in place, it would fail every installation
-                // after it. It carries a name reserved for leftovers, inside Sard's own directory.
-                store.guard_existing(&path).map_err(|e| InstallError::PathRefused(e.to_string()))?;
-                fs::remove_file(&path).map_err(io_err)?;
+                // after it. It carries a name reserved for leftovers, inside Sard's own directory, which the
+                // caller has already shown to be exactly where it should be.
+                remove_name(&path)?;
             } else {
                 remove_tree(store, &path)?;
             }
@@ -533,8 +662,14 @@ fn check_entry_name(name: &str) -> Result<(), InstallError> {
     }
 }
 
-/// The entry names of a ZIP archive, read from its central directory. ZIP64 is refused: the pinned archive does
-/// not use it, and a parser that only needs to handle one form has less to get wrong.
+/// The entry names of a ZIP archive, read from its central directory.
+///
+/// Only the plainest form of archive is accepted — the form the pinned archive has — because every liberty a
+/// reader allows is a way for two readers to see two different archives:
+/// * one part, not ZIP64;
+/// * the end-of-central-directory record is the last thing in the file;
+/// * the central directory sits immediately before it and is exactly as long as it says;
+/// * every entry points at a local file header that is really there, before the central directory.
 fn central_directory_names(b: &[u8]) -> Result<Vec<String>, InstallError> {
     let bad = |why: &str| InstallError::UnreadableArchive(why.to_string());
     let u16_at = |o: usize| b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]) as usize).ok_or_else(|| bad("truncated"));
@@ -547,10 +682,19 @@ fn central_directory_names(b: &[u8]) -> Result<Vec<String>, InstallError> {
         .rev()
         .find(|&i| b[i..i + 4] == [0x50, 0x4b, 0x05, 0x06])
         .ok_or_else(|| bad("no end-of-central-directory record"))?;
-    let count = u16_at(eocd + 10)?;
-    let offset = u32_at(eocd + 16)?;
-    if count == 0xFFFF || offset == 0xFFFF_FFFF {
+    let (disk, directory_disk, count_here, count) = (u16_at(eocd + 4)?, u16_at(eocd + 6)?, u16_at(eocd + 8)?, u16_at(eocd + 10)?);
+    let (size, offset, archive_comment) = (u32_at(eocd + 12)?, u32_at(eocd + 16)?, u16_at(eocd + 20)?);
+    if count == 0xFFFF || offset == 0xFFFF_FFFF || size == 0xFFFF_FFFF {
         return Err(bad("ZIP64 archives are not accepted"));
+    }
+    if disk != 0 || directory_disk != 0 || count_here != count {
+        return Err(bad("archives in several parts are not accepted"));
+    }
+    if eocd + 22 + archive_comment != b.len() {
+        return Err(bad("there is data after the end of the archive"));
+    }
+    if offset.checked_add(size) != Some(eocd) {
+        return Err(bad("the central directory is not where the archive says it is"));
     }
     let mut names = Vec::with_capacity(count);
     let mut p = offset;
@@ -562,6 +706,10 @@ fn central_directory_names(b: &[u8]) -> Result<Vec<String>, InstallError> {
         let flags = u16_at(p + 8)?;
         let (name_len, extra_len, comment_len) = (u16_at(p + 28)?, u16_at(p + 30)?, u16_at(p + 32)?);
         let attributes = u32_at(p + 38)?;
+        let local = u32_at(p + 42)?;
+        if local >= offset || b.get(local..local + 4) != Some(&[0x50, 0x4b, 0x03, 0x04][..]) {
+            return Err(bad("an entry does not point at a file in the archive"));
+        }
         let raw = b.get(p + 46..p + 46 + name_len).ok_or_else(|| bad("truncated name"))?;
         // Names are UTF-8 only when the archive says so (bit 11); otherwise only ASCII is unambiguous.
         let name = if flags & 0x800 != 0 || raw.is_ascii() {
@@ -581,6 +729,9 @@ fn central_directory_names(b: &[u8]) -> Result<Vec<String>, InstallError> {
         }
         names.push(name.to_string());
         p += 46 + name_len + extra_len + comment_len;
+    }
+    if p != eocd {
+        return Err(bad("the central directory is not as long as the archive says it is"));
     }
     Ok(names)
 }

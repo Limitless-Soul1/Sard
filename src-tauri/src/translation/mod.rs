@@ -21,8 +21,9 @@
 //! * **Nothing outside the translation directory is ever written or deleted.** Every removal is
 //!   checked against the resolved translation root. Removing a download deletes only the files the
 //!   store itself wrote; the engine's directory is Sard's own and is removed whole.
-//! * **Only the pinned engine files are ever run.** Each one is hashed again before every launch, and
-//!   the engine is not launched if its directory holds anything else.
+//! * **Only the pinned engine files are ever run.** Each one is hashed again before every launch and
+//!   then held, so that it cannot be changed or replaced for as long as the engine runs. The engine is
+//!   not launched, and not used, if its directory holds anything else.
 //! * **One engine, reachable only by Sard, for only as long as Sard runs.** It listens on 127.0.0.1
 //!   with a key made for that session, and the operating system ends it when Sard ends.
 

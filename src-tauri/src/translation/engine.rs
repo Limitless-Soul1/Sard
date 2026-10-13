@@ -7,12 +7,15 @@
 //!
 //! 1. Takes the process-wide engine slot: one engine at a time, never during an installation.
 //! 2. Re-verifies the installed engine (`install::verify`: the record, the exact file set, no links, every
-//!    SHA-256), checks the model is installed, and checks the Visual C++ runtime the engine imports.
+//!    SHA-256) and keeps every file held open, so that none can be changed or replaced from then until the
+//!    engine has exited. Checks that the model is installed, and that the Visual C++ runtime the engine needs
+//!    is present and recent enough.
 //! 3. Starts `llama-server.exe` from its own directory, which is also its working directory: ggml loads backend
 //!    libraries from both. The process is started
 //!    * suspended and without a console window;
 //!    * with a cleared environment: only the variables in `PASSED_ENV`, a fixed `PATH`, and the session key;
-//!    * then attached to a kill-on-close Job Object, and only then resumed.
+//!    * then attached to a kill-on-close Job Object;
+//!    * and resumed only after its directory has been checked once more for anything ADDED to it.
 //!
 //!    So it never runs a single instruction outside the job, and it cannot outlive this process.
 //! 4. Finds the port it bound in the operating system's table of that process's listening sockets. The engine
@@ -24,18 +27,37 @@
 //!    * a request without the key is rejected;
 //!    * CORS names only the closed origin;
 //!    * there is no web UI;
-//!    * the slots endpoint, tools and the proxy each report themselves switched off.
+//!    * the slots endpoint, tools and the proxy each report themselves switched off;
+//!    * its directory still holds exactly its own files.
 //! 6. Sends one short, deterministic completion — the readiness probe. Only a successful probe makes the
 //!    engine ready. Nothing ever falls back to the CPU or to another model.
 //!
 //! ## The session key
 //!
 //! 32 bytes from the operating system's secure random source, new for every start. It reaches the engine only
-//! through the `LLAMA_API_KEY` environment variable — never the command line, which other programs can read.
+//! through the `LLAMA_API_KEY` environment variable — never the command line, and never a file. It is not
+//! written to disk anywhere.
 //!
 //! The engine prints a hint of it only at trace level (the last four characters), and it is started at
 //! `-lv 3` (info), so that line is never produced. Every captured log line is redacted anyway, and no error
 //! carries the key.
+//!
+//! ### Who the key keeps out, and who it does not
+//!
+//! The engine listens on 127.0.0.1, which every program on the computer can connect to. The key decides who
+//! gets an answer.
+//!
+//! * **Not a program running as the same Windows user.** Such a program can read the key out of the engine's
+//!   environment — shown with a stand-in process, not assumed — or out of Sard's own memory. It could as
+//!   easily read the user's books and everything Sard does. The key is no defence against it, and none is
+//!   claimed. The environment is still the best of the three channels the engine offers: the command line is
+//!   shown by ordinary tools, Task Manager among them, and a key file would put the key on disk.
+//! * **Something that can reach the port but cannot read this user's processes.** A page in a web browser is
+//!   the case that matters: it can send requests to 127.0.0.1, gets 401 without the key, and CORS names an
+//!   origin no page has.
+//! * **Another Windows account on the same computer** can connect to the port too. Whether it can read the
+//!   key rests on Windows' default process permissions, which do not let one ordinary account open another's
+//!   processes. That default was not tested here, and an administrator can always read it.
 
 // The process code is Windows-only; elsewhere only the types and the pure helpers are compiled.
 #![cfg_attr(not(windows), allow(dead_code, unused_imports, unused_mut, unused_variables))]
@@ -104,11 +126,36 @@ pub const PASSED_ENV: &[&str] = &[
 ];
 
 /// The Visual C++ runtime the engine imports and Sard itself does not.
+///
+/// All but one of the engine's binaries import from these three, and from nothing else that is not part of
+/// Windows (read from their import tables). They are not in the engine's archive, and Sard does not install
+/// them: it never downloads or installs the runtime, and never falls back to anything else.
+///
+/// What happens without a suitable runtime is settled before anything is launched — no process is created, so
+/// neither Windows nor the engine has any occasion to fail in a way of its own:
+/// * **A file missing from the system directory:** `EngineError::MissingVcRuntime`, naming it. (A runtime from
+///   2015 or 2017 has no `VCRUNTIME140_1.dll`, so it is reported this way.)
+/// * **Present, but older than the engine spec's minimum:** `EngineError::VcRuntimeTooOld`, naming the file, the
+///   version found and the version needed. Being present is not enough: an old runtime would load, and the
+///   engine would then fail inside it. The engine spec says why, and where its minimum comes from.
+/// * **Present, but its version cannot be read:** treated as too old. Nothing is assumed about a runtime that
+///   cannot be identified.
+///
+/// The version is read from the files themselves, in the system directory. That is the only place the engine
+/// can take them from — its own directory holds exactly its pinned files, and its `PATH` is the system
+/// directories only — so the files read are the files that would be loaded.
+///
+/// `EngineError::recovery` says what to install. Sard reports; the user installs.
 pub const VC_RUNTIME: &[&str] = &["MSVCP140.dll", "VCRUNTIME140.dll", "VCRUNTIME140_1.dll"];
+
+/// What the user is told to install when the runtime is missing or too old, and where Microsoft publishes its
+/// latest supported version. Sard never fetches this itself.
+pub const VC_RUNTIME_PRODUCT: &str = "Microsoft Visual C++ Redistributable (x64)";
+pub const VC_RUNTIME_SOURCE: &str = "https://aka.ms/vc14/vc_redist.x64.exe";
 
 const LOG_LINES: usize = 200;
 const LOG_LINE_MAX: usize = 2000;
-const LOG_READ_MAX: u64 = 64 * 1024;
+pub(crate) const LOG_READ_MAX: u64 = 64 * 1024;
 const CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Where inference runs. GPU names the device explicitly, so a missing GPU is an error, never a silent switch
@@ -140,6 +187,8 @@ pub enum EngineError {
     NoLaunchProfile,
     InvalidExecution(String),
     MissingVcRuntime(Vec<String>),
+    /// A runtime file is older than the engine needs. `found` is `None` when its version could not be read.
+    VcRuntimeTooOld { file: String, found: Option<String>, needed: String },
     SpawnFailed(String),
     /// The process could not be tied to Sard's lifetime; it was stopped before it ran.
     JobFailed(String),
@@ -157,6 +206,8 @@ pub enum EngineError {
     ProxyExposed { status: u16 },
     /// The engine did not answer one of the security checks.
     CheckFailed(String),
+    /// Something appeared in the engine's directory between verifying it and using the engine.
+    EngineChanged(String),
     ProbeFailed(String),
     ProbeTimeout,
     Cancelled,
@@ -173,6 +224,12 @@ impl std::fmt::Display for EngineError {
             Self::NoLaunchProfile => write!(f, "this file is not a model that can be started"),
             Self::InvalidExecution(why) => write!(f, "invalid execution settings: {why}"),
             Self::MissingVcRuntime(files) => write!(f, "the Microsoft Visual C++ runtime is missing ({})", files.join(", ")),
+            Self::VcRuntimeTooOld { file, found: Some(found), needed } => {
+                write!(f, "the Microsoft Visual C++ runtime is too old: {file} is version {found}, and {needed} or later is needed")
+            }
+            Self::VcRuntimeTooOld { file, found: None, needed } => {
+                write!(f, "the Microsoft Visual C++ runtime cannot be identified: the version of {file} could not be read, and {needed} or later is needed")
+            }
             Self::SpawnFailed(why) => write!(f, "the engine could not be started: {why}"),
             Self::JobFailed(why) => write!(f, "the engine could not be tied to Sard's lifetime: {why}"),
             Self::EarlyExit { code, cause, .. } => write!(f, "the engine stopped while starting ({cause:?}, exit code {code:?})"),
@@ -187,6 +244,7 @@ impl std::fmt::Display for EngineError {
             Self::ToolsExposed { status } => write!(f, "the engine has tools switched on ({status})"),
             Self::ProxyExposed { status } => write!(f, "the engine has its proxy switched on ({status})"),
             Self::CheckFailed(why) => write!(f, "the engine did not answer a security check: {why}"),
+            Self::EngineChanged(why) => write!(f, "the engine's directory changed while it was starting: {why}"),
             Self::ProbeFailed(why) => write!(f, "the engine's test request failed: {why}"),
             Self::ProbeTimeout => write!(f, "the engine's test request timed out"),
             Self::Cancelled => write!(f, "cancelled"),
@@ -196,6 +254,20 @@ impl std::fmt::Display for EngineError {
 }
 
 impl std::error::Error for EngineError {}
+
+impl EngineError {
+    /// What the user can do about this failure, where there is something they can do. Sard only says it:
+    /// nothing is downloaded or installed on their behalf.
+    pub fn recovery(&self) -> Option<String> {
+        match self {
+            Self::MissingVcRuntime(_) => Some(format!("Install the latest {VC_RUNTIME_PRODUCT} from Microsoft ({VC_RUNTIME_SOURCE}), then try again.")),
+            Self::VcRuntimeTooOld { needed, .. } => Some(format!(
+                "Install the latest {VC_RUNTIME_PRODUCT} from Microsoft ({VC_RUNTIME_SOURCE}) — version {needed} or later — then try again."
+            )),
+            _ => None,
+        }
+    }
+}
 
 /// Timeouts, all bounded.
 ///
@@ -237,6 +309,14 @@ pub(crate) struct TestHooks {
     pub fail_kill: bool,
     /// Where to look for the Visual C++ runtime instead of the system directory.
     pub system_dir: Option<std::path::PathBuf>,
+    /// The version to take the runtime's files to have, instead of reading it from them.
+    pub runtime_version: Option<[u16; 4]>,
+    /// A file to create the instant the engine's files have been verified — what a program racing the launch
+    /// would do.
+    pub plant_after_verify: Option<std::path::PathBuf>,
+    /// A pause between putting the process in its job and the last check before it is resumed, so that a test
+    /// can tell a suspended engine from a running one.
+    pub hold_before_resume: Duration,
 }
 
 /// The session key. Its `Debug` never shows it.
@@ -378,6 +458,8 @@ struct Session {
     monitor: Option<JoinHandle<()>>,
     readers: Vec<JoinHandle<()>>,
     log: Arc<LogBuffer>,
+    /// The engine's verified files, held open until the process has gone.
+    _files: VerifiedEngine,
     slot: SlotGuard,
 }
 
@@ -614,6 +696,84 @@ pub(crate) fn missing_vc_runtime(system_dir: &Path) -> Vec<String> {
     VC_RUNTIME.iter().filter(|f| !system_dir.join(f).is_file()).map(|f| f.to_string()).collect()
 }
 
+/// What stands between the engine and the Visual C++ runtime it needs, if anything: a file that is missing, or
+/// one that is older than `minimum` (major, minor). A file whose version cannot be read counts as too old —
+/// nothing is assumed about a runtime that cannot be identified.
+pub(crate) fn vc_runtime_problem(
+    system_dir: &Path,
+    minimum: (u16, u16),
+    version_of: impl Fn(&Path) -> Option<[u16; 4]>,
+) -> Option<EngineError> {
+    let missing = missing_vc_runtime(system_dir);
+    if !missing.is_empty() {
+        return Some(EngineError::MissingVcRuntime(missing));
+    }
+    for file in VC_RUNTIME {
+        let found = version_of(&system_dir.join(file));
+        if found.is_none_or(|v| (v[0], v[1]) < minimum) {
+            return Some(EngineError::VcRuntimeTooOld {
+                file: file.to_string(),
+                found: found.map(|v| format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3])),
+                needed: format!("{}.{}", minimum.0, minimum.1),
+            });
+        }
+    }
+    None
+}
+
+/// The file version recorded in a Windows program file — the four numbers of its version resource — read from
+/// the file's own bytes. Nothing is loaded and nothing is run; a file that is not what it should be gives `None`.
+pub(crate) fn file_version(bytes: &[u8]) -> Option<[u16; 4]> {
+    // Positions are kept as u64, so that no sum of numbers read from the file can overflow, and every read is
+    // checked against the length of the file.
+    let get = |at: u64, len: u64| bytes.get(usize::try_from(at).ok()?..usize::try_from(at.checked_add(len)?).ok()?);
+    let u16_at = |at: u64| get(at, 2).map(|s| u64::from(u16::from_le_bytes([s[0], s[1]])));
+    let u32_at = |at: u64| get(at, 4).map(|s| u64::from(u32::from_le_bytes([s[0], s[1], s[2], s[3]])));
+    let pe = u32_at(0x3C)?;
+    if get(pe, 4)? != b"PE\0\0" {
+        return None;
+    }
+    let (coff, optional) = (pe + 4, pe + 24);
+    let (sections, optional_size) = (u16_at(coff + 2)?, u16_at(coff + 16)?);
+    let directories = optional
+        + match u16_at(optional)? {
+            0x20B => 112,
+            0x10B => 96,
+            _ => return None,
+        };
+    // Where a position in the loaded image is in the file.
+    let in_file = |rva: u64| -> Option<u64> {
+        (0..sections).find_map(|i| {
+            let s = optional + optional_size + i * 40;
+            let (size, start, raw) = (u32_at(s + 8)?.max(u32_at(s + 16)?), u32_at(s + 12)?, u32_at(s + 20)?);
+            Some(rva.checked_sub(start).filter(|within| *within < size)? + raw)
+        })
+    };
+    // The resource directory is three levels deep: type, name, language. An entry is an id and where it leads.
+    let resources = in_file(u32_at(directories + 8 * 2).filter(|rva| *rva != 0)?)?;
+    let first = |table: u64, wanted: Option<u64>| -> Option<u64> {
+        let entries = u16_at(table + 12)? + u16_at(table + 14)?;
+        (0..entries).find_map(|i| {
+            let e = table + 16 + i * 8;
+            let (id, leads_to) = (u32_at(e)?, u32_at(e + 4)?);
+            (wanted.is_none() || wanted == Some(id)).then_some(leads_to)
+        })
+    };
+    const TABLE: u64 = 0x8000_0000;
+    const VERSION_TYPE: u64 = 16;
+    let by_type = first(resources, Some(VERSION_TYPE)).filter(|t| t & TABLE != 0)? & !TABLE;
+    let by_name = first(resources + by_type, None).filter(|t| t & TABLE != 0)? & !TABLE;
+    let data = first(resources + by_name, None).filter(|t| t & TABLE == 0)?;
+    let block = in_file(u32_at(resources + data)?)?;
+    // The block starts with a 6-byte header and the key "VS_VERSION_INFO"; the fixed part follows at 40.
+    let fixed = block + 40;
+    if u32_at(fixed)? != 0xFEEF_04BD {
+        return None;
+    }
+    let (high, low) = (u32_at(fixed + 8)?, u32_at(fixed + 12)?);
+    Some([(high >> 16) as u16, high as u16, (low >> 16) as u16, low as u16])
+}
+
 /// The port from the engine's "listening on" line, if this is that line.
 pub(crate) fn listening_port(line: &str) -> Option<u16> {
     let marker = "listening on http://127.0.0.1:";
@@ -672,8 +832,13 @@ fn launch_windows(
 
     let t0 = Instant::now();
     control.set_phase(StartPhase::Launching);
-    let VerifiedEngine { dir, executable } = install::verify(store, spec).map_err(|e| EngineError::EngineNotInstalled(e.to_string()))?;
-    let (dir, executable) = (plain_path(&dir), plain_path(&executable));
+    // Every file is hashed and then HELD: from here until the engine has exited, nothing can change them.
+    let verified = install::verify(store, spec).map_err(|e| EngineError::EngineNotInstalled(e.to_string()))?;
+    let (dir, executable) = (plain_path(&verified.dir), plain_path(&verified.executable));
+    #[cfg(test)]
+    if let Some(planted) = &config.hooks.plant_after_verify {
+        let _ = std::fs::write(planted, b"planted after verification");
+    }
     let profile = launch_profile(model).ok_or(EngineError::NoLaunchProfile)?;
     if store.state(model).map_err(|e| EngineError::SpawnFailed(e.to_string()))? != ArtifactState::Installed {
         return Err(EngineError::ModelNotInstalled);
@@ -687,9 +852,13 @@ fn launch_windows(
     #[cfg(not(test))]
     let system_dir = win::system_dir();
     let system_dir = system_dir.ok_or_else(|| EngineError::SpawnFailed("the system directory is unknown".into()))?;
-    let missing = missing_vc_runtime(&system_dir);
-    if !missing.is_empty() {
-        return Err(EngineError::MissingVcRuntime(missing));
+    let version_on_disk = |file: &Path| std::fs::read(file).ok().and_then(|bytes| file_version(&bytes));
+    #[cfg(test)]
+    let version_of = |file: &Path| config.hooks.runtime_version.or_else(|| version_on_disk(file));
+    #[cfg(not(test))]
+    let version_of = version_on_disk;
+    if let Some(problem) = vc_runtime_problem(&system_dir, spec.min_vc_runtime, version_of) {
+        return Err(problem);
     }
 
     let key = SessionKey::generate().map_err(|e| EngineError::SpawnFailed(e.to_string()))?;
@@ -726,6 +895,16 @@ fn launch_windows(
             return Err(EngineError::JobFailed(e));
         }
     }
+    #[cfg(test)]
+    std::thread::sleep(config.hooks.hold_before_resume);
+    // The last moment before the engine runs a single instruction. Its files are held, so their contents are
+    // what was hashed; what could still have happened is a file ADDED beside them, which the engine would
+    // load as a backend. The process exists but is suspended, so it has loaded nothing yet.
+    if let Err(e) = install::check_unchanged(store, spec) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(EngineError::EngineChanged(e.to_string()));
+    }
     if let Err(e) = win::resume_threads(pid) {
         let _ = child.kill();
         let _ = child.wait();
@@ -756,11 +935,12 @@ fn launch_windows(
         monitor: None,
         readers,
         log,
+        _files: verified,
         slot: slot_guard,
     });
     session.info.phases.created_ms = t0.elapsed().as_millis();
 
-    match bring_up(config, &mut session, &rx, control, t0, spawned) {
+    match bring_up(config, store, spec, &mut session, &rx, control, t0, spawned) {
         Ok(()) => {
             let (child, exit, stop) = (session.child.clone(), session.exit.clone(), session.stop_monitor.clone());
             session.monitor = Some(std::thread::spawn(move || monitor(child, exit, stop)));
@@ -775,25 +955,31 @@ fn launch_windows(
 
 fn spawn_reader(stream: impl Read + Send + 'static, log: Arc<LogBuffer>, tx: mpsc::Sender<Signal>) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        let mut reader = BufReader::new(stream);
-        let mut raw = Vec::new();
-        loop {
-            raw.clear();
-            // Bounded: the engine prints progress without ending the line, and nothing here may grow with it.
-            match (&mut reader).take(LOG_READ_MAX).read_until(b'\n', &mut raw) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    let line = String::from_utf8_lossy(&raw);
-                    let line = line.trim_end();
-                    if let Some(signal) = classify_line(line) {
-                        let _ = tx.send(signal);
-                    }
-                    log.push(line);
-                }
+        for_each_line(stream, |raw| {
+            let line = String::from_utf8_lossy(raw);
+            let line = line.trim_end();
+            if let Some(signal) = classify_line(line) {
+                let _ = tx.send(signal);
             }
-        }
+            log.push(line);
+        });
         let _ = tx.send(Signal::StreamClosed);
     })
+}
+
+/// Hand `stream` to `on_line` a line at a time, never holding more than `LOG_READ_MAX` bytes of it: a longer
+/// line arrives in pieces. The engine prints progress without ending the line, and nothing here may grow
+/// with what it prints.
+pub(crate) fn for_each_line(stream: impl Read, mut on_line: impl FnMut(&[u8])) {
+    let mut reader = BufReader::new(stream);
+    let mut raw = Vec::new();
+    loop {
+        raw.clear();
+        match (&mut reader).take(LOG_READ_MAX).read_until(b'\n', &mut raw) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => on_line(&raw),
+        }
+    }
 }
 
 /// What the engine's log has reported so far.
@@ -844,8 +1030,11 @@ fn checkpoint(session: &Session, rx: &mpsc::Receiver<Signal>, seen: &mut Seen, c
 /// from its log. The engine binds before it loads the model but prints its address only after the load, so
 /// the table is the only way to see the server come up, and it is authoritative where a log line is not.
 #[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
 fn bring_up(
     config: &EngineConfig,
+    store: &Store,
+    spec: &EngineSpec,
     session: &mut Session,
     rx: &mpsc::Receiver<Signal>,
     control: &StartControl,
@@ -903,6 +1092,9 @@ fn bring_up(
     // 3. Self-checks: the engine is refused unless it is locked down as configured.
     control.set_phase(StartPhase::Checking);
     self_check(session.pid, port, &session.key)?;
+    // And its directory, now that it has loaded everything it is going to load: a file that appeared while it
+    // was starting may have been loaded with the rest, so this engine is not used.
+    install::check_unchanged(store, spec).map_err(|e| EngineError::EngineChanged(e.to_string()))?;
     checkpoint(session, rx, &mut seen, control, deadline)?;
 
     // 4. Readiness: one short, deterministic completion, bounded by its own timeout.

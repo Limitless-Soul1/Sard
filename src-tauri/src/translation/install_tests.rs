@@ -87,6 +87,29 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 pub(super) fn build_zip(entries: &[Entry]) -> Vec<u8> {
+    let (mut out, central) = zip_parts(entries);
+    let end = end_record(entries.len() as u16, central.len() as u32, out.len() as u32);
+    out.extend(central);
+    out.extend(end);
+    out
+}
+
+/// The end-of-central-directory record for a directory of `count` entries, `size` bytes long, at `offset`.
+fn end_record(count: u16, size: u32, offset: u32) -> Vec<u8> {
+    let mut end = Vec::new();
+    end.extend(0x0605_4b50u32.to_le_bytes());
+    end.extend(0u16.to_le_bytes());
+    end.extend(0u16.to_le_bytes());
+    end.extend(count.to_le_bytes());
+    end.extend(count.to_le_bytes());
+    end.extend(size.to_le_bytes());
+    end.extend(offset.to_le_bytes());
+    end.extend(0u16.to_le_bytes());
+    end
+}
+
+/// The two halves of an archive: the local headers with their data, and the central directory describing them.
+fn zip_parts(entries: &[Entry]) -> (Vec<u8>, Vec<u8>) {
     let mut out = Vec::new();
     let mut central = Vec::new();
     for e in entries {
@@ -127,17 +150,7 @@ pub(super) fn build_zip(entries: &[Entry]) -> Vec<u8> {
         central.extend(offset.to_le_bytes());
         central.extend(&e.name);
     }
-    let (cd_offset, cd_size) = (out.len() as u32, central.len() as u32);
-    out.extend(central);
-    out.extend(0x0605_4b50u32.to_le_bytes());
-    out.extend(0u16.to_le_bytes());
-    out.extend(0u16.to_le_bytes());
-    out.extend((entries.len() as u16).to_le_bytes());
-    out.extend((entries.len() as u16).to_le_bytes());
-    out.extend(cd_size.to_le_bytes());
-    out.extend(cd_offset.to_le_bytes());
-    out.extend(0u16.to_le_bytes());
-    out
+    (out, central)
 }
 
 // ---- Engine fixtures ----
@@ -190,6 +203,8 @@ pub(super) fn spec_for(tag: &str, files: &[(String, Vec<u8>)], archive: &[u8]) -
         files: Box::leak(files.into_boxed_slice()),
         unused: UNUSED,
         executable: "llama-server.exe",
+        // Any runtime of this family will do for the stand-in; the pinned engine asks for more.
+        min_vc_runtime: (14, 0),
         notices_name: "THIRD-PARTY-NOTICES.txt",
         notices: NOTICES,
     }))
@@ -350,6 +365,97 @@ fn refuses_corrupt_and_truncated_archives() {
         assert!(matches!(result, Err(InstallError::UnreadableArchive(_))), "{tag}: {result:?}");
         f.assert_nothing_installed();
     }
+}
+
+#[test]
+fn refuses_archives_that_are_not_in_the_one_plain_form() {
+    let _serial = serial_for_tests();
+    let files = small_engine();
+    let good = build_zip(&entries(&files));
+    let end = good.len() - 22;
+    let u32_at = |at: usize| u32::from_le_bytes(good[at..at + 4].try_into().unwrap());
+    let patched = |at: usize, bytes: &[u8]| {
+        let mut b = good.clone();
+        b[at..at + bytes.len()].copy_from_slice(bytes);
+        b
+    };
+
+    let mut trailing = good.clone();
+    trailing.extend_from_slice(b"appended after the archive");
+    // "Disk 1, with its directory on disk 1" — consistent with itself, so only a reader that insists on a
+    // single part refuses it.
+    let in_parts = patched(end + 4, &[1, 0, 1, 0]);
+    let fewer_here = patched(end + 8, &[1, 0]);
+    let short_directory = patched(end + 12, &(u32_at(end + 12) - 1).to_le_bytes());
+    // Four headers in the directory, and a record that admits to three: the fourth would be read by no one.
+    let uncounted = patched(end + 8, &[3, 0, 3, 0]);
+    // The first entry is made to point one byte past its real header.
+    let astray = patched(u32_at(end + 16) as usize + 42, &1u32.to_le_bytes());
+
+    for (tag, bytes) in [
+        ("trailing", trailing),
+        ("in-parts", in_parts),
+        ("fewer-here", fewer_here),
+        ("short-directory", short_directory),
+        ("uncounted", uncounted),
+        ("astray", astray),
+    ] {
+        let f = fixture_from_bytes(tag, &files, &bytes);
+        let result = install_engine(&f);
+        assert!(matches!(result, Err(InstallError::UnreadableArchive(_))), "{tag}: {result:?}");
+        f.assert_nothing_installed();
+    }
+}
+
+/// Where the last header of a central directory starts.
+fn last_header(directory: &[u8]) -> usize {
+    let u16_at = |at: usize| u16::from_le_bytes([directory[at], directory[at + 1]]) as usize;
+    let (mut at, mut last) = (0, 0);
+    while at < directory.len() {
+        last = at;
+        at += 46 + u16_at(at + 28) + u16_at(at + 30) + u16_at(at + 32);
+    }
+    last
+}
+
+#[test]
+fn refuses_an_archive_that_two_readers_would_read_differently() {
+    let _serial = serial_for_tests();
+    let files = small_engine();
+    // Two central directories over the same files. The first names an entry the spec does not know. The second
+    // comes last, so it is the one this module reads, and it names only known entries — but it is written so
+    // that the zip library cannot use it, and falls back to the first.
+    let hidden = b"what the second directory hides";
+    let mut first = entries(&files);
+    first.push(Entry::file("ggml-rpc.dll", b"never installed"));
+    first.push(Entry::file("an-unknown-backend.dll", hidden));
+    let mut second = entries(&files);
+    second.push(Entry::file("ggml-rpc.dll", b"never installed"));
+    second.push(Entry::file("llama-bench.exe", hidden));
+
+    let (locals, directory_one) = zip_parts(&first);
+    let (_, mut directory_two) = zip_parts(&second);
+    // In the second directory's last entry: a size of 0xFFFFFFFF, and a ZIP64 field too short to supply it.
+    let last = last_header(&directory_two);
+    directory_two[last + 24..last + 28].copy_from_slice(&[0xFF; 4]);
+    let extra: [u8; 20] = [0x01, 0x00, 0x04, 0x00, 0, 0, 0, 0, 0xFE, 0xCA, 0x08, 0x00, 0, 0, 0, 0, 0, 0, 0, 0];
+    directory_two[last + 30..last + 32].copy_from_slice(&(extra.len() as u16).to_le_bytes());
+    directory_two.extend_from_slice(&extra);
+
+    let mut archive = locals;
+    let one_at = archive.len() as u32;
+    archive.extend(&directory_one);
+    archive.extend(end_record(first.len() as u16, directory_one.len() as u32, one_at));
+    let two_at = archive.len() as u32;
+    archive.extend(&directory_two);
+    archive.extend(end_record(second.len() as u16, directory_two.len() as u32, two_at));
+
+    let f = fixture_from_bytes("two-readers", &files, &archive);
+    assert_eq!(
+        install_engine(&f),
+        Err(InstallError::UnreadableArchive("the central directory and the archive disagree on the entries".into()))
+    );
+    f.assert_nothing_installed();
 }
 
 #[test]
@@ -590,6 +696,72 @@ fn reinstalling_replaces_the_engine_and_recovers_from_a_crash_during_the_swap() 
     install::verify(&f.store, f.spec).unwrap();
 }
 
+#[test]
+fn a_crash_between_the_two_moves_leaves_no_engine_at_all() {
+    let _serial = serial_for_tests();
+    let f = fixture("crash-between-moves");
+    install_engine(&f).unwrap();
+    // The old engine has been moved aside and the new one has not yet taken its place.
+    let crash = Faults { crash_between_moves: true, ..Faults::default() };
+    assert!(install::install_with(&f.store, f.spec, &never(), crash).is_err());
+
+    assert_eq!(install::state(&f.store, f.spec).unwrap(), EngineState::NotInstalled);
+    assert!(install::verify(&f.store, f.spec).is_err());
+    assert_eq!(f.leftovers().len(), 2, "the old engine set aside, and the new one still staged");
+
+    install_engine(&f).unwrap();
+    assert_eq!(f.leftovers(), Vec::<String>::new());
+    install::verify(&f.store, f.spec).unwrap();
+}
+
+#[test]
+fn a_cleanup_that_fails_leaves_a_whole_engine_and_says_so() {
+    let _serial = serial_for_tests();
+    let f = fixture("cleanup-fails");
+    install_engine(&f).unwrap();
+    // Something this module will not delete — a folder — sits in the engine that is about to be replaced.
+    fs::create_dir(f.dir().join("stray-folder")).unwrap();
+    assert!(install::verify(&f.store, f.spec).is_err(), "that engine is no longer one that would be launched");
+
+    // The new engine goes in; clearing away the old one is what fails, and the failure is reported.
+    assert!(matches!(install_engine(&f), Err(InstallError::PathRefused(_))));
+    assert_eq!(install::state(&f.store, f.spec).unwrap(), EngineState::Installed);
+    install::verify(&f.store, f.spec).expect("what is in place is the new engine, whole and recorded");
+    let left = f.leftovers();
+    assert_eq!(left.len(), 1, "the old engine, set aside: {left:?}");
+    assert!(f.base().join(&left[0]).join("stray-folder").is_dir(), "the folder was not deleted");
+
+    // Until that is dealt with, another installation is refused — and the engine in place stays as it is.
+    assert!(matches!(install_engine(&f), Err(InstallError::PathRefused(_))));
+    install::verify(&f.store, f.spec).unwrap();
+
+    fs::remove_dir(f.base().join(&left[0]).join("stray-folder")).unwrap();
+    install_engine(&f).unwrap();
+    assert_eq!(f.leftovers(), Vec::<String>::new());
+    install::verify(&f.store, f.spec).unwrap();
+}
+
+#[test]
+fn a_recheck_that_cannot_clean_up_still_leaves_nothing_that_would_be_launched() {
+    let _serial = serial_for_tests();
+    let f = fixture("recheck-fails");
+    // An engine with no record, whose contents are wrong, and which cannot be removed either.
+    let crash = Faults { crash_before_record: true, ..Faults::default() };
+    assert!(install::install_with(&f.store, f.spec, &never(), crash).is_err());
+    flip_byte(&f.dir().join("ggml-cpu-x64.dll"), 10);
+    fs::create_dir(f.dir().join("stray-folder")).unwrap();
+
+    assert!(matches!(install::verify_installation(&f.store, f.spec), Err(InstallError::PathRefused(_))));
+    assert_ne!(install::state(&f.store, f.spec).unwrap(), EngineState::Installed);
+    assert!(install::verify(&f.store, f.spec).is_err());
+    assert!(install::check_unchanged(&f.store, f.spec).is_err());
+
+    // With the folder gone the wrong engine is removed, not recorded.
+    fs::remove_dir(f.dir().join("stray-folder")).unwrap();
+    assert_eq!(install::verify_installation(&f.store, f.spec).unwrap(), EngineState::NotInstalled);
+    f.assert_nothing_installed();
+}
+
 // ---- Verifying before launch ----
 
 #[test]
@@ -613,7 +785,7 @@ fn verify_refuses_a_planted_changed_or_missing_file() {
     // Same size: the metadata state cannot see it, the full hash before launch does.
     flip_byte(&dir.join("ggml-cpu-x64.dll"), 4000);
     assert_eq!(install::state(&f.store, f.spec).unwrap(), EngineState::Installed);
-    assert_eq!(install::verify(&f.store, f.spec), Err(InstallError::WrongChecksum { name: "ggml-cpu-x64.dll".into() }));
+    assert_eq!(install::verify(&f.store, f.spec).unwrap_err(), InstallError::WrongChecksum { name: "ggml-cpu-x64.dll".into() });
     flip_byte(&dir.join("ggml-cpu-x64.dll"), 4000);
     install::verify(&f.store, f.spec).unwrap();
 
@@ -653,48 +825,226 @@ fn removing_the_engine_keeps_the_downloaded_archive() {
     assert_eq!(install::remove(&f.store, f.spec), Ok(0), "removing twice is harmless");
 }
 
-#[cfg(windows)]
-fn junction(link: &Path, target: &Path) {
-    use std::os::windows::process::CommandExt;
-    // CREATE_NO_WINDOW: never a console window on the screen.
-    let out = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target).creation_flags(0x0800_0000).output().unwrap();
-    assert!(out.status.success(), "mklink failed: {}", String::from_utf8_lossy(&out.stderr));
+// ---- Links, junctions and other redirections ----
+
+/// Put a directory link at `link`, pointing to `target`: a junction on Windows (which needs no privilege), a
+/// symbolic link elsewhere.
+fn link_dir(link: &Path, target: &Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: never a console window on the screen.
+        let out = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target).creation_flags(0x0800_0000).output().unwrap();
+        assert!(out.status.success(), "mklink failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(target, link).unwrap();
 }
 
-#[cfg(windows)]
+/// Remove a directory link itself, never its target.
+fn unlink_dir(link: &Path) {
+    #[cfg(windows)]
+    fs::remove_dir(link).unwrap();
+    #[cfg(not(windows))]
+    fs::remove_file(link).unwrap();
+}
+
+/// Put a symbolic link to a FILE at `link`. On Windows that needs a privilege an ordinary account may not have,
+/// so this reports whether it could be done.
+fn try_link_file(link: &Path, target: &Path) -> bool {
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(target, link).is_ok();
+    #[cfg(not(windows))]
+    let made = std::os::unix::fs::symlink(target, link).is_ok();
+    made
+}
+
+/// A line that must be seen even when the test passes — a case that could not be run. The test harness hides
+/// what a passing test prints, so this goes to the error stream directly.
+fn note(line: &str) {
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stderr(), "{line}");
+}
+
 #[test]
-fn a_junction_in_place_of_the_engine_directory_is_refused_and_never_followed() {
+fn a_link_in_place_of_the_engine_directory_is_refused_and_never_followed() {
     let _serial = serial_for_tests();
-    let f = fixture("junction-engine");
+    let f = fixture("link-engine");
     install_engine(&f).unwrap();
     let outside = f.tmp.0.join("outside");
     fs::rename(f.dir(), &outside).unwrap();
-    junction(&f.dir(), &outside);
+    link_dir(&f.dir(), &outside);
     let before = listing(&outside);
 
     assert!(matches!(install::verify(&f.store, f.spec), Err(InstallError::PathRefused(_))));
+    assert!(matches!(install::check_unchanged(&f.store, f.spec), Err(InstallError::PathRefused(_))));
     assert!(matches!(install::remove(&f.store, f.spec), Err(InstallError::PathRefused(_))));
     assert!(matches!(install_engine(&f), Err(InstallError::PathRefused(_))));
     assert_eq!(listing(&outside), before, "nothing outside the translation directory was touched");
 
-    fs::remove_dir(f.dir()).unwrap(); // the junction itself, not its target
+    unlink_dir(&f.dir());
 }
 
-#[cfg(windows)]
 #[test]
-fn a_junction_planted_as_a_leftover_is_refused_and_never_followed() {
+fn a_link_planted_as_a_leftover_is_refused_and_never_followed() {
     let _serial = serial_for_tests();
-    let f = fixture("junction-leftover");
+    let f = fixture("link-leftover");
     let outside = f.tmp.0.join("outside");
     fs::create_dir(&outside).unwrap();
     fs::write(outside.join("keep.txt"), b"the user's file").unwrap();
     let planted = f.base().join(".staging-planted");
-    junction(&planted, &outside);
+    link_dir(&planted, &outside);
 
     assert!(matches!(install_engine(&f), Err(InstallError::PathRefused(_))));
     assert_eq!(fs::read(outside.join("keep.txt")).unwrap(), b"the user's file");
 
-    fs::remove_dir(&planted).unwrap();
+    unlink_dir(&planted);
+}
+
+#[test]
+fn a_redirection_above_the_engine_directory_is_refused_even_inside_the_translation_directory() {
+    let _serial = serial_for_tests();
+    let f = fixture("link-above");
+    install_engine(&f).unwrap();
+    // The whole runtime directory is moved elsewhere INSIDE the translation directory, and a link is left in
+    // its place. Every path still resolves inside the root — just not to where it claims to be.
+    let moved = f.store.root().join("moved-aside");
+    fs::rename(f.base(), &moved).unwrap();
+    link_dir(&f.base(), &moved);
+    let before = listing(&moved.join(ENGINE_DIR));
+
+    assert!(matches!(install::verify(&f.store, f.spec), Err(InstallError::PathRefused(_))));
+    assert!(matches!(install::check_unchanged(&f.store, f.spec), Err(InstallError::PathRefused(_))));
+    assert!(matches!(install::verify_installation(&f.store, f.spec), Err(InstallError::PathRefused(_))));
+    assert!(matches!(install::remove(&f.store, f.spec), Err(InstallError::PathRefused(_))));
+    assert!(matches!(install_engine(&f), Err(InstallError::PathRefused(_))));
+    assert_eq!(listing(&moved.join(ENGINE_DIR)), before, "nothing reached through the link was touched");
+    assert!(moved.join(ENGINE_RECORD).exists(), "nor was its record");
+
+    unlink_dir(&f.base());
+}
+
+#[test]
+fn a_file_link_inside_the_engine_directory_is_refused_and_its_target_survives() {
+    let _serial = serial_for_tests();
+    let f = fixture("link-inside");
+    install_engine(&f).unwrap();
+    // One engine file is moved out and a link to it left in its place: the bytes behind the name are the
+    // right ones, and it is still not the engine's file.
+    let outside = f.tmp.0.join("outside.dll");
+    let name = f.dir().join("ggml-base.dll");
+    fs::rename(&name, &outside).unwrap();
+    if !try_link_file(&name, &outside) {
+        note("NOT TESTED (a file link inside the engine directory): this account may not create symbolic links");
+        return;
+    }
+
+    assert!(matches!(install::verify(&f.store, f.spec), Err(InstallError::UnexpectedFile(_))));
+    assert!(matches!(install::check_unchanged(&f.store, f.spec), Err(InstallError::UnexpectedFile(_))));
+    assert!(matches!(install::remove(&f.store, f.spec), Err(InstallError::PathRefused(_))));
+    assert_eq!(fs::read(&outside).unwrap(), small_engine()[1].1, "the link's target is untouched");
+
+    let _ = fs::remove_file(&name);
+}
+
+#[test]
+fn a_hard_link_loses_only_its_own_name() {
+    let _serial = serial_for_tests();
+    let f = fixture("hard-link");
+    install_engine(&f).unwrap();
+    // One of the engine's files and a file outside become two names for the same bytes.
+    let outside = f.tmp.0.join("outside.dll");
+    fs::hard_link(f.dir().join("ggml-base.dll"), &outside).unwrap();
+
+    let held = install::verify(&f.store, f.spec).unwrap();
+    #[cfg(windows)]
+    assert!(fs::OpenOptions::new().write(true).open(&outside).is_err(), "a held file cannot be written through its other name either");
+    drop(held);
+
+    assert!(install::remove(&f.store, f.spec).unwrap() > 0);
+    assert_eq!(fs::read(&outside).unwrap(), small_engine()[1].1, "the other name, and the bytes, remain");
+}
+
+#[test]
+fn the_record_is_never_written_through_a_link() {
+    let _serial = serial_for_tests();
+    let f = fixture("record-link");
+    let (first, second) = (f.tmp.0.join("first.txt"), f.tmp.0.join("second.txt"));
+    fs::write(&first, b"the user's file").unwrap();
+    fs::write(&second, b"another of the user's files").unwrap();
+    // Links wait at both names the record is written through: its temporary name, and its own.
+    let record = f.base().join(ENGINE_RECORD);
+    let temporary = record.with_extension("json.tmp");
+    if !try_link_file(&temporary, &first) || !try_link_file(&record, &second) {
+        note("NOT TESTED (the record written through a link): this account may not create symbolic links");
+        let _ = fs::remove_file(&temporary);
+        return;
+    }
+
+    install_engine(&f).unwrap();
+    assert_eq!(fs::read(&first).unwrap(), b"the user's file");
+    assert_eq!(fs::read(&second).unwrap(), b"another of the user's files");
+    let meta = fs::symlink_metadata(&record).unwrap();
+    assert!(meta.is_file() && !meta.file_type().is_symlink(), "the record is a file of its own");
+    install::verify(&f.store, f.spec).unwrap();
+}
+
+// ---- Between hashing and launching ----
+
+#[test]
+fn verified_files_are_held_so_that_they_cannot_be_changed() {
+    let _serial = serial_for_tests();
+    let f = fixture("held");
+    install_engine(&f).unwrap();
+    let file = f.dir().join("ggml-base.dll");
+    let original = fs::read(&file).unwrap();
+
+    let verified = install::verify(&f.store, f.spec).unwrap();
+    assert_eq!(verified.held(), small_engine().len() + 1, "every engine file, and the notices");
+    install::check_unchanged(&f.store, f.spec).unwrap();
+    // Windows enforces what a handle shares; other systems do not, and the engine does not run there.
+    #[cfg(windows)]
+    {
+        assert!(fs::OpenOptions::new().write(true).open(&file).is_err(), "opened for writing");
+        assert!(fs::write(&file, b"replaced").is_err(), "overwritten");
+        assert!(fs::remove_file(&file).is_err(), "deleted");
+        assert!(fs::rename(&file, f.dir().join("moved.dll")).is_err(), "renamed");
+        assert!(fs::rename(f.dir(), f.base().join("engine-moved")).is_err(), "its folder renamed");
+        assert!(fs::rename(f.base(), f.store.root().join("moved")).is_err(), "a folder above it renamed");
+        assert_eq!(fs::read(&file).unwrap(), original, "it can still be read, which is all loading needs");
+        install::verify(&f.store, f.spec).expect("a second holder does not disturb the first");
+    }
+
+    // What holding does NOT prevent: a file added beside them. That is what the last check is for.
+    let added = f.dir().join("ggml-added.dll");
+    fs::write(&added, b"added").unwrap();
+    assert!(matches!(install::check_unchanged(&f.store, f.spec), Err(InstallError::UnexpectedFile(_))));
+    fs::remove_file(&added).unwrap();
+    install::check_unchanged(&f.store, f.spec).unwrap();
+    // The same goes for a link added beside them, wherever it leads.
+    let outside = f.tmp.0.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let linked = f.dir().join("ggml-linked");
+    link_dir(&linked, &outside);
+    assert!(matches!(install::check_unchanged(&f.store, f.spec), Err(InstallError::UnexpectedFile(_))));
+    unlink_dir(&linked);
+    install::check_unchanged(&f.store, f.spec).unwrap();
+
+    drop(verified);
+    fs::write(&file, &original).expect("released once the holder lets go");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_file_something_has_open_for_writing_cannot_be_verified() {
+    let _serial = serial_for_tests();
+    let f = fixture("writer");
+    install_engine(&f).unwrap();
+    // It could be changed after it was hashed, so it is not accepted while a writer has it.
+    let writer = fs::OpenOptions::new().write(true).open(f.dir().join("ggml-base.dll")).unwrap();
+    assert!(matches!(install::verify(&f.store, f.spec), Err(InstallError::Io(_))));
+    drop(writer);
+    install::verify(&f.store, f.spec).unwrap();
 }
 
 // ---- The pinned engine ----
@@ -743,6 +1093,8 @@ fn the_pinned_engine_is_the_24_files_established_for_it() {
     all.sort();
     all.dedup();
     assert_eq!(all.len(), 52, "no name is both installed and left out, or listed twice");
+
+    assert_eq!(spec.min_vc_runtime, (14, 51), "the tools this build was made with");
 
     for licence in ["llama.cpp", "LLVM OpenMP", "cpp-httplib", "BoringSSL", "jsonhpp"] {
         assert!(spec.notices.contains(&format!("License for {licence}")), "{licence}");

@@ -16,7 +16,9 @@ name: PR checks
 
 on:
   pull_request:
-    branches: [develop]
+    # `feature/translation-integration` collects the translation work until it is integrated into
+    # `develop` as a whole; pull requests into it get exactly the same checks.
+    branches: [develop, feature/translation-integration]
 
 jobs:
   verify:

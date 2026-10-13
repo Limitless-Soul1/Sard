@@ -58,6 +58,23 @@
 //! * **Another Windows account on the same computer** can connect to the port too. Whether it can read the
 //!   key rests on Windows' default process permissions, which do not let one ordinary account open another's
 //!   processes. That default was not tested here, and an administrator can always read it.
+//!
+//! ## What a start takes on trust
+//!
+//! What the steps above do not cover. None of it gives a program anything Windows would otherwise deny it;
+//! it is listed so that nothing above is read as covering it.
+//!
+//! * **The model's contents.** The model was hashed in full when its download was verified. At launch its
+//!   record, its size and its place are checked. Its bytes are not hashed again, and it is not held open the
+//!   way the engine's own files are: a file of the same size put in its place afterwards is loaded.
+//! * **A file that comes and goes.** The engine's directory is checked before the process runs its first
+//!   instruction and again once it has loaded everything. A file added after the first check and removed
+//!   before the second is not seen.
+//! * **Handles marked to be inherited.** The engine is not limited to a list of handles (the standard library
+//!   has no stable way to pass one), so it receives every handle that anything in this process has marked
+//!   inheritable. A file opened the ordinary way is not marked, and the engine does not get it.
+//! * **One Sard.** The engine slot belongs to this process. Two processes sharing one data directory could
+//!   each start an engine; Sard runs as a single instance, and nothing here adds to that.
 
 // The process code is Windows-only; elsewhere only the types and the pure helpers are compiled.
 #![cfg_attr(not(windows), allow(dead_code, unused_imports, unused_mut, unused_variables))]
@@ -136,8 +153,9 @@ pub const PASSED_ENV: &[&str] = &[
 /// * **A file missing from the system directory:** `EngineError::MissingVcRuntime`, naming it. (A runtime from
 ///   2015 or 2017 has no `VCRUNTIME140_1.dll`, so it is reported this way.)
 /// * **Present, but older than the engine spec's minimum:** `EngineError::VcRuntimeTooOld`, naming the file, the
-///   version found and the version needed. Being present is not enough: an old runtime would load, and the
-///   engine would then fail inside it. The engine spec says why, and where its minimum comes from.
+///   version found and the version needed. Being present is not enough: Windows would load the engine with an
+///   old runtime, and by Microsoft's account the engine may then fail inside it. The engine spec sets out what
+///   is documented, what was read from the build, and what is assumed.
 /// * **Present, but its version cannot be read:** treated as too old. Nothing is assumed about a runtime that
 ///   cannot be identified.
 ///
@@ -458,7 +476,8 @@ struct Session {
     monitor: Option<JoinHandle<()>>,
     readers: Vec<JoinHandle<()>>,
     log: Arc<LogBuffer>,
-    /// The engine's verified files, held open until the process has gone.
+    /// The engine's verified files, held open for as long as the session exists. A stop that could not end
+    /// the process lets go of them with the session; what remains then is the slot, which stays taken.
     _files: VerifiedEngine,
     slot: SlotGuard,
 }
@@ -535,9 +554,10 @@ impl EngineManager {
             }
             Ok(session) => {
                 drop(state);
-                let _ = teardown(&self.config, *session);
-                Err(EngineError::Cancelled)
+                Err(stop_after_failed_start(&self.config, *session, EngineError::Cancelled))
             }
+            // An engine that could not be stopped is reported as that, whatever else happened.
+            Err(e @ EngineError::ShutdownFailed(_)) => Err(e),
             // A stop during the start ends the process, which surfaces as whatever step it interrupted.
             Err(_) if control.cancelled() => Err(EngineError::Cancelled),
             Err(e) => Err(e),
@@ -561,7 +581,13 @@ impl EngineManager {
                     return match child {
                         None => Ok(()),
                         Some(child) => {
-                            let _ = child.lock().unwrap_or_else(|p| p.into_inner()).kill();
+                            #[cfg(test)]
+                            let kill = !self.config.hooks.fail_kill;
+                            #[cfg(not(test))]
+                            let kill = true;
+                            if kill {
+                                let _ = child.lock().unwrap_or_else(|p| p.into_inner()).kill();
+                            }
                             if wait_for_exit(&child, self.config.stop_timeout) {
                                 Ok(())
                             } else {
@@ -946,10 +972,18 @@ fn launch_windows(
             session.monitor = Some(std::thread::spawn(move || monitor(child, exit, stop)));
             Ok(session)
         }
-        Err(e) => {
-            let _ = teardown(config, *session);
-            Err(e)
-        }
+        Err(e) => Err(stop_after_failed_start(config, *session, e)),
+    }
+}
+
+/// A start that did not succeed must still leave nothing running. If the engine cannot be stopped either,
+/// that is the more serious failure, and it is the one reported — with the reason the start failed kept in
+/// its text. (The slot stays taken in that case: see `teardown`.)
+fn stop_after_failed_start(config: &EngineConfig, session: Session, failure: EngineError) -> EngineError {
+    match teardown(config, session) {
+        Ok(()) => failure,
+        Err(EngineError::ShutdownFailed(why)) => EngineError::ShutdownFailed(format!("{why}, after the start had already failed ({failure})")),
+        Err(other) => other,
     }
 }
 

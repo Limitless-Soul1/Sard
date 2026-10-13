@@ -851,7 +851,7 @@ fn unlink_dir(link: &Path) {
 
 /// Put a symbolic link to a FILE at `link`. On Windows that needs a privilege an ordinary account may not have,
 /// so this reports whether it could be done.
-fn try_link_file(link: &Path, target: &Path) -> bool {
+pub(super) fn try_link_file(link: &Path, target: &Path) -> bool {
     #[cfg(windows)]
     let made = std::os::windows::fs::symlink_file(target, link).is_ok();
     #[cfg(not(windows))]
@@ -861,7 +861,7 @@ fn try_link_file(link: &Path, target: &Path) -> bool {
 
 /// A line that must be seen even when the test passes — a case that could not be run. The test harness hides
 /// what a passing test prints, so this goes to the error stream directly.
-fn note(line: &str) {
+pub(super) fn note(line: &str) {
     use std::io::Write as _;
     let _ = writeln!(std::io::stderr(), "{line}");
 }

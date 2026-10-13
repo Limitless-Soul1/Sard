@@ -163,23 +163,27 @@ pub struct EngineSpec {
 /// archive. The engine imports it, and Sard itself does not, so it is checked before every launch — that it is
 /// there, and that it is recent enough.
 ///
-/// `min_vc_runtime` is 14.51, and this is where that comes from:
+/// `min_vc_runtime` is 14.51. What that rests on is of three different kinds, kept apart here on purpose.
 ///
-/// * **Microsoft's rule.** The installed runtime must be at least as recent as the tools a program was built
-///   with ("Latest supported Visual C++ Redistributable downloads", Microsoft Learn).
-/// * **The tools this build was made with.** The release's own build script builds these binaries with the
-///   Visual Studio 2026 tools, and the one binary that records its linker's version, `ggml-vulkan.dll`, records
-///   14.51.
-/// * **Why it is not a formality.** Five of the binaries lock mutexes through the runtime (`_Mtx_lock`) and none
-///   initialises one through it (`_Mtx_init_in_situ`). That is how code built with the 14.40 tools or later
-///   looks, and Microsoft's standard-library changelog says of it that a program run with an older runtime
-///   "may encounter null dereferences in `mutex` machinery".
-/// * **Why Windows would not catch it.** Every function the engine imports from the runtime is exported by
-///   every version of it back to 2015 (26 versions of `MSVCP140.dll` were compared). An old runtime would load;
-///   the engine would start, and then fail.
+/// **What Microsoft documents** — true of any program, not established about this one:
+/// * The installed runtime must be at least as recent as the tools a program was built with ("Latest supported
+///   Visual C++ Redistributable downloads", Microsoft Learn).
+/// * A program built with the 14.40 tools or later and run with an older runtime "may encounter null
+///   dereferences in `mutex` machinery" (the standard library's changelog, VS 2022 17.10).
 ///
-/// 14.40 is the oldest runtime the mutex evidence alone would allow. 14.51 is what Microsoft's rule asks for, and
-/// nothing here was run to show that anything older is enough.
+/// **What was read from this build** — its files and its build script, without running it:
+/// * The release's build script builds these binaries with the Visual Studio 2026 tools, and the one binary
+///   that records its linker's version, `ggml-vulkan.dll`, records 14.51.
+/// * Five of the binaries lock mutexes through the runtime (`_Mtx_lock`) and none initialises one through it
+///   (`_Mtx_init_in_situ`) — the form of code the changelog entry above is about.
+/// * Every function the engine imports from the runtime is exported by every version of it back to 2015
+///   (26 versions of `MSVCP140.dll` were compared). So Windows would load the engine with an old runtime rather
+///   than refuse it.
+///
+/// **What is assumed** — not observed, because nothing here was run:
+/// * That this engine does fail with a runtime older than its tools. It is what the two facts above point to.
+/// * That 14.51 is needed, rather than merely sufficient. It is the figure Microsoft's rule gives; 14.40 is the
+///   oldest the mutex evidence alone would allow, and no runtime between the two was tried.
 pub const ENGINE_WINDOWS_X64: EngineSpec = EngineSpec {
     archive: &RUNTIME_WINDOWS_X64,
     files: &[

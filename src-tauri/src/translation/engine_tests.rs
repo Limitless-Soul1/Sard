@@ -233,6 +233,8 @@ fn a_file_version_is_read_from_the_file_and_never_guessed() {
             let bytes = std::fs::read(system.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
             let version = file_version(&bytes).unwrap_or_else(|| panic!("{name} has a version"));
             assert_eq!(version[0], 14, "{name}: {version:?}");
+            let [major, minor, build, revision] = version;
+            super::install_tests::note(&format!("MEASURED: this machine's {name} is version {major}.{minor}.{build}.{revision}"));
             // A damaged copy gives no version rather than a wrong one, and never a panic.
             for cut in [bytes.len() / 2, bytes.len() / 8, 1024] {
                 let _ = file_version(&bytes[..cut.min(bytes.len())]);
@@ -288,21 +290,23 @@ mod process {
     use std::fs;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Stdio};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc, Barrier, OnceLock};
     use std::time::{Duration, Instant};
 
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{CloseHandle, SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, WAIT_OBJECT_0};
+    use windows::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
     use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE};
 
     use super::super::catalog::{Artifact, Kind, MODEL_B};
     use super::super::engine::*;
     use super::super::install::{self, InstallError};
-    use super::super::install_tests::{build_zip, entries, fixture_in, never, put_verified, sha, Files, Fixture, TempDir};
+    use super::super::install_tests::{build_zip, entries, fixture_in, never, put_verified, sha, try_link_file, Files, Fixture, TempDir};
     use super::super::slot::{self, serial_for_tests, Holder};
 
     const FAKE_ENTRY: &str = "translation::engine_tests::process::fake_engine_entry";
@@ -311,6 +315,8 @@ mod process {
     const MODE: &str = "SARD_FAKE_ENGINE_MODE";
     const LOAD_MS: &str = "SARD_FAKE_ENGINE_LOAD_MS";
     const KEY_FILE: &str = "SARD_FAKE_ENGINE_KEY_FILE";
+    /// Handle values from the host, separated by commas: the fake reports what each is in its own process.
+    const HANDLES: &str = "SARD_FAKE_ENGINE_HANDLES";
     const HOST: &str = "SARD_ENGINE_HOST";
     const HOST_DIR: &str = "SARD_ENGINE_HOST_DIR";
     /// `CREATE_NO_WINDOW`: no helper process ever opens a console window on the screen.
@@ -401,6 +407,12 @@ mod process {
                     println!("FAKE violation: {v}");
                 }
                 std::process::exit(3);
+            }
+            if let Ok(handles) = std::env::var(HANDLES) {
+                for value in handles.split(',') {
+                    let here = value.parse::<usize>().ok().and_then(|v| file_identity(HANDLE(v as *mut core::ffi::c_void)));
+                    println!("FAKE handle {value} {}", here.unwrap_or_else(|| "is not a file here".into()));
+                }
             }
 
             match mode {
@@ -750,6 +762,29 @@ mod process {
         let _ = writeln!(std::io::stderr(), "{line}");
     }
 
+    /// Which file a handle is open on — its volume and its number there — or `None` if the value is not a
+    /// handle on a file in this process. Two handles on one file give the same answer in any process.
+    fn file_identity(handle: HANDLE) -> Option<String> {
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: the call writes one structure of this type; a value that is not a file handle is refused.
+        unsafe { GetFileInformationByHandle(handle, &mut info).ok()? };
+        Some(format!("{:08x}-{:08x}{:08x}", info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow))
+    }
+
+    /// The files under `dir`, at any depth, whose bytes include `needle`.
+    fn files_holding(dir: &Path, needle: &[u8]) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        for entry in fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(files_holding(&path, needle));
+            } else if fs::read(&path).unwrap().windows(needle.len()).any(|w| w == needle) {
+                found.push(path);
+            }
+        }
+        found
+    }
+
     fn wait_for(what: &str, limit: Duration, mut done: impl FnMut() -> bool) {
         let until = Instant::now() + limit;
         while !done() {
@@ -985,6 +1020,60 @@ mod process {
     }
 
     #[test]
+    fn a_failed_start_whose_engine_cannot_be_stopped_says_so_and_keeps_the_slot() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("start-and-stop-fail");
+
+        // An engine that is refused (it answers without its key) and then cannot be ended either: the ordinary
+        // stop is made to do nothing, and there is no job.
+        let stuck = |mode: &str| {
+            let mut stuck = EngineConfig { stop_timeout: Duration::from_secs(1), startup_timeout: Duration::from_secs(90), ..config(mode) };
+            stuck.hooks.fail_kill = true;
+            stuck.hooks.no_job = true;
+            stuck
+        };
+        // What must hold of an engine left running. (Then the test itself ends it, and frees the slot.)
+        let left_running_and_alone = |manager: &EngineManager| {
+            let running = engine_children();
+            assert_eq!(running.len(), 1, "the engine this test made unstoppable is the one left");
+            let engine = Watched::open(running[0]).unwrap();
+            // It is not offered for use...
+            assert_eq!(manager.status(), EngineStatus::Idle);
+            assert!(manager.endpoint().is_none());
+            // ...and nothing may start beside it, or replace its files, from this manager or any other.
+            assert_eq!(slot::claim(Holder::Engine).unwrap_err(), Holder::Engine);
+            assert_eq!(start(&f, manager), Err(EngineError::AlreadyActive));
+            assert_eq!(start(&f, &EngineManager::new(config("normal"))), Err(EngineError::AlreadyActive));
+            assert_eq!(install::install(&f.fx.store, f.fx.spec, &never()), Err(InstallError::EngineBusy));
+            assert_eq!(engine_children(), running);
+
+            engine.kill();
+            assert!(engine.gone_within(Duration::from_secs(3)));
+            slot::release_for_tests();
+        };
+
+        // The start reports the engine it left behind, not only why it refused it.
+        let manager = EngineManager::new(stuck("auth_off"));
+        let error = start(&f, &manager).unwrap_err();
+        let EngineError::ShutdownFailed(why) = &error else { panic!("{error:?}") };
+        assert!(why.contains("is still running") && why.contains("without its key"), "{why}");
+        left_running_and_alone(&manager);
+
+        // The same for a start that was not refused but cancelled. The stop says the engine did not end, and
+        // the start says so too, where it would otherwise have reported a plain cancellation.
+        let manager = EngineManager::new(stuck("never_ready"));
+        std::thread::scope(|scope| {
+            let starting = scope.spawn(|| start(&f, &manager));
+            wait_for("the start to reach the model load", Duration::from_secs(60), || manager.status() == EngineStatus::Starting(StartPhase::LoadingModel));
+            assert!(matches!(manager.stop(), Err(EngineError::ShutdownFailed(_))));
+            let error = starting.join().unwrap().unwrap_err();
+            let EngineError::ShutdownFailed(why) = &error else { panic!("{error:?}") };
+            assert!(why.contains("is still running") && why.contains("cancelled"), "{why}");
+        });
+        left_running_and_alone(&manager);
+    }
+
+    #[test]
     fn only_one_engine_starts_however_many_are_asked_for() {
         let _serial = serial_for_tests();
         let f = engine_fixture("one-at-a-time");
@@ -1086,6 +1175,11 @@ mod process {
         let log = manager.log_tail(200).join("\n");
         assert!(log.contains("api_keys: [redacted]") && log.contains("Bearer [redacted] (end)"), "{log}");
         assert!(!log.contains(key.as_str()));
+        // Nor has it been written anywhere: not into the store, and not beside it. (The search does find what
+        // is there: the model's checksum is in the model's record, and nowhere else.)
+        let everything = fs::canonicalize(&f.fx.tmp.0).unwrap();
+        assert_eq!(files_holding(&everything, f.model.sha256.as_bytes()), [f.fx.store.record_path(f.model)]);
+        assert_eq!(files_holding(&everything, key.as_str().as_bytes()), Vec::<PathBuf>::new(), "the key is in a file");
         manager.stop().unwrap();
 
         // An engine that prints its key and dies: the error carries the log, without the key.
@@ -1176,6 +1270,77 @@ mod process {
 
         manager.stop().unwrap();
         fs::OpenOptions::new().append(true).open(&file).expect("released once the engine has stopped");
+    }
+
+    // ---- What the launch takes on trust ----
+
+    #[test]
+    fn the_model_is_checked_at_launch_by_its_record_its_size_and_its_place() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("model-checks");
+        let model = f.fx.store.installed_path(f.model);
+        let original = fs::read(&model).unwrap();
+        let refused = |what: &str| {
+            let error = start(&f, &EngineManager::new(config("normal"))).expect_err(what);
+            assert_no_engine_left();
+            error
+        };
+
+        // A file of another size where the model was.
+        fs::write(&model, b"not a real model, and longer").unwrap();
+        assert_eq!(refused("a model of the wrong size was started"), EngineError::ModelNotInstalled);
+
+        // A link where the model was, to a file of the right size outside the translation directory.
+        let outside = f.fx.tmp.0.join("outside.gguf");
+        fs::write(&outside, &original).unwrap();
+        fs::remove_file(&model).unwrap();
+        if try_link_file(&model, &outside) {
+            assert_eq!(refused("a model outside the translation directory was started"), EngineError::ModelNotInstalled);
+            fs::remove_file(&model).unwrap();
+        } else {
+            note("NOT TESTED (a link in place of the model): this account may not create a symbolic link to a file");
+        }
+
+        // What is NOT checked, stated here so that it is a fact and not an assumption: the model's contents.
+        // They were hashed when the download was verified, and hashing gigabytes again at every launch is not
+        // done. A file of the right size in the right place is started, whatever it holds...
+        fs::write(&model, b"not a real modeL").unwrap();
+        let manager = EngineManager::new(config("normal"));
+        start(&f, &manager).expect("the launch does not read the model's contents");
+        // ...and nothing holds the model the way the engine's own files are held. (The real engine keeps it
+        // open while it runs; what that prevents was not measured, because the real engine was not run.)
+        fs::OpenOptions::new().write(true).open(&model).expect("the launch does not hold the model");
+    }
+
+    #[test]
+    fn a_file_the_host_merely_has_open_is_not_open_in_the_engine() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("handles");
+        // Two files the host has open, as Sard has its library open. A file opened the ordinary way is not
+        // passed to a process the host starts. The second is then marked to be passed on, as a library inside
+        // Sard could mark a handle of its own.
+        let ordinary_file = fs::File::create(f.fx.tmp.0.join("open-in-the-host")).unwrap();
+        let marked_file = fs::File::create(f.fx.tmp.0.join("open-and-marked")).unwrap();
+        let (ordinary, marked) = (HANDLE(ordinary_file.as_raw_handle()), HANDLE(marked_file.as_raw_handle()));
+        // SAFETY: a handle this test owns, open until the end of it.
+        unsafe { SetHandleInformation(marked, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT).unwrap() };
+
+        let mut told = config("normal");
+        told.hooks.extra_env.push((HANDLES.into(), format!("{},{}", ordinary.0 as usize, marked.0 as usize)));
+        let manager = EngineManager::new(told);
+        start(&f, &manager).unwrap();
+        let log = manager.log_tail(200);
+        let in_the_engine = |handle: HANDLE| {
+            let prefix = format!("FAKE handle {} ", handle.0 as usize);
+            log.iter().find_map(|l| l.strip_prefix(prefix.as_str())).expect("the fake reports each value it was given").to_string()
+        };
+
+        assert_ne!(in_the_engine(ordinary), file_identity(ordinary).unwrap(), "the engine has the host's file open");
+        // Nothing limits the engine to a list of handles — the standard library offers no stable way to — so
+        // one that IS marked anywhere in the host goes to the engine with the rest. A limit, not a promise:
+        // it is measured rather than required.
+        let reaches = in_the_engine(marked) == file_identity(marked).unwrap();
+        note(&format!("MEASURED: a handle the host marked to be inherited {} the engine", if reaches { "REACHES" } else { "does not reach" }));
     }
 
     // ---- A host process: what happens when Sard itself ends, and what Sard's environment can do ----

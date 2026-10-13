@@ -21,6 +21,6 @@ pub mod download;
 pub mod store;
 
 #[cfg(test)]
-mod test_server;
+mod download_server_tests;
 #[cfg(test)]
 mod tests;

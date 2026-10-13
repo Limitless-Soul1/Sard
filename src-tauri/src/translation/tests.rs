@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use super::catalog::{Artifact, Kind, Licence, Source};
 use super::download::{check_url, download, DownloadError, Mode, Policy, Progress};
 use super::store::{hex, InstalledRecord, State, Store, RECORD_NAME};
-use super::test_server::{test_bytes, TestServer};
+use super::download_server_tests::{test_bytes, TestServer};
 
 const SIZE: usize = 1_500_000; // six 256 KiB chunks and a short seventh
 

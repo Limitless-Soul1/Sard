@@ -10,8 +10,8 @@
 // cannot be withdrawn from it, so the boundary has to be provable before anything can cross it. The
 // assertions below are the proof that the rule is present and correctly scoped, and they fail the
 // build if either the path rule or the content rule is ever weakened or removed.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain ESM module, no type declarations
@@ -159,5 +159,99 @@ describe("production content — the attribution rule, and its single exemption"
     expect(rules("AGENTS.md", `${doc}\nsee docs/engineering/HANDBOOK.md`)).toContain("internal-docs");
     expect(rules("AGENTS.md", `${doc}\nthe probe lives in tests/harness/cdp.mjs`)).toContain("test-infrastructure");
     expect(rules("AGENTS.md", `${doc}\ncp cert.p12 /tmp`)).toContain("signing-material");
+  });
+});
+
+// The production boundary against RUST MODULES THAT EXIST ONLY FOR TESTS.
+//
+// The path rule recognises such a module by its file's NAME: `tests.rs`, or anything ending `_tests.rs`. Rust
+// has no opinion about that name — a module is test-only because its declaration says `#[cfg(test)]` — so a
+// test-only module with any other name compiles, runs, and is published to `main` with nothing objecting.
+// That happened once: a local HTTP server written for the download tests shipped in the production tree for
+// as long as it was called something else.
+//
+// The rule is deliberately left as it is. A name is something the gate can check from a path alone; reading
+// every module's declaration would make the gate a Rust parser. What is checked here instead is that the
+// SOURCE TREE keeps to the convention the rule depends on — in both directions.
+describe("production tree — Rust modules that exist only for tests never reach main", () => {
+  const REPO = resolve(import.meta.dirname, "../..");
+  const RUST_SRC = join(REPO, "src-tauri", "src");
+  const repoPath = (file: string): string => relative(REPO, file).replace(/\\/g, "/");
+
+  /** Every `.rs` file under the Rust source directory. */
+  const rustFiles = (dir: string = RUST_SRC): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory() ? rustFiles(join(dir, entry.name)) : entry.name.endsWith(".rs") ? [join(dir, entry.name)] : [],
+    );
+
+  /** The `mod name;` declarations of a Rust file, each with the attribute lines directly above it. */
+  const declarations = (file: string): { name: string; attributes: string }[] => {
+    const lines = readFileSync(file, "utf8").split(/\r?\n/);
+    const found: { name: string; attributes: string }[] = [];
+    lines.forEach((line, at) => {
+      const declared = /^\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+([A-Za-z0-9_]+)\s*;/.exec(line);
+      if (!declared) return;
+      let attributes = "";
+      for (let above = at - 1; above >= 0 && /^\s*#\[/.test(lines[above]); above--) attributes += lines[above];
+      found.push({ name: declared[1], attributes });
+    });
+    return found;
+  };
+
+  /** `#[cfg(test)]`, or `#[cfg(all(test, …))]`: compiled for tests and for nothing else. */
+  const onlyForTests = (attributes: string): boolean => /#\[cfg\(\s*(?:all\(\s*)?test\s*[,)]/.test(attributes);
+
+  /** Where the file of module `name`, declared in `declaring`, may be. */
+  const fileOf = (declaring: string, name: string): string[] => {
+    const stem = basename(declaring, ".rs");
+    const dir = ["mod", "lib", "main"].includes(stem) ? dirname(declaring) : join(dirname(declaring), stem);
+    return [join(dir, `${name}.rs`), join(dir, name, "mod.rs")];
+  };
+
+  const byTheTestModuleRule = (path: string): boolean => /Rust test module/.test(excluded(path)?.why ?? "");
+
+  it("excludes the file of every module that is declared only for tests", () => {
+    const checked: string[] = [];
+    const published: string[] = [];
+    for (const declaring of rustFiles()) {
+      for (const { name, attributes } of declarations(declaring)) {
+        if (!onlyForTests(attributes)) continue;
+        for (const file of fileOf(declaring, name).filter((candidate) => existsSync(candidate))) {
+          checked.push(repoPath(file));
+          if (!excluded(repoPath(file))) published.push(repoPath(file));
+        }
+      }
+    }
+    // A scan that found nothing would pass for the wrong reason.
+    expect(checked.length, "test-only modules found by the scan").toBeGreaterThanOrEqual(10);
+    expect(published, "test-only files that would be published to main").toEqual([]);
+  });
+
+  it("and excludes no Rust file that the product is built from", () => {
+    // The other direction. Removing a file is safe only because the module it holds is never compiled into
+    // the product; a module declared without `#[cfg(test)]` and named like a test module would break the
+    // release build instead.
+    const forTests = new Set<string>();
+    const forTheProduct = new Set<string>();
+    for (const declaring of rustFiles()) {
+      for (const { name, attributes } of declarations(declaring)) {
+        for (const file of fileOf(declaring, name)) (onlyForTests(attributes) ? forTests : forTheProduct).add(repoPath(file));
+      }
+    }
+    const removed = rustFiles().map(repoPath).filter(byTheTestModuleRule);
+    expect(removed.length, "files the rule removes").toBeGreaterThanOrEqual(10);
+    for (const path of removed) {
+      expect(forTheProduct.has(path), `${path} is declared as part of the product`).toBe(false);
+      expect(forTests.has(path), `${path} is declared only for tests`).toBe(true);
+    }
+  });
+
+  it("keeps the translation module's product files and drops its test files", () => {
+    for (const product of ["mod.rs", "catalog.rs", "store.rs", "download.rs"]) {
+      expect(excluded(`src-tauri/src/translation/${product}`), product).toBeNull();
+    }
+    for (const forTests of ["tests.rs", "download_server_tests.rs"]) {
+      expect(byTheTestModuleRule(`src-tauri/src/translation/${forTests}`), forTests).toBe(true);
+    }
   });
 });

@@ -102,6 +102,157 @@ pub const RUNTIME_WINDOWS_X64: Artifact = Artifact {
     licence: Licence::LlamaCppRuntime,
 };
 
+/// One file of the inference engine, as installed from its runtime archive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EngineFile {
+    pub name: &'static str,
+    pub size: u64,
+    pub sha256: &'static str,
+}
+
+/// The inference engine: which archive it comes from and exactly which of its files are installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EngineSpec {
+    pub archive: &'static Artifact,
+    pub files: &'static [EngineFile],
+    /// The archive's other entries: known, and deliberately never installed. With `files` this accounts for
+    /// every entry, so an archive holding anything else is refused.
+    pub unused: &'static [&'static str],
+    /// The server executable, one of `files`.
+    pub executable: &'static str,
+    /// Written next to the engine: the licence texts the build itself declares.
+    pub notices_name: &'static str,
+    pub notices: &'static str,
+}
+
+/// The Windows x64 engine: 24 of the 52 files in `RUNTIME_WINDOWS_X64`.
+///
+/// ## Which files, and why exactly these
+///
+/// Established by reading the binaries, not by trial:
+///
+/// * The import tables of `llama-server.exe` close over eight files: the executable, `llama-server-impl.dll`,
+///   `llama-common.dll`, `llama.dll`, `mtmd.dll`, `ggml.dll`, `ggml-base.dll` and `libomp.dll`.
+/// * ggml then loads its compute backends at run time. It loads every `ggml-<backend>-*.dll`, or an exact
+///   `ggml-<backend>.dll`, found in the executable's directory or the current directory. That is why
+///   `ggml-vulkan.dll` (the GPU) and all fourteen `ggml-cpu-*.dll` variants are here: the loader scores the
+///   variants and keeps the best one for the machine's processor.
+/// * It is also why `ggml-rpc.dll` is NOT here: present, it would be loaded, and nothing needs a remote
+///   backend.
+/// * `LICENSE-LLVM-OpenMP` is the archive's only licence file.
+///
+/// Everything else in the archive (benchmarks, converters, other command-line tools) is listed in `unused` and
+/// never extracted: 24 installed and 28 not, the archive's 52 entries.
+///
+/// ## Where the values come from
+///
+/// * **The archive's SHA-256** in `RUNTIME_WINDOWS_X64` is confirmed three ways:
+///   * the digest GitHub reports for the release asset (uploaded by the project's own CI on 2026-10-08);
+///   * the value recorded when the file was first downloaded on 2026-10-09;
+///   * a fresh download on 2026-10-13.
+/// * **Each file's size and SHA-256** below was read from that verified archive, and matched byte for byte
+///   against two independent copies: the extraction used for every evaluation run, and the second download.
+/// * **The release tag** `b11501` resolves to commit `46baf1f1fec5a06d1e52122a9207ca978b720f95`. That matches the
+///   build's own version string.
+///
+/// The system's Visual C++ runtime (`MSVCP140.dll`, `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll`) is NOT part of the
+/// archive. The engine imports it, and Sard itself does not, so its presence is checked before every launch.
+pub const ENGINE_WINDOWS_X64: EngineSpec = EngineSpec {
+    archive: &RUNTIME_WINDOWS_X64,
+    files: &[
+        EngineFile { name: "llama-server.exe", size: 9_216, sha256: "52adee6baa13aad64018dafcc0bb8f07d2a70f6c90b1f777a74df989f44d8355" },
+        EngineFile { name: "llama-server-impl.dll", size: 9_207_808, sha256: "92aa6001b0430045e14cf733d088f68aa58112905f9a70d6d2e088515c8eacc4" },
+        EngineFile { name: "llama-common.dll", size: 8_005_632, sha256: "26657dcaf2b439e56cd503b52be6eaad6fb1402729636f9ea37eff50fa33b3e2" },
+        EngineFile { name: "llama.dll", size: 3_377_664, sha256: "658d78991e4c814b758f2ec7665309ad4d659c7f609d89d1dc957dd9a749a55c" },
+        EngineFile { name: "mtmd.dll", size: 1_817_600, sha256: "93b873ad02ffd90bd81b2c0d93f1a8aadf49383072166d75f2fa4c50f9c99fac" },
+        EngineFile { name: "ggml.dll", size: 79_872, sha256: "a2ca1d7a0e3c939aab0803b0731020eb8ea3a3d2a3deae7229d976ac5f3f82e9" },
+        EngineFile { name: "ggml-base.dll", size: 801_792, sha256: "c40814972fa492e109e3585ab7999241860e233f3db846e481f6f7b19a3e5ba4" },
+        EngineFile { name: "libomp.dll", size: 768_000, sha256: "a12116ba72d1d6820407cf30be23da04ce79d6bb8a71a5ee71759c5a1faa6f1c" },
+        EngineFile { name: "ggml-vulkan.dll", size: 45_305_856, sha256: "ac89a3795faf520d3ec34cea40355fc3fcac690808aec81fe525aad9e75cc683" },
+        EngineFile { name: "ggml-cpu-alderlake.dll", size: 1_435_136, sha256: "2e7b306b728f62089208735a22accd7778e5fb7e7c02aa00c70bdb811a0cf42a" },
+        EngineFile { name: "ggml-cpu-cannonlake.dll", size: 1_614_848, sha256: "d896b1bd80ed7667cda224d00632f81991e03f8b37f689bdecad92ae4de9804d" },
+        EngineFile { name: "ggml-cpu-cascadelake.dll", size: 1_599_488, sha256: "d234545660c7e5a83f619fda4b7e8e8f6adaa2c6034044945ed53a745c38dd97" },
+        EngineFile { name: "ggml-cpu-cooperlake.dll", size: 1_609_216, sha256: "07a67ff9ba4e14e324efa23a465fd7db79f5bfce2c338d4d5d5a619bc7c84394" },
+        EngineFile { name: "ggml-cpu-haswell.dll", size: 1_439_744, sha256: "820d913f3bc945ab2d7df2c2ee02ebb7ecf95854279c0b7d437ee3da2f57efbb" },
+        EngineFile { name: "ggml-cpu-icelake.dll", size: 1_606_656, sha256: "635a628e008cce3578820b59c374dd196d35c26528819deaf81b2109a83b0a99" },
+        EngineFile { name: "ggml-cpu-ivybridge.dll", size: 1_315_328, sha256: "6627a22e173094f2b7257acc0df708ea5da541d93b6f35d3d8a1266729bb195d" },
+        EngineFile { name: "ggml-cpu-piledriver.dll", size: 1_308_160, sha256: "312d03fb1b7c2830fb019d9f8376ca82164497604b29e7bb7d837acfb3d83086" },
+        EngineFile { name: "ggml-cpu-sandybridge.dll", size: 1_290_240, sha256: "99a2f53f7a96698d4769f485ef56577f195507bd4c71504c14484867a7096f22" },
+        EngineFile { name: "ggml-cpu-sapphirerapids.dll", size: 1_886_208, sha256: "356f43a4aa2ec66ee695a4f8837dbbd0da5a6cb399b84b85a72de76d0a296367" },
+        EngineFile { name: "ggml-cpu-skylakex.dll", size: 1_608_704, sha256: "f676d392e7ae57f4f48daf201728a8ff49f52b9b38cafc587cbe026db21389f6" },
+        EngineFile { name: "ggml-cpu-sse42.dll", size: 915_968, sha256: "87d487df961bea00cfe8f1f8ab04f6f2a7233d1b851735c61804712bf55582e9" },
+        EngineFile { name: "ggml-cpu-x64.dll", size: 908_800, sha256: "ed0a99535f89d8ca6fd61338fa0a8adedddf27e10ff2f1e775f120ad88277765" },
+        EngineFile { name: "ggml-cpu-zen4.dll", size: 1_615_872, sha256: "4c13fd851f61d1ddd559f187d534aedfaf8028b6816df228b5725667c13cdc0c" },
+        EngineFile { name: "LICENSE-LLVM-OpenMP", size: 19_741, sha256: "fdad1758a9e1f9d5a81e18879b3406772115edc92c24bfa36b70c654f325e8e4" },
+    ],
+    unused: &[
+        "ggml-rpc-server.exe",
+        "ggml-rpc.dll",
+        "llama-batched-bench-impl.dll",
+        "llama-batched-bench.exe",
+        "llama-bench-impl.dll",
+        "llama-bench.exe",
+        "llama-cli-impl.dll",
+        "llama-cli.exe",
+        "llama-completion-impl.dll",
+        "llama-completion.exe",
+        "llama-fit-params-impl.dll",
+        "llama-fit-params.exe",
+        "llama-gemma3-cli.exe",
+        "llama-gguf-split.exe",
+        "llama-imatrix.exe",
+        "llama-llava-cli.exe",
+        "llama-minicpmv-cli.exe",
+        "llama-mtmd-cli.exe",
+        "llama-mtmd-debug.exe",
+        "llama-perplexity-impl.dll",
+        "llama-perplexity.exe",
+        "llama-quantize-impl.dll",
+        "llama-quantize.exe",
+        "llama-qwen2vl-cli.exe",
+        "llama-results.exe",
+        "llama-tokenize.exe",
+        "llama-tts.exe",
+        "llama.exe",
+    ],
+    executable: "llama-server.exe",
+    notices_name: "THIRD-PARTY-NOTICES.txt",
+    // The licence texts the build itself declares (`llama.exe licenses`): llama.cpp, LLVM OpenMP, cpp-httplib,
+    // BoringSSL and JSON for Modern C++. Four were checked against the release's own sources; BoringSSL's text
+    // exists only in the build output.
+    notices: include_str!("engine-notices.txt"),
+};
+
+/// How a model is launched: the exact server flags the translation pipeline was evaluated with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LaunchProfile {
+    /// Full GPU offload — the configuration the pipeline was frozen with.
+    pub gpu: &'static [&'static str],
+    /// CPU only. The thread count is added by the caller; the device is always `none`.
+    pub cpu: &'static [&'static str],
+}
+
+/// The launch profile for a model in the catalog, or `None` for anything that is not a model.
+pub fn launch_profile(a: &Artifact) -> Option<LaunchProfile> {
+    // A — the frozen GPU flags, and the CPU configuration measured for it (default load mode).
+    const A: LaunchProfile = LaunchProfile {
+        gpu: &["-ngl", "99", "-lm", "none", "-b", "256", "-ub", "256", "-t", "6", "-tb", "6", "-np", "1", "-c", "6144", "--cache-ram", "0", "--jinja"],
+        cpu: &["-ngl", "0", "-b", "256", "-ub", "256", "-np", "1", "-c", "6144", "--cache-ram", "0", "--jinja"],
+    };
+    // B — the frozen GPU flags, and the same flags without the GPU for CPU-only runs.
+    const B: LaunchProfile = LaunchProfile {
+        gpu: &["-ngl", "99", "-lm", "mmap", "-t", "2", "-tb", "2", "-np", "1", "-c", "6144", "--cache-ram", "0", "--jinja"],
+        cpu: &["-ngl", "0", "-lm", "mmap", "-np", "1", "-c", "6144", "--cache-ram", "0", "--jinja"],
+    };
+    if a.id == MODEL_A.id {
+        Some(A)
+    } else if a.id == MODEL_B.id {
+        Some(B)
+    } else {
+        None
+    }
+}
+
 /// Every file in the catalog.
 pub const ALL: &[Artifact] = &[MODEL_A, MODEL_B, RUNTIME_WINDOWS_X64];
 

@@ -273,7 +273,7 @@ impl Store {
 
     /// Refuse any existing path that does not resolve to a location strictly inside the root — which is
     /// what a symbolic link or a junction planted in the root would try to arrange.
-    fn guard_existing(&self, path: &Path) -> io::Result<()> {
+    pub(crate) fn guard_existing(&self, path: &Path) -> io::Result<()> {
         let resolved = fs::canonicalize(path)?;
         if resolved != self.root && resolved.starts_with(&self.root) {
             Ok(())
@@ -308,4 +308,15 @@ pub(crate) fn hash_file(path: &Path, cancel: &AtomicBool) -> io::Result<Option<(
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `n` bytes from the operating system's secure random source (through the aws-lc-rs provider Sard already
+/// uses for TLS), as lowercase hex.
+pub(crate) fn random_hex(n: usize) -> io::Result<String> {
+    let mut buf = vec![0u8; n];
+    rustls::crypto::aws_lc_rs::default_provider()
+        .secure_random
+        .fill(&mut buf)
+        .map_err(|_| io::Error::other("the secure random source failed"))?;
+    Ok(hex(&buf))
 }

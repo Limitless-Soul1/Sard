@@ -206,8 +206,26 @@ impl Store {
     }
 
     /// Delete an unfinished download. Returns the bytes freed.
+    ///
+    /// A link left at its name is removed as a NAME — what it leads to is not touched, and nothing is
+    /// freed. A folder there is not the store's, and is refused.
     pub fn discard_partial(&self, a: &Artifact) -> io::Result<u64> {
-        self.delete_owned_file(&self.partial_path(a))
+        let path = self.partial_path(a);
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(e),
+        };
+        if meta.file_type().is_file() {
+            return self.delete_owned_file(&path);
+        }
+        if meta.is_dir() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{} is a folder", path.display())));
+        }
+        // The folder the link sits in must be the store's own; the link itself is never followed.
+        self.guard_existing(path.parent().unwrap_or(&path))?;
+        fs::remove_file(&path).or_else(|_| fs::remove_dir(&path))?;
+        Ok(0)
     }
 
     /// Remove an artifact: its file, its record and any unfinished download. Nothing else.

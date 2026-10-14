@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use super::catalog::{Artifact, Kind, Licence, Source};
 use super::download::{check_url, download, DownloadError, Mode, Policy, Progress};
-use super::store::{hex, InstalledRecord, State, Store, RECORD_NAME};
+use super::store::{hex, InstalledRecord, State, Store, RECORD_NAME, RECORD_TEMP_NAME};
 use super::test_server::{test_bytes, TestServer};
 
 const SIZE: usize = 1_500_000; // six 256 KiB chunks and a short seventh
@@ -1122,6 +1122,147 @@ fn a_link_planted_in_the_root_cannot_redirect_a_removal() {
     assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
     assert_eq!(fs::read(outside.join(a.file_name)).unwrap(), b"the user's file");
     assert_eq!(fs::read(outside.join(RECORD_NAME)).unwrap(), b"the user's other file");
+}
+
+// ── the record ──────────────────────────────────────────────────────────────────────────────────
+
+/// Put a symbolic link to a FILE at `link`. On Windows that needs a privilege an ordinary account may
+/// not have, so this reports whether it could be done.
+fn try_link_file(link: &Path, target: &Path) -> bool {
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(target, link).is_ok();
+    #[cfg(not(windows))]
+    let made = std::os::unix::fs::symlink(target, link).is_ok();
+    made
+}
+
+/// A line that must be seen even when the test passes — a case that could not be run. The test harness
+/// hides what a passing test prints, so this goes to the error stream directly.
+fn note(line: &str) {
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stderr(), "{line}");
+}
+
+/// A file already in place with no record — what a crash between moving it there and recording it leaves.
+fn placed_without_a_record(tag: &str) -> (Fixture, &'static Artifact) {
+    let f = fixture(tag);
+    let a = artifact(&f.server, "/file", &f.data, tag);
+    fs::create_dir_all(f.store.artifact_dir(a)).unwrap();
+    fs::write(f.store.installed_path(a), &f.data).unwrap();
+    assert_eq!(f.store.state(a).unwrap(), State::Unverified);
+    (f, a)
+}
+
+fn temp_record(f: &Fixture, a: &Artifact) -> PathBuf {
+    f.store.artifact_dir(a).join(RECORD_TEMP_NAME)
+}
+
+#[test]
+fn the_record_is_never_written_through_a_link() {
+    let (f, a) = placed_without_a_record("recordlink");
+    let (first, second) = (f._tmp.0.join("first.txt"), f._tmp.0.join("second.txt"));
+    fs::write(&first, b"the user's file").unwrap();
+    fs::write(&second, b"another of the user's files").unwrap();
+    // Links wait at both names the record is written through: its temporary name, and its own.
+    if !try_link_file(&temp_record(&f, a), &first) || !try_link_file(&f.store.record_path(a), &second) {
+        note("NOT TESTED (the record written through a link): this account may not create symbolic links");
+        return;
+    }
+
+    assert_eq!(f.store.verify(a, &no()).unwrap(), State::Installed);
+    assert_eq!(fs::read(&first).unwrap(), b"the user's file");
+    assert_eq!(fs::read(&second).unwrap(), b"another of the user's files");
+    let meta = fs::symlink_metadata(f.store.record_path(a)).unwrap();
+    assert!(meta.is_file() && !meta.file_type().is_symlink(), "the record is a file of its own");
+    assert!(fs::symlink_metadata(temp_record(&f, a)).is_err(), "nothing is left under the temporary name");
+    assert_eq!(f.store.state(a).unwrap(), State::Installed);
+}
+
+#[test]
+fn a_download_does_not_write_its_record_through_a_link_either() {
+    let f = fixture("recordlinkdl");
+    let a = artifact(&f.server, "/file", &f.data, "recordlinkdl");
+    let victim = f._tmp.0.join("victim.txt");
+    fs::write(&victim, b"the user's file").unwrap();
+    // The link is waiting before the download starts.
+    fs::create_dir_all(f.store.artifact_dir(a)).unwrap();
+    if !try_link_file(&temp_record(&f, a), &victim) {
+        note("NOT TESTED (a download's record written through a link): this account may not create symbolic links");
+        return;
+    }
+
+    run(&f, a, Mode::Start, &Policy::loopback_for_tests(), &no()).unwrap();
+    assert_eq!(fs::read(&victim).unwrap(), b"the user's file");
+    assert_eq!(f.store.state(a).unwrap(), State::Installed);
+    assert!(fs::symlink_metadata(temp_record(&f, a)).is_err());
+}
+
+#[test]
+fn a_stale_temporary_record_is_replaced_and_never_read() {
+    let (f, a) = placed_without_a_record("staletemp");
+    // What a crash between writing the record and renaming it leaves — here holding something that must not
+    // be taken for a record.
+    fs::write(temp_record(&f, a), b"{ not the record }").unwrap();
+    assert_eq!(f.store.state(a).unwrap(), State::Unverified, "a temporary record is not a record");
+
+    assert_eq!(f.store.verify(a, &no()).unwrap(), State::Installed);
+    assert!(!temp_record(&f, a).exists());
+    let rec: InstalledRecord = serde_json::from_slice(&fs::read(f.store.record_path(a)).unwrap()).unwrap();
+    assert_eq!((rec.size, rec.sha256.as_str()), (a.size, a.sha256));
+}
+
+#[test]
+fn a_record_that_cannot_be_put_in_place_leaves_the_file_not_installed() {
+    let (f, a) = placed_without_a_record("norecord");
+    // The record's own name is held by something a file cannot replace.
+    fs::create_dir(f.store.record_path(a)).unwrap();
+
+    assert!(f.store.verify(a, &no()).is_err());
+    assert!(!matches!(f.store.state(a), Ok(State::Installed)));
+    assert!(fs::symlink_metadata(temp_record(&f, a)).is_err(), "nothing half-written is left behind");
+
+    // Once the obstacle is gone, the same file is hashed and recorded.
+    fs::remove_dir(f.store.record_path(a)).unwrap();
+    assert_eq!(f.store.verify(a, &no()).unwrap(), State::Installed);
+}
+
+#[test]
+fn a_temporary_name_that_cannot_be_cleared_stops_the_record_being_written() {
+    let (f, a) = placed_without_a_record("blockedtemp");
+    // A folder holds the temporary name. It is not the store's, so it is neither written into nor deleted.
+    let blocked = temp_record(&f, a);
+    fs::create_dir(&blocked).unwrap();
+    fs::write(blocked.join("inside.txt"), b"not the store's").unwrap();
+
+    assert!(f.store.verify(a, &no()).is_err());
+    assert_eq!(f.store.state(a).unwrap(), State::Unverified);
+    assert_eq!(fs::read(blocked.join("inside.txt")).unwrap(), b"not the store's");
+
+    let removal = f.store.remove(a).unwrap();
+    assert_eq!(removal.kept, vec![RECORD_TEMP_NAME.to_string()], "kept, and said to be kept");
+    assert_eq!(fs::read(blocked.join("inside.txt")).unwrap(), b"not the store's");
+}
+
+#[test]
+fn removal_clears_a_leftover_temporary_record_without_following_it() {
+    // A plain leftover is the store's own file: it goes, and the directory with it.
+    let (f, a) = placed_without_a_record("removetemp");
+    fs::write(temp_record(&f, a), b"left by a crash").unwrap();
+    let removal = f.store.remove(a).unwrap();
+    assert_eq!((removal.freed, removal.kept), (a.size + 15, Vec::<String>::new()));
+    assert!(!f.store.artifact_dir(a).exists());
+
+    // A link left there goes too — and what it points to stays.
+    let (f, a) = placed_without_a_record("removetemplink");
+    let victim = f._tmp.0.join("victim.txt");
+    fs::write(&victim, b"the user's file").unwrap();
+    if !try_link_file(&temp_record(&f, a), &victim) {
+        note("NOT TESTED (removing a link left under the temporary name): this account may not create symbolic links");
+        return;
+    }
+    let removal = f.store.remove(a).unwrap();
+    assert_eq!((removal.freed, removal.kept), (a.size, Vec::<String>::new()));
+    assert_eq!(fs::read(&victim).unwrap(), b"the user's file");
 }
 
 #[test]

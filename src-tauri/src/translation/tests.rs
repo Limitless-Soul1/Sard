@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use super::catalog::{Artifact, Kind, Licence, Source};
 use super::download::{check_url, download, DownloadError, Mode, Policy, Progress};
-use super::store::{hex, InstalledRecord, State, Store, RECORD_NAME};
+use super::store::{hex, InstalledRecord, State, Store, RECORD_NAME, RECORD_TEMP_NAME};
 use super::download_server_tests::{test_bytes, TestServer};
 
 const SIZE: usize = 1_500_000; // six 256 KiB chunks and a short seventh
@@ -241,6 +241,584 @@ fn two_downloads_of_the_same_file_never_run_at_once() {
     assert_eq!(run(&f, a, Mode::Resume, &Policy::loopback_for_tests(), &no()), Err(DownloadError::Busy));
     first.join().unwrap().expect("the first download finishes");
     assert_eq!(f.store.state(a).unwrap(), State::Installed);
+}
+
+// ── the unfinished download is never written through a link ─────────────────────────────────────
+
+/// A download must never put a byte anywhere but in its own file in the translation directory.
+///
+/// Each test plants something at the unfinished download's name and then looks at what the planted thing
+/// leads to — its bytes, its length and its modification time — and at everything else beside the
+/// translation directory. That an error came back is never the whole of a test.
+mod partial_file_safety {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// A line that must be seen even when the test passes — a case that could not be run. The test harness
+    /// hides what a passing test prints, so this goes to the error stream directly.
+    fn note(line: &str) {
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), "{line}");
+    }
+
+    /// Put a symbolic link to a file at `link`. On Windows that needs a privilege an ordinary account may
+    /// not have, so this reports whether it could be done.
+    fn link_file(link: &Path, target: &Path) -> bool {
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(target, link).is_ok();
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(target, link).is_ok();
+        made
+    }
+
+    /// Put a link to a folder at `link`: a junction on Windows, which needs no privilege.
+    fn link_folder(link: &Path, target: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW: never a console window on the screen.
+            let out = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target).creation_flags(0x0800_0000).output().unwrap();
+            assert!(out.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&out.stderr));
+        }
+    }
+
+    fn is_link(path: &Path) -> bool {
+        fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+    }
+
+    fn refused(result: &Result<Vec<Progress>, DownloadError>) -> bool {
+        matches!(result, Err(DownloadError::UnsafePartial { .. }))
+    }
+
+    /// One file, exactly as it is now — or the fact that it does not exist — to be compared later.
+    struct Kept {
+        path: PathBuf,
+        was: Option<(Vec<u8>, SystemTime)>,
+    }
+
+    impl Kept {
+        fn of(path: &Path) -> Kept {
+            let was = fs::read(path).ok().map(|bytes| (bytes, fs::metadata(path).unwrap().modified().unwrap()));
+            Kept { path: path.to_path_buf(), was }
+        }
+
+        fn assert_untouched(&self) {
+            match &self.was {
+                None => assert!(fs::symlink_metadata(&self.path).is_err(), "{} was created", self.path.display()),
+                Some((bytes, modified)) => {
+                    let now = fs::read(&self.path).unwrap();
+                    assert_eq!(now.len(), bytes.len(), "{} changed length", self.path.display());
+                    assert!(now == *bytes, "{} changed contents", self.path.display());
+                    assert_eq!(fs::metadata(&self.path).unwrap().modified().unwrap(), *modified, "{} was written to", self.path.display());
+                }
+            }
+        }
+    }
+
+    /// A download about to happen, with the user's own files beside the translation directory.
+    struct Scene {
+        f: Fixture,
+        a: &'static Artifact,
+        /// The unfinished download's name, as the store resolves it.
+        part: PathBuf,
+        /// The translation directory by its plain path: `mklink` does not take the store's resolved one.
+        translation: PathBuf,
+        /// A folder of the user's own files.
+        users: PathBuf,
+        outside: BTreeMap<PathBuf, (u64, String, SystemTime)>,
+    }
+
+    impl Scene {
+        fn new(tag: &str) -> Scene {
+            let f = fixture(tag);
+            let a = artifact(&f.server, "/file", &f.data, tag);
+            user_data(&f._tmp.0);
+            let (translation, users) = (f._tmp.0.join("translation"), f._tmp.0.join("library"));
+            let part = f.store.partial_path(a);
+            let outside = snapshot(&f._tmp.0, &translation);
+            Scene { f, a, part, translation, users, outside }
+        }
+
+        /// Call once the user's files are as the test wants them: from here on they must not change.
+        fn settle(&mut self) {
+            self.outside = snapshot(&self.f._tmp.0, &self.translation);
+        }
+
+        /// Everything beside the translation directory is byte-identical, has the same modification
+        /// times, and nothing has been added to it.
+        fn assert_nothing_outside_changed(&self) {
+            assert!(self.outside.len() >= 4, "the snapshot covers the user's files");
+            assert!(self.outside == snapshot(&self.f._tmp.0, &self.translation), "something beside the translation directory changed");
+        }
+
+        fn plain_part(&self) -> PathBuf {
+            self.translation.join("partial").join(format!("{}.part", self.a.id))
+        }
+
+        fn requests(&self) -> u32 {
+            self.f.server.stats.lock().unwrap().requests
+        }
+
+        fn download(&self, mode: Mode) -> Result<Vec<Progress>, DownloadError> {
+            run(&self.f, self.a, mode, &Policy::loopback_for_tests(), &no())
+        }
+
+        /// The download finished: the catalog's exact bytes are installed and recorded, and nothing is
+        /// left under the unfinished download's name.
+        fn assert_installed(&self) {
+            let (store, a) = (&self.f.store, self.a);
+            assert_eq!(store.state(a).unwrap(), State::Installed);
+            let installed = fs::read(store.installed_path(a)).unwrap();
+            assert_eq!(installed.len() as u64, a.size);
+            assert_eq!(sha(&installed), a.sha256);
+            assert!(installed == self.f.data, "the installed bytes are the served bytes");
+            let record: InstalledRecord = serde_json::from_slice(&fs::read(store.record_path(a)).unwrap()).unwrap();
+            assert_eq!((record.size, record.sha256.as_str()), (a.size, a.sha256));
+            assert!(fs::symlink_metadata(&self.part).is_err(), "something is left at the unfinished download's name");
+        }
+    }
+
+    /// The defect this module exists for, in its first form: a new download followed a link left at its
+    /// name, and wrote the whole file — 1,500,000 bytes here — to wherever the link led.
+    #[test]
+    fn a_new_download_is_never_written_through_a_link_at_its_name() {
+        for leads_to in ["a file that does not exist yet", "one of the user's files", "another file in the translation directory"] {
+            let mut s = Scene::new("startlink");
+            let target = match leads_to {
+                "a file that does not exist yet" => s.users.join("not-there-yet.bin"),
+                "one of the user's files" => s.users.join("a-book.epub"),
+                _ => {
+                    let other = s.f.store.root().join("models").join("another-model");
+                    fs::create_dir_all(&other).unwrap();
+                    fs::write(other.join("model.gguf"), b"another model's bytes").unwrap();
+                    other.join("model.gguf")
+                }
+            };
+            if !link_file(&s.part, &target) {
+                note("NOT TESTED (a new download over a link): this account may not create a symbolic link to a file");
+                return;
+            }
+            s.settle();
+            let kept = Kept::of(&target);
+
+            assert_eq!(s.a.size, 1_500_000, "the size the defect was first reproduced with");
+            s.download(Mode::Start).unwrap_or_else(|e| panic!("{leads_to}: the link is removed as a name and the download runs, but: {e}"));
+
+            // Not one of those bytes went where the link led: what was there is as it was, and what was
+            // not there still is not.
+            kept.assert_untouched();
+            s.assert_nothing_outside_changed();
+            s.assert_installed();
+            assert_eq!(served(&s.f), s.a.size, "{leads_to}: every byte was fetched exactly once");
+        }
+    }
+
+    /// The same defect in its second form: a resumed download appended through the link. Each target here
+    /// is something a resume would otherwise have continued without complaint.
+    #[test]
+    fn a_resumed_download_never_appends_through_a_link_at_its_name() {
+        for leads_to in ["an empty file of the user's", "a file of the user's holding the download's first bytes", "the same inside the translation directory", "nothing"] {
+            let mut s = Scene::new("resumelink");
+            let target = match leads_to {
+                // What the original defect appended 1,500,000 bytes to.
+                "an empty file of the user's" => s.users.join("empty.bin"),
+                "a file of the user's holding the download's first bytes" => s.users.join("looks-like-a-download.bin"),
+                "nothing" => s.users.join("not-there-yet.bin"),
+                _ => {
+                    let other = s.f.store.root().join("models").join("another-model");
+                    fs::create_dir_all(&other).unwrap();
+                    other.join("model.gguf")
+                }
+            };
+            match leads_to {
+                "nothing" => {}
+                "an empty file of the user's" => fs::write(&target, b"").unwrap(),
+                _ => fs::write(&target, &s.f.data[..400_000]).unwrap(),
+            }
+            if !link_file(&s.part, &target) {
+                note("NOT TESTED (a resume over a link): this account may not create a symbolic link to a file");
+                return;
+            }
+            s.settle();
+            let kept = Kept::of(&target);
+
+            assert_eq!(s.a.size, 1_500_000, "the size the defect was first reproduced with");
+            let result = s.download(Mode::Resume);
+            assert!(refused(&result), "{leads_to}: {result:?}");
+            assert_eq!(s.requests(), 0, "{leads_to}: nothing was asked of the server");
+            // Not one of those bytes was appended where the link led.
+            kept.assert_untouched();
+            s.assert_nothing_outside_changed();
+            assert!(is_link(&s.part), "{leads_to}: the refusal changed nothing, so the link is still there");
+
+            // The way out the error names: discarding the unfinished download removes the link, as a name.
+            assert_eq!(s.f.store.discard_partial(s.a).unwrap(), 0, "{leads_to}");
+            assert!(fs::symlink_metadata(&s.part).is_err(), "{leads_to}: the link is gone");
+            kept.assert_untouched();
+            s.download(Mode::Start).unwrap_or_else(|e| panic!("{leads_to}: a new download now runs, but: {e}"));
+            kept.assert_untouched();
+            s.assert_nothing_outside_changed();
+            s.assert_installed();
+        }
+    }
+
+    /// A hard link needs no privilege at all, and shares its bytes with the file it was made from: what is
+    /// appended under one name is appended to the other.
+    #[test]
+    fn a_file_that_also_has_a_name_elsewhere_is_never_appended_to() {
+        let mut s = Scene::new("hardlink");
+        // One of the user's files, holding what happens to be the download's first 500,000 bytes — so a
+        // resume would find nothing wrong with it, and append the other million.
+        let target = s.users.join("looks-like-a-download.bin");
+        fs::write(&target, &s.f.data[..500_000]).unwrap();
+        fs::hard_link(&target, &s.part).unwrap();
+        s.settle();
+        let kept = Kept::of(&target);
+
+        let result = s.download(Mode::Resume);
+        assert!(refused(&result), "{result:?}");
+        assert_eq!(s.requests(), 0);
+        kept.assert_untouched();
+        // A plain file has the name, so a new download is not started over it either.
+        assert_eq!(s.download(Mode::Start), Err(DownloadError::PartialExists { bytes: 500_000 }));
+        assert_eq!(s.requests(), 0);
+        kept.assert_untouched();
+        s.assert_nothing_outside_changed();
+
+        // Discarding removes the store's name for it. The user's file is whole under its own.
+        s.f.store.discard_partial(s.a).unwrap();
+        assert!(fs::symlink_metadata(&s.part).is_err());
+        kept.assert_untouched();
+        s.download(Mode::Start).expect("a new download now runs");
+        kept.assert_untouched();
+        s.assert_nothing_outside_changed();
+        s.assert_installed();
+    }
+
+    #[test]
+    fn a_folder_at_its_name_is_refused_and_a_link_to_one_is_removed_only_as_a_name() {
+        // A real folder, with something in it: not the store's, so not the store's to remove.
+        let mut s = Scene::new("folder");
+        fs::create_dir(&s.part).unwrap();
+        fs::write(s.part.join("inside.txt"), b"not the store's").unwrap();
+        s.settle();
+        for mode in [Mode::Start, Mode::Resume] {
+            let result = s.download(mode);
+            assert!(refused(&result), "{mode:?}: {result:?}");
+        }
+        assert!(s.f.store.discard_partial(s.a).is_err(), "a folder is not discarded");
+        assert_eq!(s.requests(), 0);
+        assert_eq!(fs::read(s.part.join("inside.txt")).unwrap(), b"not the store's");
+        s.assert_nothing_outside_changed();
+
+        // A link to one of the user's folders.
+        let mut s = Scene::new("folderlink");
+        link_folder(&s.plain_part(), &s.users);
+        s.settle();
+        let result = s.download(Mode::Resume);
+        assert!(refused(&result), "{result:?}");
+        assert_eq!(s.requests(), 0);
+        assert!(is_link(&s.part));
+        s.assert_nothing_outside_changed();
+        // A new download removes the link — the name, not the folder it leads to or anything in it.
+        s.download(Mode::Start).expect("the link is removed as a name and the download runs");
+        s.assert_nothing_outside_changed();
+        s.assert_installed();
+    }
+
+    /// Checking a name and then creating the file is two steps. Here a link is put at the name between
+    /// them — after it was cleared, at the last moment before the file is created.
+    #[test]
+    fn a_link_that_appears_just_before_the_file_is_created_is_not_followed() {
+        for leads_to in ["a file that does not exist yet", "one of the user's files"] {
+            let mut s = Scene::new("racelink");
+            let target = s.users.join(if leads_to == "one of the user's files" { "a-book.epub" } else { "not-there-yet.bin" });
+            s.settle();
+            let kept = Kept::of(&target);
+
+            let planted = Arc::new(Mutex::new(None));
+            let mut racing = Policy::loopback_for_tests();
+            racing.before_open = Some({
+                let (part, target, planted) = (s.part.clone(), target.clone(), planted.clone());
+                Arc::new(move || *planted.lock().unwrap() = Some(link_file(&part, &target)))
+            });
+            let result = run(&s.f, s.a, Mode::Start, &racing, &no());
+            let planted = planted.lock().unwrap().expect("the download reached the point of creating its file");
+            if !planted {
+                note("NOT TESTED (a link planted just before creation): this account may not create a symbolic link to a file");
+                return;
+            }
+            assert!(refused(&result), "{leads_to}: {result:?}");
+            assert_eq!(s.requests(), 0, "{leads_to}: nothing was asked of the server");
+            kept.assert_untouched();
+            s.assert_nothing_outside_changed();
+
+            // Asked again with nothing racing it, the link is removed as a name and the download runs.
+            s.download(Mode::Start).unwrap_or_else(|e| panic!("{leads_to}: {e}"));
+            kept.assert_untouched();
+            s.assert_nothing_outside_changed();
+            s.assert_installed();
+        }
+    }
+
+    /// The same two steps when resuming: the name is looked at, then opened. Here the unfinished download
+    /// is exchanged for a link between them — to a file a resume would have nothing against.
+    #[test]
+    fn a_link_exchanged_for_the_file_just_before_it_is_opened_is_not_followed() {
+        for leads_to in ["an empty file of the user's", "a file of the user's holding the same bytes"] {
+            let mut s = Scene::new("raceresume");
+            fs::write(&s.part, &s.f.data[..200_000]).unwrap();
+            let target = s.users.join("looks-like-a-download.bin");
+            let held = if leads_to == "an empty file of the user's" { 0 } else { 200_000 };
+            fs::write(&target, &s.f.data[..held]).unwrap();
+            s.settle();
+            let kept = Kept::of(&target);
+
+            let planted = Arc::new(Mutex::new(None));
+            let mut racing = Policy::loopback_for_tests();
+            racing.before_open = Some({
+                let (part, target, planted) = (s.part.clone(), target.clone(), planted.clone());
+                Arc::new(move || {
+                    fs::remove_file(&part).unwrap();
+                    *planted.lock().unwrap() = Some(link_file(&part, &target));
+                })
+            });
+            let result = run(&s.f, s.a, Mode::Resume, &racing, &no());
+            let planted = planted.lock().unwrap().expect("the download reached the point of opening its file");
+            if !planted {
+                note("NOT TESTED (a link exchanged for the file just before it is opened): this account may not create a symbolic link to a file");
+                return;
+            }
+            assert!(refused(&result), "{leads_to}: {result:?}");
+            assert_eq!(s.requests(), 0, "{leads_to}: nothing was asked of the server");
+            assert_eq!(fs::metadata(&target).unwrap().len(), held as u64, "{leads_to}: none of the download reached it");
+            kept.assert_untouched();
+            s.assert_nothing_outside_changed();
+        }
+    }
+
+    /// Discarding removes a link at the name without following it — but only in the store's own folder.
+    /// With that folder redirected, the name is in a folder of the user's, and nothing there is removed.
+    #[test]
+    fn discarding_through_a_redirected_folder_removes_nothing() {
+        for holds in ["a file", "a link"] {
+            let mut s = Scene::new("discard-redirected");
+            let elsewhere = s.f._tmp.0.join("elsewhere");
+            fs::create_dir(&elsewhere).unwrap();
+            let named_like_it = elsewhere.join(format!("{}.part", s.a.id));
+            if holds == "a file" {
+                fs::write(&named_like_it, b"the user's, whatever it is called").unwrap();
+            } else if !link_file(&named_like_it, &s.users.join("a-book.epub")) {
+                note("NOT TESTED (discarding a link through a redirected folder): this account may not create a symbolic link to a file");
+                return;
+            }
+            let folder = s.translation.join("partial");
+            fs::remove_dir(&folder).unwrap();
+            link_folder(&folder, &elsewhere);
+            s.settle();
+
+            assert!(s.f.store.discard_partial(s.a).is_err(), "{holds}: something was discarded through the link");
+            assert!(fs::symlink_metadata(&named_like_it).is_ok(), "{holds}: it was removed from the user's folder");
+            assert_eq!(is_link(&named_like_it), holds == "a link");
+            s.assert_nothing_outside_changed();
+        }
+    }
+
+    /// The folder for unfinished downloads replaced by a link to a folder of the user's: the name of the
+    /// file is then right, and everything above it is wrong.
+    #[test]
+    fn a_redirected_folder_never_receives_a_byte() {
+        let redirect = |s: &Scene, elsewhere: &Path| {
+            let folder = s.translation.join("partial");
+            fs::remove_dir(&folder).unwrap();
+            link_folder(&folder, elsewhere);
+        };
+
+        // Redirected beforehand, to an empty folder: a new download creates nothing in it.
+        let mut s = Scene::new("redirected");
+        let elsewhere = s.f._tmp.0.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        fs::write(elsewhere.join("the-users.txt"), b"the user's").unwrap();
+        redirect(&s, &elsewhere);
+        s.settle();
+        let result = s.download(Mode::Start);
+        assert!(refused(&result), "{result:?}");
+        assert_eq!(s.requests(), 0);
+        s.assert_nothing_outside_changed();
+
+        // Redirected to a folder holding a file with the very name the download uses, and its first bytes.
+        let mut s = Scene::new("redirected-file");
+        let elsewhere = s.f._tmp.0.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        let target = elsewhere.join(format!("{}.part", s.a.id));
+        fs::write(&target, &s.f.data[..300_000]).unwrap();
+        redirect(&s, &elsewhere);
+        s.settle();
+        let kept = Kept::of(&target);
+        let result = s.download(Mode::Resume);
+        assert!(refused(&result), "{result:?}");
+        // Through the link it looks like an unfinished download, so a new one is not started over it.
+        assert_eq!(s.download(Mode::Start), Err(DownloadError::PartialExists { bytes: 300_000 }));
+        assert_eq!(s.requests(), 0);
+        kept.assert_untouched();
+        s.assert_nothing_outside_changed();
+
+        // Redirected at the last moment: after the folder was checked, before the file is created.
+        let mut s = Scene::new("redirect-race");
+        let elsewhere = s.f._tmp.0.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        fs::write(elsewhere.join("the-users.txt"), b"the user's").unwrap();
+        s.settle();
+        let mut racing = Policy::loopback_for_tests();
+        racing.before_open = Some({
+            let (folder, elsewhere) = (s.translation.join("partial"), elsewhere.clone());
+            Arc::new(move || {
+                fs::remove_dir(&folder).unwrap();
+                link_folder(&folder, &elsewhere);
+            })
+        });
+        let result = run(&s.f, s.a, Mode::Start, &racing, &no());
+        assert!(refused(&result), "{result:?}");
+        assert_eq!(s.requests(), 0, "nothing was asked of the server, so there was nothing to write");
+        let stray = elsewhere.join(format!("{}.part", s.a.id));
+        if cfg!(windows) {
+            // The file was created where the link led, found to be there, and taken back by its own handle.
+            s.assert_nothing_outside_changed();
+        } else {
+            // Elsewhere a file cannot be deleted through its handle, and its path is the thing that cannot
+            // be trusted: the empty file is left. Nothing was written to it.
+            assert_eq!(fs::metadata(&stray).map(|m| m.len()).unwrap_or(0), 0);
+            assert_eq!(fs::read(elsewhere.join("the-users.txt")).unwrap(), b"the user's");
+            note(&format!("MEASURED: redirected at the last moment, an empty file {} left where the link led", if stray.exists() { "WAS" } else { "was not" }));
+        }
+    }
+
+    /// Once the file is open and proved, an attacker's next move is to exchange it for a link. On Windows
+    /// the open handle forbids that. Elsewhere nothing can, so what matters there is where the bytes go.
+    #[test]
+    fn once_the_file_is_open_it_cannot_be_exchanged_for_a_link() {
+        for mode in [Mode::Start, Mode::Resume] {
+            let mut s = Scene::new("held");
+            let target = s.users.join("a-book.epub");
+            if mode == Mode::Resume {
+                fs::write(&s.part, &s.f.data[..200_000]).unwrap();
+            }
+            s.settle();
+            let kept = Kept::of(&target);
+
+            let attempt = Arc::new(Mutex::new(None));
+            let mut attacked = Policy::loopback_for_tests();
+            attacked.after_open = Some({
+                let (part, target, folder, attempt) = (s.part.clone(), target.clone(), s.translation.join("partial"), attempt.clone());
+                Arc::new(move || {
+                    // Only where it is expected to fail: a folder that did move would take the test with it.
+                    let folder_moved = cfg!(windows) && fs::rename(&folder, folder.with_file_name("moved")).is_ok();
+                    let removed = fs::remove_file(&part).is_ok();
+                    let linked = removed && link_file(&part, &target);
+                    *attempt.lock().unwrap() = Some((folder_moved, removed, linked));
+                })
+            });
+            let result = run(&s.f, s.a, mode, &attacked, &no());
+            let (folder_moved, removed, linked) = attempt.lock().unwrap().expect("the download reached the point of writing");
+
+            // Whatever the attempt achieved, nothing of the user's was written to.
+            kept.assert_untouched();
+            s.assert_nothing_outside_changed();
+            if cfg!(windows) {
+                assert!(!removed && !folder_moved, "{mode:?}: the open file, or its folder, was taken from under the download");
+                result.unwrap_or_else(|e| panic!("{mode:?}: nothing could be exchanged, so the download finishes, but: {e}"));
+                s.assert_installed();
+            } else if linked {
+                // The bytes went to the file that had been proved, which no longer has a name; the link was
+                // then refused when the store came to move the download into place.
+                assert!(result.is_err(), "{mode:?}: a link was installed");
+                assert!(!s.f.store.installed_path(s.a).exists() && !s.f.store.record_path(s.a).exists());
+            }
+        }
+    }
+
+    /// A download that stops part-way — cancelled, or failing to write — leaves a plain file of the
+    /// store's own, and that file resumes and is verified. Both start over a link left at the name.
+    #[test]
+    fn a_cancel_or_a_failed_write_leaves_a_plain_partial_that_resumes_and_is_verified() {
+        for stopped_by in ["a cancel", "a failed write"] {
+            let mut s = Scene::new("interrupted");
+            let target = s.users.join("a-book.epub");
+            if !link_file(&s.part, &target) {
+                note("NOT TESTED (an interrupted download over a link): this account may not create a symbolic link to a file");
+            }
+            s.settle();
+            let kept = Kept::of(&target);
+
+            let kept_bytes = if stopped_by == "a cancel" {
+                let cancel = Arc::new(AtomicBool::new(false));
+                s.f.server.faults.lock().unwrap().cancel_when_past = Some((600_000, cancel.clone()));
+                let result = run(&s.f, s.a, Mode::Start, &Policy::loopback_for_tests(), &cancel);
+                s.f.server.faults.lock().unwrap().cancel_when_past = None;
+                match result {
+                    Err(DownloadError::Cancelled { kept_bytes }) => kept_bytes,
+                    other => panic!("expected a cancel, got {other:?}"),
+                }
+            } else {
+                let mut failing = Policy::loopback_for_tests();
+                failing.fault_write_after = Some(600_000);
+                match run(&s.f, s.a, Mode::Start, &failing, &no()) {
+                    Err(DownloadError::Io { kept_bytes, .. }) => kept_bytes,
+                    other => panic!("expected a disk error, got {other:?}"),
+                }
+            };
+
+            // What is left is a file of the store's own — not the link — holding the download's first bytes.
+            assert!(!is_link(&s.part), "{stopped_by}: the link is still at the name");
+            let on_disk = fs::read(&s.part).unwrap();
+            assert!(kept_bytes > 0 && kept_bytes < s.a.size, "{stopped_by}: kept {kept_bytes}");
+            assert_eq!(on_disk.len() as u64, kept_bytes, "{stopped_by}");
+            assert!(on_disk == s.f.data[..on_disk.len()], "{stopped_by}: the partial is a correct prefix");
+            assert_eq!(s.f.store.state(s.a).unwrap(), State::Interrupted { bytes: kept_bytes });
+            kept.assert_untouched();
+            s.assert_nothing_outside_changed();
+
+            // It resumes: only the missing bytes are fetched, and the whole file is checked before it is installed.
+            let before = settled(&s.f);
+            s.download(Mode::Resume).unwrap_or_else(|e| panic!("{stopped_by}: the resume runs, but: {e}"));
+            assert_eq!(served(&s.f) - before, s.a.size - kept_bytes, "{stopped_by}: the resume fetched only the missing bytes");
+            s.assert_installed();
+            kept.assert_untouched();
+            s.assert_nothing_outside_changed();
+        }
+    }
+
+    /// Clearing the name can fail. Then nothing is created, nothing is requested and nothing is written.
+    #[cfg(windows)]
+    #[test]
+    fn a_link_that_cannot_be_removed_stops_the_download_before_anything_is_written() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut s = Scene::new("stuck");
+        // The original defect created this file and wrote the download into it.
+        let target = s.users.join("not-there-yet.bin");
+        if !link_file(&s.part, &target) {
+            note("NOT TESTED (a link that cannot be removed): this account may not create a symbolic link to a file");
+            return;
+        }
+        s.settle();
+        // Something has the link itself open (FILE_FLAG_OPEN_REPARSE_POINT) and shares it for reading only,
+        // so it cannot be deleted.
+        let holder = fs::OpenOptions::new().read(true).share_mode(1).custom_flags(0x0020_0000).open(&s.part).unwrap();
+
+        let result = s.download(Mode::Start);
+        assert!(refused(&result), "{result:?}");
+        assert_eq!(s.requests(), 0);
+        assert!(is_link(&s.part) && !target.exists());
+        s.assert_nothing_outside_changed();
+
+        drop(holder);
+        s.download(Mode::Start).expect("with the link free to go, the download runs");
+        assert!(!target.exists());
+        s.assert_nothing_outside_changed();
+        s.assert_installed();
+    }
 }
 
 // ── integrity ───────────────────────────────────────────────────────────────────────────────────
@@ -544,6 +1122,147 @@ fn a_link_planted_in_the_root_cannot_redirect_a_removal() {
     assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
     assert_eq!(fs::read(outside.join(a.file_name)).unwrap(), b"the user's file");
     assert_eq!(fs::read(outside.join(RECORD_NAME)).unwrap(), b"the user's other file");
+}
+
+// ── the record ──────────────────────────────────────────────────────────────────────────────────
+
+/// Put a symbolic link to a FILE at `link`. On Windows that needs a privilege an ordinary account may
+/// not have, so this reports whether it could be done.
+fn try_link_file(link: &Path, target: &Path) -> bool {
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(target, link).is_ok();
+    #[cfg(not(windows))]
+    let made = std::os::unix::fs::symlink(target, link).is_ok();
+    made
+}
+
+/// A line that must be seen even when the test passes — a case that could not be run. The test harness
+/// hides what a passing test prints, so this goes to the error stream directly.
+fn note(line: &str) {
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stderr(), "{line}");
+}
+
+/// A file already in place with no record — what a crash between moving it there and recording it leaves.
+fn placed_without_a_record(tag: &str) -> (Fixture, &'static Artifact) {
+    let f = fixture(tag);
+    let a = artifact(&f.server, "/file", &f.data, tag);
+    fs::create_dir_all(f.store.artifact_dir(a)).unwrap();
+    fs::write(f.store.installed_path(a), &f.data).unwrap();
+    assert_eq!(f.store.state(a).unwrap(), State::Unverified);
+    (f, a)
+}
+
+fn temp_record(f: &Fixture, a: &Artifact) -> PathBuf {
+    f.store.artifact_dir(a).join(RECORD_TEMP_NAME)
+}
+
+#[test]
+fn the_record_is_never_written_through_a_link() {
+    let (f, a) = placed_without_a_record("recordlink");
+    let (first, second) = (f._tmp.0.join("first.txt"), f._tmp.0.join("second.txt"));
+    fs::write(&first, b"the user's file").unwrap();
+    fs::write(&second, b"another of the user's files").unwrap();
+    // Links wait at both names the record is written through: its temporary name, and its own.
+    if !try_link_file(&temp_record(&f, a), &first) || !try_link_file(&f.store.record_path(a), &second) {
+        note("NOT TESTED (the record written through a link): this account may not create symbolic links");
+        return;
+    }
+
+    assert_eq!(f.store.verify(a, &no()).unwrap(), State::Installed);
+    assert_eq!(fs::read(&first).unwrap(), b"the user's file");
+    assert_eq!(fs::read(&second).unwrap(), b"another of the user's files");
+    let meta = fs::symlink_metadata(f.store.record_path(a)).unwrap();
+    assert!(meta.is_file() && !meta.file_type().is_symlink(), "the record is a file of its own");
+    assert!(fs::symlink_metadata(temp_record(&f, a)).is_err(), "nothing is left under the temporary name");
+    assert_eq!(f.store.state(a).unwrap(), State::Installed);
+}
+
+#[test]
+fn a_download_does_not_write_its_record_through_a_link_either() {
+    let f = fixture("recordlinkdl");
+    let a = artifact(&f.server, "/file", &f.data, "recordlinkdl");
+    let victim = f._tmp.0.join("victim.txt");
+    fs::write(&victim, b"the user's file").unwrap();
+    // The link is waiting before the download starts.
+    fs::create_dir_all(f.store.artifact_dir(a)).unwrap();
+    if !try_link_file(&temp_record(&f, a), &victim) {
+        note("NOT TESTED (a download's record written through a link): this account may not create symbolic links");
+        return;
+    }
+
+    run(&f, a, Mode::Start, &Policy::loopback_for_tests(), &no()).unwrap();
+    assert_eq!(fs::read(&victim).unwrap(), b"the user's file");
+    assert_eq!(f.store.state(a).unwrap(), State::Installed);
+    assert!(fs::symlink_metadata(temp_record(&f, a)).is_err());
+}
+
+#[test]
+fn a_stale_temporary_record_is_replaced_and_never_read() {
+    let (f, a) = placed_without_a_record("staletemp");
+    // What a crash between writing the record and renaming it leaves — here holding something that must not
+    // be taken for a record.
+    fs::write(temp_record(&f, a), b"{ not the record }").unwrap();
+    assert_eq!(f.store.state(a).unwrap(), State::Unverified, "a temporary record is not a record");
+
+    assert_eq!(f.store.verify(a, &no()).unwrap(), State::Installed);
+    assert!(!temp_record(&f, a).exists());
+    let rec: InstalledRecord = serde_json::from_slice(&fs::read(f.store.record_path(a)).unwrap()).unwrap();
+    assert_eq!((rec.size, rec.sha256.as_str()), (a.size, a.sha256));
+}
+
+#[test]
+fn a_record_that_cannot_be_put_in_place_leaves_the_file_not_installed() {
+    let (f, a) = placed_without_a_record("norecord");
+    // The record's own name is held by something a file cannot replace.
+    fs::create_dir(f.store.record_path(a)).unwrap();
+
+    assert!(f.store.verify(a, &no()).is_err());
+    assert!(!matches!(f.store.state(a), Ok(State::Installed)));
+    assert!(fs::symlink_metadata(temp_record(&f, a)).is_err(), "nothing half-written is left behind");
+
+    // Once the obstacle is gone, the same file is hashed and recorded.
+    fs::remove_dir(f.store.record_path(a)).unwrap();
+    assert_eq!(f.store.verify(a, &no()).unwrap(), State::Installed);
+}
+
+#[test]
+fn a_temporary_name_that_cannot_be_cleared_stops_the_record_being_written() {
+    let (f, a) = placed_without_a_record("blockedtemp");
+    // A folder holds the temporary name. It is not the store's, so it is neither written into nor deleted.
+    let blocked = temp_record(&f, a);
+    fs::create_dir(&blocked).unwrap();
+    fs::write(blocked.join("inside.txt"), b"not the store's").unwrap();
+
+    assert!(f.store.verify(a, &no()).is_err());
+    assert_eq!(f.store.state(a).unwrap(), State::Unverified);
+    assert_eq!(fs::read(blocked.join("inside.txt")).unwrap(), b"not the store's");
+
+    let removal = f.store.remove(a).unwrap();
+    assert_eq!(removal.kept, vec![RECORD_TEMP_NAME.to_string()], "kept, and said to be kept");
+    assert_eq!(fs::read(blocked.join("inside.txt")).unwrap(), b"not the store's");
+}
+
+#[test]
+fn removal_clears_a_leftover_temporary_record_without_following_it() {
+    // A plain leftover is the store's own file: it goes, and the directory with it.
+    let (f, a) = placed_without_a_record("removetemp");
+    fs::write(temp_record(&f, a), b"left by a crash").unwrap();
+    let removal = f.store.remove(a).unwrap();
+    assert_eq!((removal.freed, removal.kept), (a.size + 15, Vec::<String>::new()));
+    assert!(!f.store.artifact_dir(a).exists());
+
+    // A link left there goes too — and what it points to stays.
+    let (f, a) = placed_without_a_record("removetemplink");
+    let victim = f._tmp.0.join("victim.txt");
+    fs::write(&victim, b"the user's file").unwrap();
+    if !try_link_file(&temp_record(&f, a), &victim) {
+        note("NOT TESTED (removing a link left under the temporary name): this account may not create symbolic links");
+        return;
+    }
+    let removal = f.store.remove(a).unwrap();
+    assert_eq!((removal.freed, removal.kept), (a.size, Vec::<String>::new()));
+    assert_eq!(fs::read(&victim).unwrap(), b"the user's file");
 }
 
 #[test]

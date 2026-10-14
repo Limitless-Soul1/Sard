@@ -24,6 +24,36 @@
 //!
 //! The hash, not the host, is what makes a file acceptable: the allow-list limits where Sard connects
 //! (which the privacy policy has to be able to state); the catalog's SHA-256 decides what is kept.
+//!
+//! ## The partial file is opened as itself, and proved to be the store's own
+//!
+//! Every byte a download writes goes to `partial/<id>.part`. A link left at that name must never be
+//! written through — it would put the downloaded bytes in some other file — and checking the path and
+//! then opening it is not enough, because the name can change in between. So:
+//!
+//! * **A new download** removes whatever has the name, as a NAME (which never follows a link), and then
+//!   creates the file new. Creation fails, rather than open anything, if something is there again.
+//! * **A resumed download** opens what is there without following a link.
+//! * **In both cases the open handle is then examined — not the path a second time.** It must be a plain
+//!   file, with no other name anywhere (a hard link would share its bytes with a file elsewhere), at
+//!   exactly the expected place. That one handle is the file whose bytes are hashed and the file the new
+//!   bytes are appended to.
+//! * On Windows the handle also keeps the file from being replaced, renamed or deleted, and the folders
+//!   above it from being renamed, for as long as the download holds it.
+//!
+//! What cannot be proved is refused with `DownloadError::UnsafePartial`, before anything is requested
+//! and before anything is written.
+//!
+//! Three limits remain:
+//!
+//! * Elsewhere than Windows, nothing can hold a file against being renamed, and a handle cannot be asked
+//!   where it is. The proof there is that the handle is the very file the name leads to, that the file
+//!   has one name, and that the path has no link in it. A folder redirected at the last moment can leave
+//!   an empty file where it led; nothing is written to it.
+//! * Once the download lets go of the file to move it into place, the store's check of that move is by
+//!   path again.
+//! * A file Windows has marked with a reparse point for some other reason — a cloud-sync placeholder,
+//!   say — is refused like a link. The translation directory is not somewhere that happens.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -69,7 +99,17 @@ pub struct Policy {
     space_probe: fn(&Path) -> Option<u64>,
     #[cfg(test)]
     pub(crate) fault_write_after: Option<u64>,
+    /// Run at the last moment before the partial file is created or opened: its name has been looked at
+    /// (and, for a new download, cleared). A test uses it to change what is there in between.
+    #[cfg(test)]
+    pub(crate) before_open: Option<TestHook>,
+    /// Run once the partial file is open and proved, before the first byte is asked for.
+    #[cfg(test)]
+    pub(crate) after_open: Option<TestHook>,
 }
+
+#[cfg(test)]
+pub(crate) type TestHook = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 impl Policy {
     pub fn production() -> Policy {
@@ -86,6 +126,10 @@ impl Policy {
             space_probe: available_space,
             #[cfg(test)]
             fault_write_after: None,
+            #[cfg(test)]
+            before_open: None,
+            #[cfg(test)]
+            after_open: None,
         }
     }
 
@@ -104,6 +148,8 @@ impl Policy {
             space_margin: 0,
             space_probe: |_| None,
             fault_write_after: None,
+            before_open: None,
+            after_open: None,
         }
     }
 
@@ -152,6 +198,12 @@ pub enum DownloadError {
     ChecksumMismatch { expected: String, actual: String },
     /// The partial download is longer than the file itself. It was deleted.
     OversizedPartial { bytes: u64 },
+    /// What has the unfinished download's name is not a plain file of the store's own — a link, a
+    /// folder, a file that also has a name somewhere else, or something in a folder that has been
+    /// redirected. Nothing was requested and nothing was written. Discarding the unfinished download
+    /// removes a link or an extra name without touching what it leads to; a folder there, or a
+    /// redirected folder above it, has to be put right by hand.
+    UnsafePartial { detail: String },
     Cancelled { kept_bytes: u64 },
     Io { kept_bytes: u64, detail: String },
 }
@@ -169,6 +221,7 @@ impl std::fmt::Display for DownloadError {
             Self::BadResponse { kept_bytes, detail } => write!(f, "unexpected server response after {kept_bytes} bytes: {detail}"),
             Self::ChecksumMismatch { expected, actual } => write!(f, "checksum mismatch: expected {expected}, got {actual}"),
             Self::OversizedPartial { bytes } => write!(f, "the unfinished download ({bytes} bytes) is larger than the file"),
+            Self::UnsafePartial { detail } => write!(f, "the unfinished download cannot be used safely: {detail}"),
             Self::Cancelled { kept_bytes } => write!(f, "cancelled after {kept_bytes} bytes"),
             Self::Io { kept_bytes, detail } => write!(f, "disk error after {kept_bytes} bytes: {detail}"),
         }
@@ -212,11 +265,242 @@ pub fn download(
     };
     let result = run(store, a, mode, policy, cancel, progress);
     // A download that failed before receiving a single byte leaves nothing behind: an empty partial
-    // file would otherwise present itself as an interrupted download waiting to be resumed.
-    if result.is_err() && matches!(store.partial_bytes(a), Ok(Some(0))) {
+    // file would otherwise present itself as an interrupted download waiting to be resumed. Only a
+    // plain, empty file is that. A link with the name is not this download's to clear: a refusal
+    // changes nothing.
+    if result.is_err() && matches!(named(&part), Ok(Named::File(0))) {
         let _ = store.discard_partial(a);
     }
     result
+}
+
+/// What has a name, looked at without following a link.
+enum Named {
+    Nothing,
+    /// A plain file, and its length.
+    File(u64),
+    Folder,
+    /// A link of any kind, or anything else that is neither a plain file nor a folder.
+    Other,
+}
+
+fn named(path: &Path) -> io::Result<Named> {
+    match fs::symlink_metadata(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Named::Nothing),
+        Err(e) => Err(e),
+        Ok(m) if m.file_type().is_file() => Ok(Named::File(m.len())),
+        Ok(m) if m.is_dir() => Ok(Named::Folder),
+        Ok(_) => Ok(Named::Other),
+    }
+}
+
+fn unsafe_partial(detail: impl Into<String>) -> DownloadError {
+    DownloadError::UnsafePartial { detail: detail.into() }
+}
+
+/// Create the partial file of a new download: a new file, never one that was already there, and never
+/// anything a link leads to.
+fn create_partial(part: &Path, policy: &Policy) -> Result<fs::File, DownloadError> {
+    #[cfg(not(test))]
+    let _ = policy;
+    // The folder it goes in must be the store's own. (The store resolved its root when it was opened,
+    // so a path that resolves to anything but itself has a link in it.)
+    let folder = part.parent().unwrap_or(part);
+    match fs::canonicalize(folder) {
+        Ok(resolved) if resolved == folder => {}
+        Ok(_) => return Err(unsafe_partial("the folder for unfinished downloads has been redirected")),
+        Err(e) => return Err(DownloadError::Io { kept_bytes: 0, detail: e.to_string() }),
+    }
+    match named(part).map_err(|e| DownloadError::Io { kept_bytes: 0, detail: e.to_string() })? {
+        Named::Nothing => {}
+        // An unfinished download is never started over on its own account.
+        Named::File(bytes) => return Err(DownloadError::PartialExists { bytes }),
+        // Not the store's: it never puts a folder there, and what is in one is not its to delete.
+        Named::Folder => return Err(unsafe_partial("a folder has its name")),
+        // A link, or something stranger: the NAME goes. What a link leads to is not touched.
+        Named::Other => remove_name(part).map_err(|e| unsafe_partial(format!("what has its name could not be removed: {e}")))?,
+    }
+    #[cfg(test)]
+    if let Some(hook) = &policy.before_open {
+        hook();
+    }
+    let file = open_new(part).map_err(|e| match e.kind() {
+        io::ErrorKind::AlreadyExists => unsafe_partial("something took its name while it was being created"),
+        _ => DownloadError::Io { kept_bytes: 0, detail: e.to_string() },
+    })?;
+    // The name has been dealt with; the folders above it could still have been redirected in the
+    // moment before the file was created. The handle says where the file really is.
+    match prove_own(&file, part) {
+        Ok(_) => Ok(file),
+        Err(why) => {
+            delete_created(file);
+            Err(unsafe_partial(why))
+        }
+    }
+}
+
+/// Open the partial file of an unfinished download, as itself, and prove it is the store's own. Returns
+/// the handle — the one that is hashed and appended to — and the file's length.
+fn open_partial_to_resume(part: &Path, policy: &Policy) -> Result<(fs::File, u64), DownloadError> {
+    #[cfg(not(test))]
+    let _ = policy;
+    let bytes = match named(part).map_err(|e| DownloadError::Io { kept_bytes: 0, detail: e.to_string() })? {
+        Named::Nothing => return Err(DownloadError::NothingToResume),
+        Named::Folder => return Err(unsafe_partial("a folder has its name")),
+        Named::Other => return Err(unsafe_partial("a link, or something else that is not a file, has its name")),
+        Named::File(bytes) => bytes,
+    };
+    #[cfg(test)]
+    if let Some(hook) = &policy.before_open {
+        hook();
+    }
+    // What was just looked at may no longer be what has the name. Nothing above is relied on: the file
+    // is opened without following a link, and everything is then read from the handle.
+    let file = match open_existing(part) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(DownloadError::NothingToResume),
+        Err(e) => return Err(DownloadError::Io { kept_bytes: bytes, detail: e.to_string() }),
+    };
+    let len = prove_own(&file, part).map_err(unsafe_partial)?;
+    Ok((file, len))
+}
+
+/// Remove whatever has this name — the name itself, never what a link there leads to.
+fn remove_name(path: &Path) -> io::Result<()> {
+    fs::remove_file(path).or_else(|_| fs::remove_dir(path))
+}
+
+/// Create `path` as a new file, or fail: nothing that already has the name is ever opened.
+fn open_new(path: &Path) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    // "New" is what `delete_created` relies on: a file this call returns did not exist before it.
+    options.append(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_WRITE, FILE_WRITE_DATA};
+        // What appending needs, and the right to delete — used only to take back a file that turns out
+        // to have been created somewhere it should not be.
+        options.access_mode((FILE_GENERIC_WRITE.0 & !FILE_WRITE_DATA.0) | DELETE.0);
+    }
+    hold(&mut options);
+    options.open(path)
+}
+
+fn open_existing(path: &Path) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true).append(true);
+    hold(&mut options);
+    options.open(path)
+}
+
+/// On Windows: open the name itself, never what a link there leads to, and let no one else write to,
+/// delete or rename the file while this handle is open. Reading it stays allowed.
+#[cfg(windows)]
+fn hold(options: &mut OpenOptions) {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows::Win32::Storage::FileSystem::{FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ};
+    options.share_mode(FILE_SHARE_READ.0).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0);
+}
+
+/// Elsewhere there is nothing to add: creating a file new never follows a link, and a file that is
+/// opened is proved afterwards to be the one that has the name.
+#[cfg(not(windows))]
+fn hold(_options: &mut OpenOptions) {}
+
+const NOT_A_PLAIN_FILE: &str = "it is a link or a folder, not a plain file";
+const HAS_ANOTHER_NAME: &str = "the file also has a name somewhere else";
+const NOT_IN_ITS_PLACE: &str = "it is not in the folder for unfinished downloads";
+
+/// Prove, from the open handle, that this is a plain file with no other name, at exactly `expected`.
+/// Returns its length.
+#[cfg(windows)]
+fn prove_own(file: &fs::File, expected: &Path) -> Result<u64, String> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, GetFinalPathNameByHandleW, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_NAME_NORMALIZED,
+    };
+    let handle = HANDLE(file.as_raw_handle());
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `handle` is open for as long as `file` is borrowed, and `info` is the structure the call fills.
+    unsafe { GetFileInformationByHandle(handle, &mut info) }.map_err(|e| e.to_string())?;
+    if info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY.0 | FILE_ATTRIBUTE_REPARSE_POINT.0) != 0 {
+        return Err(NOT_A_PLAIN_FILE.into());
+    }
+    if info.nNumberOfLinks != 1 {
+        return Err(HAS_ANOTHER_NAME.into());
+    }
+    // Where the file really is, in the same resolved form the store's root is kept in.
+    let mut name = vec![0u16; 512];
+    let actual = loop {
+        // SAFETY: the buffer is valid for its whole length, which is what the call is given.
+        let n = unsafe { GetFinalPathNameByHandleW(handle, &mut name, FILE_NAME_NORMALIZED) } as usize;
+        if n == 0 {
+            return Err(io::Error::last_os_error().to_string());
+        }
+        if n < name.len() {
+            break std::path::PathBuf::from(std::ffi::OsString::from_wide(&name[..n]));
+        }
+        name.resize(n + 1, 0);
+    };
+    if actual != expected {
+        return Err(NOT_IN_ITS_PLACE.into());
+    }
+    Ok((u64::from(info.nFileSizeHigh) << 32) | u64::from(info.nFileSizeLow))
+}
+
+/// Prove that this handle is the very file `expected` names: a plain file, the same one, with no other
+/// name, at a path with no link in it. Returns its length.
+#[cfg(unix)]
+fn prove_own(file: &fs::File, expected: &Path) -> Result<u64, String> {
+    use std::os::unix::fs::MetadataExt;
+    let held = file.metadata().map_err(|e| e.to_string())?;
+    let at_the_name = fs::symlink_metadata(expected).map_err(|e| e.to_string())?;
+    if !held.file_type().is_file() || !at_the_name.file_type().is_file() {
+        return Err(NOT_A_PLAIN_FILE.into());
+    }
+    if (held.dev(), held.ino()) != (at_the_name.dev(), at_the_name.ino()) {
+        return Err("it is not the file that has its name".into());
+    }
+    if held.nlink() != 1 {
+        return Err(HAS_ANOTHER_NAME.into());
+    }
+    if !fs::canonicalize(expected).is_ok_and(|resolved| resolved == expected) {
+        return Err(NOT_IN_ITS_PLACE.into());
+    }
+    Ok(held.len())
+}
+
+/// Nothing is known here about how to prove it, so nothing is accepted.
+#[cfg(not(any(windows, unix)))]
+fn prove_own(_file: &fs::File, _expected: &Path) -> Result<u64, String> {
+    Err("unfinished downloads cannot be checked on this platform".into())
+}
+
+/// Take back a file this download created a moment ago (`open_new`) and found to be somewhere it should
+/// not be. It is empty: nothing has been written to it. Deleted through its own handle where that is
+/// possible, so that no path — which is what cannot be trusted at this point — is used to find it.
+fn delete_created(file: fs::File) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO};
+        let info = FILE_DISPOSITION_INFO { DeleteFile: true };
+        // SAFETY: the handle is open, with the right to delete; `info` is the structure this class takes.
+        let _ = unsafe {
+            SetFileInformationByHandle(
+                HANDLE(file.as_raw_handle()),
+                FileDispositionInfo,
+                &info as *const FILE_DISPOSITION_INFO as *const core::ffi::c_void,
+                std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            )
+        };
+    }
+    drop(file);
 }
 
 fn run(
@@ -232,14 +516,21 @@ fn run(
     if store.installed_path(a).exists() || store.record_path(a).exists() {
         return Err(DownloadError::AlreadyPresent);
     }
-    let existing = store.partial_bytes(a).map_err(io_err(0))?;
-    match (mode, existing) {
-        (Mode::Start, Some(bytes)) => return Err(DownloadError::PartialExists { bytes }),
-        (Mode::Resume, None) => return Err(DownloadError::NothingToResume),
-        _ => {}
-    }
-    let mut have = existing.unwrap_or(0);
+    // An unfinished download that is being resumed is opened here, once, as itself. This handle is what
+    // is measured, hashed and appended to: nothing below goes back to the path.
+    let resumed = match mode {
+        Mode::Start => {
+            if let Named::File(bytes) = named(&part).map_err(io_err(0))? {
+                return Err(DownloadError::PartialExists { bytes });
+            }
+            None
+        }
+        Mode::Resume => Some(open_partial_to_resume(&part, policy)?),
+    };
+    let mut have = resumed.as_ref().map_or(0, |(_, bytes)| *bytes);
     if have > a.size {
+        // It has to be let go of before it can be deleted.
+        drop(resumed);
         store.discard_partial(a).map_err(io_err(0))?;
         return Err(DownloadError::OversizedPartial { bytes: have });
     }
@@ -258,21 +549,33 @@ fn run(
 
     // The bytes already on disk are the only resume state; hash them again rather than trust anything.
     let mut hasher = Sha256::new();
-    if have > 0 {
-        let mut f = fs::File::open(&part).map_err(io_err(have))?;
-        let mut buf = vec![0u8; 8 << 20];
-        loop {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(DownloadError::Cancelled { kept_bytes: have });
+    let mut out = match resumed {
+        Some((mut file, _)) => {
+            let mut buf = vec![0u8; 8 << 20];
+            let mut hashed = 0u64;
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(DownloadError::Cancelled { kept_bytes: have });
+                }
+                let n = file.read(&mut buf).map_err(io_err(have))?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+                hashed += n as u64;
             }
-            let n = f.read(&mut buf).map_err(io_err(have))?;
-            if n == 0 {
-                break;
+            // The hash has to cover exactly the bytes the next request continues from.
+            if hashed != have {
+                return Err(DownloadError::Io { kept_bytes: hashed, detail: "the unfinished download changed while it was being read".into() });
             }
-            hasher.update(&buf[..n]);
+            file
         }
+        None => create_partial(&part, policy)?,
+    };
+    #[cfg(test)]
+    if let Some(hook) = &policy.after_open {
+        hook();
     }
-    let mut out = OpenOptions::new().create(true).append(true).open(&part).map_err(io_err(have))?;
     progress(Progress { done: have, total: a.size });
 
     let agent = agent(policy);

@@ -30,8 +30,8 @@
 //! reported. Every path is resolved and checked to lie inside the root before anything is deleted, so
 //! a link planted inside the root cannot redirect a removal to the user's files.
 
-use std::fs;
-use std::io::{self, Read};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -42,6 +42,8 @@ use super::catalog::{Artifact, Kind};
 
 /// The record written next to an installed file.
 pub const RECORD_NAME: &str = "installed.json";
+/// The name the record is written under first, and renamed from. Nothing is ever read from it.
+pub const RECORD_TEMP_NAME: &str = "installed.json.tmp";
 
 /// The translation root under the local (non-roaming) application-data directory.
 pub fn default_root(local_app_data: &Path) -> PathBuf {
@@ -123,6 +125,10 @@ impl Store {
         self.artifact_dir(a).join(RECORD_NAME)
     }
 
+    fn record_temp_path(&self, a: &Artifact) -> PathBuf {
+        self.artifact_dir(a).join(RECORD_TEMP_NAME)
+    }
+
     pub fn partial_path(&self, a: &Artifact) -> PathBuf {
         self.root.join("partial").join(format!("{}.part", a.id))
     }
@@ -200,8 +206,26 @@ impl Store {
     }
 
     /// Delete an unfinished download. Returns the bytes freed.
+    ///
+    /// A link left at its name is removed as a NAME — what it leads to is not touched, and nothing is
+    /// freed. A folder there is not the store's, and is refused.
     pub fn discard_partial(&self, a: &Artifact) -> io::Result<u64> {
-        self.delete_owned_file(&self.partial_path(a))
+        let path = self.partial_path(a);
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(e),
+        };
+        if meta.file_type().is_file() {
+            return self.delete_owned_file(&path);
+        }
+        if meta.is_dir() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{} is a folder", path.display())));
+        }
+        // The folder the link sits in must be the store's own; the link itself is never followed.
+        self.guard_existing(path.parent().unwrap_or(&path))?;
+        fs::remove_file(&path).or_else(|_| fs::remove_dir(&path))?;
+        Ok(0)
     }
 
     /// Remove an artifact: its file, its record and any unfinished download. Nothing else.
@@ -214,6 +238,17 @@ impl Store {
         self.guard_existing(&dir)?;
         freed += self.delete_owned_file(&self.installed_path(a))?;
         freed += self.delete_owned_file(&self.record_path(a))?;
+        // The name the record is written under first is the store's too. It is removed as a NAME, so a link
+        // left there goes without its target being touched; a folder there is not the store's, and is kept.
+        let tmp = self.record_temp_path(a);
+        if let Ok(meta) = fs::symlink_metadata(&tmp) {
+            if !meta.is_dir() {
+                remove_name(&tmp)?;
+                if meta.is_file() {
+                    freed += meta.len();
+                }
+            }
+        }
         let mut kept: Vec<String> = fs::read_dir(&dir)?
             .filter_map(|e| e.ok())
             .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -237,6 +272,13 @@ impl Store {
         self.write_record(a, source)
     }
 
+    /// Write the record: under a temporary name first, then renamed into place.
+    ///
+    /// Neither step goes through a link. Whatever already has the temporary name is removed as a NAME (a
+    /// link is not followed); the file is then created new, which fails rather than open anything that has
+    /// reappeared there; and the rename replaces the record's own name, not what a link there might point
+    /// to. If the record cannot be put in place, nothing is left under the temporary name — and the file
+    /// is what it was without a record: not installed.
     fn write_record(&self, a: &Artifact, source: &str) -> io::Result<()> {
         let record = InstalledRecord {
             id: a.id.to_string(),
@@ -249,10 +291,15 @@ impl Store {
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
         };
+        let bytes = serde_json::to_vec_pretty(&record).map_err(io::Error::other)?;
         let path = self.record_path(a);
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_vec_pretty(&record).map_err(io::Error::other)?)?;
-        fs::rename(&tmp, &path)
+        let tmp = self.record_temp_path(a);
+        remove_name(&tmp)?;
+        let placed = write_new(&tmp, &bytes).and_then(|()| fs::rename(&tmp, &path));
+        if placed.is_err() {
+            let _ = remove_name(&tmp);
+        }
+        placed
     }
 
     /// Delete one file this store owns, after checking that it really lies inside the root. A missing
@@ -273,7 +320,7 @@ impl Store {
 
     /// Refuse any existing path that does not resolve to a location strictly inside the root — which is
     /// what a symbolic link or a junction planted in the root would try to arrange.
-    fn guard_existing(&self, path: &Path) -> io::Result<()> {
+    pub(crate) fn guard_existing(&self, path: &Path) -> io::Result<()> {
         let resolved = fs::canonicalize(path)?;
         if resolved != self.root && resolved.starts_with(&self.root) {
             Ok(())
@@ -284,6 +331,23 @@ impl Store {
             ))
         }
     }
+}
+
+/// Remove one name from a directory. Removing a name never follows a link: if the name is a link, the link
+/// goes and its target is untouched. A name that is not there is not an error.
+fn remove_name(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Create a file that must not already exist, write all of `bytes` to it, and flush it to disk.
+fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 /// SHA-256 of a whole file, read in 8 MiB blocks. `None` if cancelled.
@@ -308,4 +372,15 @@ pub(crate) fn hash_file(path: &Path, cancel: &AtomicBool) -> io::Result<Option<(
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `n` bytes from the operating system's secure random source (through the aws-lc-rs provider Sard already
+/// uses for TLS), as lowercase hex.
+pub(crate) fn random_hex(n: usize) -> io::Result<String> {
+    let mut buf = vec![0u8; n];
+    rustls::crypto::aws_lc_rs::default_provider()
+        .secure_random
+        .fill(&mut buf)
+        .map_err(|_| io::Error::other("the secure random source failed"))?;
+    Ok(hex(&buf))
 }

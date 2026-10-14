@@ -35,10 +35,10 @@ pub mod slot;
 pub mod store;
 
 #[cfg(test)]
+mod download_server_tests;
+#[cfg(test)]
 mod engine_tests;
 #[cfg(test)]
 mod install_tests;
-#[cfg(test)]
-mod test_server;
 #[cfg(test)]
 mod tests;

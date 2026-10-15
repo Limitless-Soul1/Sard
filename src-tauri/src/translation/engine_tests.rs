@@ -317,6 +317,9 @@ mod process {
     const KEY_FILE: &str = "SARD_FAKE_ENGINE_KEY_FILE";
     /// Handle values from the host, separated by commas: the fake reports what each is in its own process.
     const HANDLES: &str = "SARD_FAKE_ENGINE_HANDLES";
+    /// A file the fake writes its process id (and its child's, if it has one) to, for a test that must check they
+    /// end.
+    const PID_FILE: &str = "SARD_FAKE_ENGINE_PID_FILE";
     const HOST: &str = "SARD_ENGINE_HOST";
     const HOST_DIR: &str = "SARD_ENGINE_HOST_DIR";
     /// `CREATE_NO_WINDOW`: no helper process ever opens a console window on the screen.
@@ -365,6 +368,9 @@ mod process {
             for (name, _) in std::env::vars_os() {
                 println!("FAKE env {}", name.to_string_lossy());
             }
+            if args.first().map(String::as_str) == Some("--list-devices") {
+                devices(mode);
+            }
             if let Ok(path) = std::env::var(KEY_FILE) {
                 let _ = fs::write(path, &key);
             }
@@ -386,22 +392,7 @@ mod process {
             if args.len() < SECURITY_FLAGS.len() || args[args.len() - SECURITY_FLAGS.len()..] != *SECURITY_FLAGS {
                 violations.push("the security flags are not the last arguments".to_string());
             }
-            let here = std::env::current_dir().ok().and_then(|d| fs::canonicalize(d).ok());
-            let beside = std::env::current_exe().ok().and_then(|e| fs::canonicalize(e.parent()?).ok());
-            if here.is_none() || here != beside {
-                violations.push("the working directory is not the engine's own directory".to_string());
-            }
-            // Started windowless, a process has a console of its own with no window. Without that it either
-            // gets a new console WITH a window (a parent without a console, as Sard is) or shares its parent's
-            // (a parent with one, as the test runner is). Only the second can be produced here without
-            // putting a window on the screen, so both are checked.
-            let mut sharing = [0u32; 64];
-            // SAFETY: the first takes no arguments; the second writes at most `len` ids into the buffer.
-            let (window, count) = unsafe { (GetConsoleWindow(), GetConsoleProcessList(sharing.as_mut_ptr(), sharing.len() as u32) as usize) };
-            let shared = count > sharing.len() || sharing[..count].iter().any(|pid| *pid != std::process::id());
-            if !window.is_null() || shared {
-                violations.push("the engine has a console window, or shares its parent's console".to_string());
-            }
+            violations.extend(placement());
             if !violations.is_empty() {
                 for v in violations {
                     println!("FAKE violation: {v}");
@@ -518,6 +509,96 @@ mod process {
             loop {
                 std::thread::sleep(Duration::from_secs(1));
             }
+        }
+
+        /// Where and how every engine process must run: in its own directory, and with a console of its own that
+        /// has no window.
+        fn placement() -> Vec<String> {
+            let mut violations = Vec::new();
+            let here = std::env::current_dir().ok().and_then(|d| fs::canonicalize(d).ok());
+            let beside = std::env::current_exe().ok().and_then(|e| fs::canonicalize(e.parent()?).ok());
+            if here.is_none() || here != beside {
+                violations.push("the working directory is not the engine's own directory".to_string());
+            }
+            // Started windowless, a process has a console of its own with no window. Without that it either
+            // gets a new console WITH a window (a parent without a console, as Sard is) or shares its parent's
+            // (a parent with one, as the test runner is). Only the second can be produced here without
+            // putting a window on the screen, so both are checked.
+            let mut sharing = [0u32; 64];
+            // SAFETY: the first takes no arguments; the second writes at most `len` ids into the buffer.
+            let (window, count) = unsafe { (GetConsoleWindow(), GetConsoleProcessList(sharing.as_mut_ptr(), sharing.len() as u32) as usize) };
+            let shared = count > sharing.len() || sharing[..count].iter().any(|pid| *pid != std::process::id());
+            if !window.is_null() || shared {
+                violations.push("the engine has a console window, or shares its parent's console".to_string());
+            }
+            violations
+        }
+
+        /// The fake's `--list-devices`. A violation of how the listing must be run ends it at once with exit code 3,
+        /// so every listing a test sees succeed has passed these checks.
+        fn devices(mode: &str) -> ! {
+            let mut violations = placement();
+            // Only the allowed variables, the fixed PATH and the test's own switches — no session key, nothing
+            // else of the test runner's environment.
+            for (name, _) in std::env::vars_os() {
+                let name = name.to_string_lossy();
+                let allowed = PASSED_ENV.iter().chain(&["PATH", MODE, PID_FILE]).any(|p| p.eq_ignore_ascii_case(&name));
+                if !allowed {
+                    violations.push(format!("the variable {name} reached the engine"));
+                }
+            }
+            if !violations.is_empty() {
+                for v in violations {
+                    println!("FAKE violation: {v}");
+                }
+                std::process::exit(3);
+            }
+            // That it ran at all (a mode with a child adds the child's id below).
+            if let Ok(path) = std::env::var(PID_FILE) {
+                let _ = fs::write(path, std::process::id().to_string());
+            }
+            let header = "Available devices:";
+            match mode {
+                "devices_one" => println!("{header}\n  Vulkan0: Test GPU (8192 MiB, 8000 MiB free)"),
+                "devices_none" => println!("{header}"),
+                "devices_two" => println!("{header}\n  Vulkan0: Test GPU (8192 MiB, 8000 MiB free)\n  Vulkan1: Other GPU (4096 MiB, 4000 MiB free)"),
+                "devices_garbage" => println!("error: something went wrong"),
+                "devices_malformed" => println!("{header}\n  Vulkan0 Test GPU"),
+                "devices_duplicate" => println!("{header}\n  Vulkan0: Test GPU (8192 MiB, 8000 MiB free)\n  Vulkan0: Other GPU (4096 MiB, 4000 MiB free)"),
+                // Well formed, and far longer than any real list: only the size limit refuses it.
+                "devices_flood" => {
+                    println!("{header}");
+                    for i in 0..3000 {
+                        println!("  Vulkan{i}: Test GPU (8192 MiB, 8000 MiB free)");
+                    }
+                }
+                "devices_exit" => {
+                    println!("{header}\n  Vulkan0: Test GPU (8192 MiB, 8000 MiB free)");
+                    std::process::exit(1);
+                }
+                // What Windows ends a process with when it reads memory it must not.
+                "devices_crash" => std::process::exit(0xC000_0005u32 as i32),
+                "devices_hang" => {
+                    // Left running on purpose: the test checks that giving up on the listing ends this too.
+                    #[allow(clippy::zombie_processes)]
+                    let child = Command::new(std::env::current_exe().unwrap())
+                        .arg(FAKE_ENTRY)
+                        .args(HARNESS)
+                        .env(MODE, "sleeper")
+                        .creation_flags(NO_WINDOW)
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()
+                        .unwrap();
+                    if let Ok(path) = std::env::var(PID_FILE) {
+                        let _ = fs::write(path, format!("{} {}", std::process::id(), child.id()));
+                    }
+                    idle();
+                }
+                _ => std::process::exit(5),
+            }
+            std::process::exit(0);
         }
 
         fn bind_ipv6_loopback() -> TcpListener {
@@ -1359,6 +1440,10 @@ mod process {
         let dir = PathBuf::from(std::env::var_os(HOST_DIR).unwrap());
         // The directory belongs to the test that started this process, which removes it afterwards.
         let f = std::mem::ManuallyDrop::new(engine_fixture_at(TempDir(dir), "host"));
+        if mode == "list" {
+            println!("HOST listed {:?}", EngineManager::new(config("devices_one")).list_devices(&f.fx.store, f.fx.spec));
+            std::process::exit(0);
+        }
         let mut config = config("normal");
         config.hooks.no_job = mode == "outlive";
         let manager = std::mem::ManuallyDrop::new(EngineManager::new(config));
@@ -1503,5 +1588,144 @@ mod process {
             matches!(proxy.accept(), Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock),
             "a request to the engine — which carries its key — was sent to the proxy"
         );
+    }
+
+    // ---- The engine's list of GPUs ----
+
+    use super::super::hardware::EngineDevice;
+
+    fn gpu(name: &str, description: &str) -> EngineDevice {
+        EngineDevice { name: name.into(), description: description.into() }
+    }
+
+    /// List the fake engine's GPUs with `config`, and check that nothing was left running and the slot is free.
+    fn listing(f: &EngineFixture, config: EngineConfig) -> Result<Vec<EngineDevice>, EngineError> {
+        let result = EngineManager::new(config).list_devices(&f.fx.store, f.fx.spec);
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("a listing gives the slot back"));
+        result
+    }
+
+    #[test]
+    fn the_engine_lists_its_gpus() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("list_ok");
+        assert_eq!(listing(&f, config("devices_one")), Ok(vec![gpu("Vulkan0", "Test GPU")]));
+        assert_eq!(listing(&f, config("devices_none")), Ok(vec![]));
+        assert_eq!(listing(&f, config("devices_two")), Ok(vec![gpu("Vulkan0", "Test GPU"), gpu("Vulkan1", "Other GPU")]));
+    }
+
+    #[test]
+    fn a_device_list_that_is_not_had_in_full_is_refused() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("list_bad");
+        for mode in ["devices_garbage", "devices_malformed", "devices_duplicate", "devices_flood", "devices_exit", "devices_crash"] {
+            let result = listing(&f, config(mode));
+            assert!(matches!(result, Err(EngineError::DeviceListFailed(_))), "{mode}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn a_listing_that_never_answers_is_given_up_and_leaves_nothing_running() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("list_hang");
+        let pids = f.fx.tmp.0.join("pids.txt");
+        let mut c = config("devices_hang");
+        c.startup_timeout = Duration::from_secs(5);
+        c.hooks.extra_env.push((PID_FILE.into(), pids.to_string_lossy().into_owned()));
+        let t0 = Instant::now();
+        let result = EngineManager::new(c).list_devices(&f.fx.store, f.fx.spec);
+        let took = t0.elapsed();
+        assert!(matches!(result, Err(EngineError::DeviceListFailed(ref why)) if why.contains("no answer")), "{result:?}");
+        assert!(took >= Duration::from_secs(5) && took < Duration::from_secs(20), "{took:?}");
+        // The fake and the child it started, both inside the listing's job.
+        let ids = fs::read_to_string(&pids).expect("the fake wrote its process ids");
+        let ids: Vec<u32> = ids.split_whitespace().map(|id| id.parse().unwrap()).collect();
+        assert_eq!(ids.len(), 2, "{ids:?}");
+        for id in ids {
+            assert!(Watched::open(id).is_none_or(|w| w.gone_within(Duration::from_secs(3))), "process {id} outlived the listing");
+        }
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("a listing that was given up gives the slot back"));
+    }
+
+    #[test]
+    fn only_the_verified_engine_is_ever_listed() {
+        let _serial = serial_for_tests();
+        // Not installed.
+        let gone = engine_fixture("list_removed");
+        install::remove(&gone.fx.store, gone.fx.spec).unwrap();
+        assert!(matches!(listing(&gone, config("devices_one")), Err(EngineError::EngineNotInstalled(_))));
+        // One of its files changed after it was installed.
+        let changed = engine_fixture("list_changed");
+        fs::write(install::engine_dir(&changed.fx.store, changed.fx.spec).join("LICENSE-LLVM-OpenMP"), b"changed").unwrap();
+        assert!(matches!(listing(&changed, config("devices_one")), Err(EngineError::EngineNotInstalled(_))));
+        // A file added beside it, which ggml would load as a backend.
+        let added = engine_fixture("list_added");
+        fs::write(install::engine_dir(&added.fx.store, added.fx.spec).join("ggml-extra.dll"), b"not part of the engine").unwrap();
+        assert!(matches!(listing(&added, config("devices_one")), Err(EngineError::EngineNotInstalled(_))));
+    }
+
+    #[test]
+    fn a_listing_needs_the_slot_and_the_runtime_a_start_needs() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("list_slot");
+        {
+            let _installing = slot::claim(Holder::Install).unwrap();
+            assert_eq!(EngineManager::new(config("devices_one")).list_devices(&f.fx.store, f.fx.spec), Err(EngineError::AlreadyActive));
+        }
+        // While this manager's own engine runs.
+        let manager = EngineManager::new(config("normal"));
+        start(&f, &manager).unwrap();
+        assert_eq!(manager.list_devices(&f.fx.store, f.fx.spec), Err(EngineError::AlreadyActive));
+        manager.stop().unwrap();
+        // A Visual C++ runtime too old for the engine: nothing is run, as with a start. (The stand-in's spec accepts
+        // any runtime of the 14 family; this one is taken to be older than that.)
+        let ran = f.fx.tmp.0.join("ran.txt");
+        let mut old = config("devices_one");
+        old.hooks.runtime_version = Some([13, 0, 0, 0]);
+        old.hooks.extra_env.push((PID_FILE.into(), ran.to_string_lossy().into_owned()));
+        assert_eq!(
+            listing(&f, old),
+            Err(EngineError::VcRuntimeTooOld { file: "MSVCP140.dll".into(), found: Some("13.0.0.0".into()), needed: "14.0".into() })
+        );
+        assert!(!ran.exists(), "the engine was run against a runtime known to be too old");
+        // The control: with a suitable runtime the same listing runs, and says so.
+        let mut fine = config("devices_one");
+        fine.hooks.extra_env.push((PID_FILE.into(), ran.to_string_lossy().into_owned()));
+        assert!(listing(&f, fine).is_ok());
+        assert!(ran.exists(), "the control did not run");
+    }
+
+    #[test]
+    fn a_listing_gets_no_key_and_nothing_else_of_the_environment() {
+        let _serial = serial_for_tests();
+        // The fake refuses — exit code 3 — any variable but the allowed ones, a working directory that is not its
+        // own, and a console window: a listing that succeeds was run as it must be.
+        let f = engine_fixture("list_env");
+        assert!(listing(&f, config("devices_one")).is_ok());
+        // The control: a variable that does reach it is refused.
+        let mut leaky = config("devices_one");
+        leaky.hooks.extra_env.push(("LLAMA_ARG_TOOLS".into(), "all".into()));
+        let result = listing(&f, leaky);
+        assert!(matches!(result, Err(EngineError::DeviceListFailed(ref why)) if why.contains("exit code Some(3)")), "{result:?}");
+    }
+
+    #[test]
+    fn nothing_in_the_hosts_environment_reaches_a_listing() {
+        let _serial = serial_for_tests();
+        let hostile = [
+            ("LLAMA_ARG_TOOLS", "all"),
+            ("LLAMA_API_KEY", "chosen-by-someone-else"),
+            ("GGML_VK_VISIBLE_DEVICES", "7"),
+            ("VK_ICD_FILENAMES", "icd.json"),
+            ("VK_ADD_LAYER_PATH", "layers"),
+            ("OMP_NUM_THREADS", "64"),
+            ("HTTP_PROXY", "http://127.0.0.1:9"),
+        ];
+        let host = spawn_host("list", &hostile);
+        let mut seen = Vec::new();
+        let listed = host.wait_line("HOST listed ", &mut seen);
+        assert_eq!(listed, r#"Ok([EngineDevice { name: "Vulkan0", description: "Test GPU" }])"#, "{seen:#?}");
     }
 }

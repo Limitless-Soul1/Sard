@@ -330,7 +330,7 @@ fn create_partial(part: &Path, policy: &Policy) -> Result<fs::File, DownloadErro
     })?;
     // The name has been dealt with; the folders above it could still have been redirected in the
     // moment before the file was created. The handle says where the file really is.
-    match prove_own(&file, part) {
+    match prove_own(&file, part, PARTIAL_PLACE) {
         Ok(_) => Ok(file),
         Err(why) => {
             delete_created(file);
@@ -361,7 +361,7 @@ fn open_partial_to_resume(part: &Path, policy: &Policy) -> Result<(fs::File, u64
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(DownloadError::NothingToResume),
         Err(e) => return Err(DownloadError::Io { kept_bytes: bytes, detail: e.to_string() }),
     };
-    let len = prove_own(&file, part).map_err(unsafe_partial)?;
+    let len = prove_own(&file, part, PARTIAL_PLACE).map_err(unsafe_partial)?;
     Ok((file, len))
 }
 
@@ -410,12 +410,18 @@ fn hold(_options: &mut OpenOptions) {}
 
 const NOT_A_PLAIN_FILE: &str = "it is a link or a folder, not a plain file";
 const HAS_ANOTHER_NAME: &str = "the file also has a name somewhere else";
-const NOT_IN_ITS_PLACE: &str = "it is not in the folder for unfinished downloads";
+/// Where an unfinished download must be, as `prove_own` names it when it is not there.
+const PARTIAL_PLACE: &str = "the folder for unfinished downloads";
 
-/// Prove, from the open handle, that this is a plain file with no other name, at exactly `expected`.
-/// Returns its length.
+fn not_in_its_place(place: &str) -> String {
+    format!("it is not in {place}")
+}
+
+/// Prove, from the open handle, that this is a plain file with no other name, at exactly `expected` — which
+/// is in `place`, as the reason names it otherwise. Returns its length. (Also how the engine's launch proves
+/// the model it holds.)
 #[cfg(windows)]
-fn prove_own(file: &fs::File, expected: &Path) -> Result<u64, String> {
+pub(crate) fn prove_own(file: &fs::File, expected: &Path, place: &str) -> Result<u64, String> {
     use std::os::windows::ffi::OsStringExt;
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::HANDLE;
@@ -447,7 +453,7 @@ fn prove_own(file: &fs::File, expected: &Path) -> Result<u64, String> {
         name.resize(n + 1, 0);
     };
     if actual != expected {
-        return Err(NOT_IN_ITS_PLACE.into());
+        return Err(not_in_its_place(place));
     }
     Ok((u64::from(info.nFileSizeHigh) << 32) | u64::from(info.nFileSizeLow))
 }
@@ -455,7 +461,7 @@ fn prove_own(file: &fs::File, expected: &Path) -> Result<u64, String> {
 /// Prove that this handle is the very file `expected` names: a plain file, the same one, with no other
 /// name, at a path with no link in it. Returns its length.
 #[cfg(unix)]
-fn prove_own(file: &fs::File, expected: &Path) -> Result<u64, String> {
+pub(crate) fn prove_own(file: &fs::File, expected: &Path, place: &str) -> Result<u64, String> {
     use std::os::unix::fs::MetadataExt;
     let held = file.metadata().map_err(|e| e.to_string())?;
     let at_the_name = fs::symlink_metadata(expected).map_err(|e| e.to_string())?;
@@ -469,14 +475,14 @@ fn prove_own(file: &fs::File, expected: &Path) -> Result<u64, String> {
         return Err(HAS_ANOTHER_NAME.into());
     }
     if !fs::canonicalize(expected).is_ok_and(|resolved| resolved == expected) {
-        return Err(NOT_IN_ITS_PLACE.into());
+        return Err(not_in_its_place(place));
     }
     Ok(held.len())
 }
 
 /// Nothing is known here about how to prove it, so nothing is accepted.
 #[cfg(not(any(windows, unix)))]
-fn prove_own(_file: &fs::File, _expected: &Path) -> Result<u64, String> {
+pub(crate) fn prove_own(_file: &fs::File, _expected: &Path, _place: &str) -> Result<u64, String> {
     Err("unfinished downloads cannot be checked on this platform".into())
 }
 

@@ -8,7 +8,11 @@
 //! 1. Takes the process-wide engine slot: one engine at a time, never during an installation.
 //! 2. Re-verifies the installed engine (`install::verify`: the record, the exact file set, no links, every
 //!    SHA-256) and keeps every file held open, so that none can be changed or replaced from then until the
-//!    engine has exited. Checks that the model is installed, and that the Visual C++ runtime the engine needs
+//!    engine has exited. Checks that the model is installed, and holds it the same way: opened as itself,
+//!    proved from that handle to be a plain file with no other name, exactly where the store keeps it and of
+//!    its size — and from then until the engine has exited, no other handle can open it for writing, delete
+//!    it, or rename it or a folder above it. A model that some program already has open for writing cannot
+//!    be held, and nothing is started (`ModelNotHeld`). Checks that the Visual C++ runtime the engine needs
 //!    is present and recent enough.
 //! 3. Starts `llama-server.exe` from its own directory, which is also its working directory: ggml loads backend
 //!    libraries from both. The process is started
@@ -65,8 +69,13 @@
 //! it is listed so that nothing above is read as covering it.
 //!
 //! * **The model's contents.** The model was hashed in full when its download was verified. At launch its
-//!   record, its size and its place are checked. Its bytes are not hashed again, and it is not held open the
-//!   way the engine's own files are: a file of the same size put in its place afterwards is loaded.
+//!   record, its size and its place are checked, and from then on it is held, so it cannot change while the
+//!   engine may read it. Its bytes are not hashed again: a file of the same size put in its place while Sard
+//!   was not holding it — before the launch — is loaded.
+//! * **What the engine does with the model.** Holding it denies other handles writing, deleting and
+//!   renaming. That the real engine reads its model while held this way is INFERRED — it opens it for reading
+//!   only, as it does the engine files it was seen to load while they were held — and was shown with the
+//!   stand-in engine, not the real one.
 //! * **A file that comes and goes.** The engine's directory is checked before the process runs its first
 //!   instruction and again once it has loaded everything. A file added after the first check and removed
 //!   before the second is not seen.
@@ -202,6 +211,9 @@ pub enum EngineError {
     AlreadyActive,
     EngineNotInstalled(String),
     ModelNotInstalled,
+    /// The model could not be held for the session — another program has it open for writing, or it is not a
+    /// plain file with one name where the store keeps it — so nothing was started.
+    ModelNotHeld(String),
     NoLaunchProfile,
     InvalidExecution(String),
     MissingVcRuntime(Vec<String>),
@@ -239,6 +251,7 @@ impl std::fmt::Display for EngineError {
             Self::AlreadyActive => write!(f, "the translation engine is already in use"),
             Self::EngineNotInstalled(why) => write!(f, "the translation engine is not installed correctly: {why}"),
             Self::ModelNotInstalled => write!(f, "the model is not installed"),
+            Self::ModelNotHeld(why) => write!(f, "the model could not be protected from changes while it is used: {why}"),
             Self::NoLaunchProfile => write!(f, "this file is not a model that can be started"),
             Self::InvalidExecution(why) => write!(f, "invalid execution settings: {why}"),
             Self::MissingVcRuntime(files) => write!(f, "the Microsoft Visual C++ runtime is missing ({})", files.join(", ")),
@@ -479,7 +492,21 @@ struct Session {
     /// The engine's verified files, held open for as long as the session exists. A stop that could not end
     /// the process lets go of them with the session; what remains then is the slot, which stays taken.
     _files: VerifiedEngine,
+    /// The model, held from before the engine existed for as long as the session exists. A stop that could not
+    /// end the process does NOT let go of it: that engine may still be reading it, so it stays held, like the
+    /// slot, for the rest of this run of Sard (`KEPT_MODELS`).
+    model: std::fs::File,
     slot: SlotGuard,
+}
+
+/// The models of engines that a stop could not end. They stay held until Sard itself ends — and with it, by its
+/// Job Object, any engine still alive.
+static KEPT_MODELS: Mutex<Vec<std::fs::File>> = Mutex::new(Vec::new());
+
+/// Let go of the models kept by stops that failed: only a test, after ending the engine it made unstoppable itself.
+#[cfg(all(test, windows))]
+pub(crate) fn release_kept_models_for_tests() {
+    KEPT_MODELS.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
 /// Shared between a start in progress and `stop`, so a stop can end a starting engine at once rather than
@@ -844,6 +871,22 @@ fn launch(
     }
 }
 
+/// Open the model at `path` to hold it, and prove from that handle that it is the store's own: a plain file — not
+/// a link, which is opened as itself and refused — with no other name, exactly at `path`, and of the model's size.
+///
+/// A model that some handle already has open for writing cannot be opened this way at all: that is `ModelNotHeld`,
+/// and so is a file the handle shows to be anything but the store's own. A plain file of another size is not the
+/// model that was installed (`ModelNotInstalled`). Nothing here writes, moves or deletes anything.
+#[cfg(windows)]
+fn hold_model(path: &Path, model: &Artifact) -> Result<std::fs::File, EngineError> {
+    let file = install::open_held(path).map_err(|e| EngineError::ModelNotHeld(e.to_string()))?;
+    let len = super::download::prove_own(&file, path, "the model's folder").map_err(EngineError::ModelNotHeld)?;
+    if len != model.size {
+        return Err(EngineError::ModelNotInstalled);
+    }
+    Ok(file)
+}
+
 #[cfg(windows)]
 fn launch_windows(
     config: &EngineConfig,
@@ -871,6 +914,10 @@ fn launch_windows(
     }
     let model_path = store.installed_path(model);
     store.guard_existing(&model_path).map_err(|_| EngineError::ModelNotInstalled)?;
+    // Held from here: until the session ends — or, if the engine cannot be ended, until Sard does — no other
+    // handle can write the model, delete it, or rename it or the folders above it. Every return before the
+    // session exists lets go of it again.
+    let held_model = hold_model(&model_path, model)?;
     let args = engine_args(&plain_path(&model_path), profile, &execution)?;
 
     #[cfg(test)]
@@ -962,6 +1009,7 @@ fn launch_windows(
         readers,
         log,
         _files: verified,
+        model: held_model,
         slot: slot_guard,
     });
     session.info.phases.created_ms = t0.elapsed().as_millis();
@@ -1282,6 +1330,7 @@ fn teardown(config: &EngineConfig, mut session: Session) -> Result<(), EngineErr
         Ok(())
     } else {
         std::mem::forget(session.slot);
+        KEPT_MODELS.lock().unwrap_or_else(|p| p.into_inner()).push(session.model);
         Err(EngineError::ShutdownFailed(format!("process {} is still running", session.pid)))
     }
 }

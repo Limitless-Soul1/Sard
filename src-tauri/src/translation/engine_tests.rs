@@ -399,6 +399,16 @@ mod process {
                 }
                 std::process::exit(3);
             }
+            // The model, read the way the engine reads it — opened for reading — while Sard holds it.
+            if let Some(path) = args.windows(2).find(|w| w[0] == "-m").map(|w| w[1].clone()) {
+                match fs::read(&path) {
+                    Ok(bytes) => println!("FAKE model read {} bytes", bytes.len()),
+                    Err(e) => {
+                        println!("FAKE violation: the model cannot be read: {e}");
+                        std::process::exit(3);
+                    }
+                }
+            }
             if let Ok(handles) = std::env::var(HANDLES) {
                 for value in handles.split(',') {
                     let here = value.parse::<usize>().ok().and_then(|v| file_identity(HANDLE(v as *mut core::ffi::c_void)));
@@ -1353,6 +1363,217 @@ mod process {
         fs::OpenOptions::new().append(true).open(&file).expect("released once the engine has stopped");
     }
 
+    // ---- The model, held for as long as its engine may read it ----
+
+    /// `DELETE` access: what deleting or renaming a file opens it with.
+    const DELETE_ACCESS: u32 = 0x0001_0000;
+
+    /// Whether `path` can be opened for writing now. It is opened and closed again; nothing is written.
+    fn writable(path: &Path) -> bool {
+        fs::OpenOptions::new().write(true).open(path).is_ok()
+    }
+
+    /// Whether `path` can be opened with delete access now. Nothing is deleted.
+    fn deletable(path: &Path) -> bool {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new().access_mode(DELETE_ACCESS).open(path).is_ok()
+    }
+
+    #[test]
+    fn while_the_engine_runs_its_model_cannot_be_changed_and_the_engine_reads_it() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("model-held");
+        let model = f.fx.store.installed_path(f.model);
+        let folder = model.parent().unwrap().to_path_buf();
+        let models = folder.parent().unwrap().to_path_buf();
+        let original = fs::read(&model).unwrap();
+        assert!(writable(&model) && deletable(&model), "the fixture's model is not held before the start");
+
+        let manager = EngineManager::new(config("normal"));
+        start(&f, &manager).unwrap();
+        // The engine read it while it was held.
+        let read = format!("FAKE model read {} bytes", original.len());
+        assert!(manager.log_tail(200).iter().any(|l| *l == read), "{:?}", manager.log_tail(200));
+        // Nothing else can change it, or take it away.
+        assert!(!writable(&model), "opened for writing");
+        assert!(!deletable(&model), "opened for deleting");
+        assert!(fs::remove_file(&model).is_err(), "deleted");
+        assert!(fs::rename(&model, folder.join("renamed.gguf")).is_err(), "renamed");
+        assert!(fs::rename(&model, f.fx.tmp.0.join("moved.gguf")).is_err(), "moved to another folder");
+        assert!(fs::rename(&folder, models.join("renamed-folder")).is_err(), "its folder renamed");
+        assert!(fs::rename(&models, f.fx.tmp.0.join("models-moved")).is_err(), "the models folder renamed");
+        // The store cannot remove it either, and the attempt leaves the file and its record as they were.
+        assert!(f.fx.store.remove(f.model).is_err(), "removed from the store while its engine runs");
+        assert_eq!(f.fx.store.state(f.model).unwrap(), super::super::store::State::Installed);
+        assert_eq!(fs::read(&model).unwrap(), original);
+
+        manager.stop().unwrap();
+        assert!(writable(&model) && deletable(&model), "still held after the stop");
+    }
+
+    #[test]
+    fn the_model_is_let_go_of_however_a_session_ends() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("model-released");
+        let model = f.fx.store.installed_path(f.model);
+        let let_go = |what: &str| assert!(writable(&model) && deletable(&model), "still held after {what}");
+
+        // A start that fails before the engine exists: a runtime too old, a file planted after verification.
+        let mut old = config("normal");
+        old.hooks.runtime_version = Some([13, 0, 0, 0]);
+        assert!(matches!(start(&f, &EngineManager::new(old)), Err(EngineError::VcRuntimeTooOld { .. })));
+        let_go("a start refused for its runtime");
+        let mut planted = config("normal");
+        let plant = f.fx.dir().join("ggml-planted.dll");
+        planted.hooks.plant_after_verify = Some(plant.clone());
+        assert!(matches!(start(&f, &EngineManager::new(planted)), Err(EngineError::EngineChanged(_))));
+        fs::remove_file(&plant).unwrap();
+        let_go("a start refused for a planted file");
+
+        // A start that fails once the engine runs: it exits early, crashes on a missing library, fails to load the
+        // model, is refused at its checks, or never gets ready.
+        for mode in ["early_exit", "missing_library", "load_fail", "auth_off"] {
+            let error = start(&f, &EngineManager::new(config(mode))).expect_err(mode);
+            let_go(&format!("{mode} ({error:?})"));
+        }
+        let slow = EngineConfig { startup_timeout: Duration::from_secs(2), ..config("never_ready") };
+        assert!(matches!(start(&f, &EngineManager::new(slow)), Err(EngineError::StartupTimeout { .. })));
+        let_go("a start that timed out");
+
+        // A start cancelled while the model loads: held until then.
+        let manager = EngineManager::new(config("never_ready"));
+        std::thread::scope(|scope| {
+            let starting = scope.spawn(|| start(&f, &manager));
+            wait_for("the model load", Duration::from_secs(60), || manager.status() == EngineStatus::Starting(StartPhase::LoadingModel));
+            assert!(!writable(&model), "not held while the model loads");
+            manager.stop().unwrap();
+            assert_eq!(starting.join().unwrap(), Err(EngineError::Cancelled));
+        });
+        let_go("a cancelled start");
+
+        // An engine that crashes once it is ready.
+        let manager = EngineManager::new(config("crash_after_ready"));
+        start(&f, &manager).unwrap();
+        assert!(!writable(&model));
+        wait_for("the crash to be reported", Duration::from_secs(10), || matches!(manager.status(), EngineStatus::Exited { .. }));
+        let_go("an engine that crashed");
+
+        // A stop whose ordinary kill does nothing: the job ends the engine at the stop's timeout.
+        let mut unkillable = EngineConfig { stop_timeout: Duration::from_secs(1), ..config("normal") };
+        unkillable.hooks.fail_kill = true;
+        let manager = EngineManager::new(unkillable);
+        start(&f, &manager).unwrap();
+        assert!(!writable(&model));
+        manager.stop().unwrap();
+        let_go("a stop that needed the job");
+
+        // And the manager dropped without a stop.
+        let manager = EngineManager::new(config("normal"));
+        start(&f, &manager).unwrap();
+        drop(manager);
+        let_go("the manager was dropped");
+        assert_no_engine_left();
+    }
+
+    #[test]
+    fn a_stop_that_cannot_end_its_engine_keeps_the_model_held() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("model-kept");
+        let model = f.fx.store.installed_path(f.model);
+        // Nothing can end this engine: the ordinary stop does nothing, and there is no job.
+        let mut stuck = EngineConfig { stop_timeout: Duration::from_secs(1), ..config("normal") };
+        stuck.hooks.fail_kill = true;
+        stuck.hooks.no_job = true;
+        let manager = EngineManager::new(stuck);
+        let info = start(&f, &manager).unwrap();
+        let engine = Watched::open(info.pid).unwrap();
+        let stopped = manager.stop();
+        let alive = !engine.gone_within(Duration::ZERO);
+        // The engine may still be reading its model, so it stays held — like the slot.
+        let held = !writable(&model) && !deletable(&model);
+        let removed = f.fx.store.remove(f.model).is_ok();
+
+        // The test ends the engine itself and lets go of what the failed stop kept — first, so that a failure below
+        // leaves nothing behind for the tests after it.
+        engine.kill();
+        let ended = engine.gone_within(Duration::from_secs(3));
+        slot::release_for_tests();
+        release_kept_models_for_tests();
+
+        assert!(matches!(stopped, Err(EngineError::ShutdownFailed(_))), "{stopped:?}");
+        assert!(alive, "the control did not leave an engine running");
+        assert!(held, "let go of while its engine may still read it");
+        assert!(!removed, "removed from the store while its engine may still read it");
+        assert!(ended);
+        assert!(writable(&model) && deletable(&model), "still held once released");
+    }
+
+    #[test]
+    fn the_model_is_held_only_at_its_own_size() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("model-size-held");
+        let model = f.fx.store.installed_path(f.model);
+        let held = hold_model(&model, f.model).expect("the installed model is held");
+        assert!(!writable(&model), "not held");
+        drop(held);
+        assert!(writable(&model), "still held once the handle is gone");
+        // What a program replacing the file between the store's check and the hold would leave: a plain file of
+        // another size, at that very place. The store checked by the path a moment before; the hold checks the file
+        // it holds, and refuses it.
+        fs::write(&model, b"another size, written after the store's check").unwrap();
+        assert_eq!(hold_model(&model, f.model).map(|_| ()), Err(EngineError::ModelNotInstalled));
+        assert!(writable(&model), "a refused hold keeps nothing open");
+    }
+
+    #[test]
+    fn a_model_that_cannot_be_held_is_never_started() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("model-not-held");
+        let model = f.fx.store.installed_path(f.model);
+        let ran = f.fx.tmp.0.join("ran.txt");
+        let mut c = config("normal");
+        c.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        let never_started = |what: &str| {
+            let error = start(&f, &EngineManager::new(c.clone())).expect_err(what);
+            assert!(matches!(error, EngineError::ModelNotHeld(_)), "{what}: {error:?}");
+            assert!(!ran.exists(), "{what}: the engine was started");
+            assert_no_engine_left();
+            drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+            error
+        };
+
+        // A program has it open for writing.
+        {
+            let _writer = fs::OpenOptions::new().write(true).open(&model).unwrap();
+            never_started("a model open for writing");
+        }
+        // It has a second name elsewhere, through which it could be changed.
+        let other = f.fx.tmp.0.join("second-name.gguf");
+        fs::hard_link(&model, &other).unwrap();
+        let EngineError::ModelNotHeld(why) = never_started("a model with a second name") else { unreachable!() };
+        assert!(why.contains("name somewhere else"), "{why}");
+        fs::remove_file(&other).unwrap();
+        // A link in its place to a file of the right size inside the translation directory: opened as itself, and
+        // refused. (A link leading outside the directory is refused before that; see the test above.)
+        let inside = f.fx.store.root().join("partial").join("same-size.gguf");
+        let bytes = fs::read(&model).unwrap();
+        fs::write(&inside, &bytes).unwrap();
+        fs::rename(&model, f.fx.tmp.0.join("aside.gguf")).unwrap();
+        if try_link_file(&model, &inside) {
+            never_started("a link in place of the model");
+            fs::remove_file(&model).unwrap();
+        } else {
+            note("NOT TESTED (a link in place of the model, inside the translation directory): this account may not create a symbolic link to a file");
+        }
+        fs::rename(f.fx.tmp.0.join("aside.gguf"), &model).unwrap();
+
+        // The control: the same start, once nothing stands in the way, runs.
+        let manager = EngineManager::new(c.clone());
+        start(&f, &manager).unwrap();
+        assert!(ran.exists(), "the control did not run");
+        manager.stop().unwrap();
+    }
+
     // ---- What the launch takes on trust ----
 
     #[test]
@@ -1388,9 +1609,10 @@ mod process {
         fs::write(&model, b"not a real modeL").unwrap();
         let manager = EngineManager::new(config("normal"));
         start(&f, &manager).expect("the launch does not read the model's contents");
-        // ...and nothing holds the model the way the engine's own files are held. (The real engine keeps it
-        // open while it runs; what that prevents was not measured, because the real engine was not run.)
-        fs::OpenOptions::new().write(true).open(&model).expect("the launch does not hold the model");
+        // ...but from the launch on, it is held: it cannot change while the engine may read it.
+        assert!(fs::OpenOptions::new().write(true).open(&model).is_err(), "the launch did not hold the model");
+        manager.stop().unwrap();
+        fs::OpenOptions::new().write(true).open(&model).expect("let go of once the engine has stopped");
     }
 
     #[test]

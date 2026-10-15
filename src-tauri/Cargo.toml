@@ -133,8 +133,10 @@ windows = { version = "0.61", features = [
     "Win32_Security",                       # SECURITY_ATTRIBUTES, which gates CreateEventW
     "Win32_Storage_FileSystem",             # GetDiskFreeSpaceExW, checked before a model download
     "Win32_System_JobObjects",              # the kill-on-close job that ties the translation engine to Sard
-    "Win32_System_SystemInformation",       # GetSystemDirectoryW, where the engine's C++ runtime is checked
+    "Win32_System_SystemInformation",       # GetSystemDirectoryW, where the engine's C++ runtime is checked; GlobalMemoryStatusEx
     "Win32_NetworkManagement_IpHelper",     # GetExtendedTcpTable, which confirms the engine listens on loopback only
+    "Win32_Graphics_Dxgi",                  # the graphics adapters and their video-memory budget, for the translation hardware check
+    "Win32_System_Performance",             # the GPU memory counters: what every program holds of a card, for the same check
 ] }
 # The `#[implement]` macro expands to `windows_core::` paths resolved at the CRATE root, so the crate
 # has to be nameable here even though we reach the same types through `windows::core`. Pinned to the

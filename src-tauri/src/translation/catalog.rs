@@ -286,6 +286,52 @@ pub fn launch_profile(a: &Artifact) -> Option<LaunchProfile> {
     }
 }
 
+/// What a model needs from the computer, on each path it can run on. An ESTIMATE, from one PC.
+///
+/// Every figure was measured by the translation evaluation on ONE computer — an 8 GB RTX 3060 Ti, a 6-core
+/// i5-12400F and 16 GB of memory, on Windows — with the runtime above and the model's launch profile (context
+/// 6,144). Nothing was measured on a smaller or an integrated GPU, a 4-core processor or another operating system.
+/// So these are provisional: the hardware check uses them until the weaker-hardware evaluation calibrates them,
+/// and they are never shown to a user as a final requirement.
+///
+/// Where a measurement was recorded in "GB" without saying which, the larger reading (GiB) is taken, so that a need
+/// is never understated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelNeeds {
+    /// Video memory with every layer on the GPU — the only GPU configuration Sard runs.
+    pub gpu_vram: u64,
+    /// System memory the engine keeps resident while the model runs on the GPU. Never more than `cpu_ram`.
+    pub gpu_ram: u64,
+    /// System memory the engine keeps resident while the model runs on the CPU.
+    pub cpu_ram: u64,
+}
+
+/// The estimated needs of a model in the catalog, or `None` for anything that is not a model.
+pub fn needs(a: &Artifact) -> Option<ModelNeeds> {
+    const MIB: u64 = 1024 * 1024;
+    // A, with its launch profile:
+    // * video memory: about 3.5 GB free — the GPU benchmark's own conclusion (its clean load checks read
+    //   3.34–3.36 GB on Vulkan and 3.48–3.49 GB on CUDA);
+    // * on the GPU, 0.95 GB resident: the weights are loaded, not memory-mapped (`-lm none`);
+    // * on the CPU, 3.4 GB resident (2 threads).
+    const A: ModelNeeds = ModelNeeds { gpu_vram: 3_584 * MIB, gpu_ram: 973 * MIB, cpu_ram: 3_482 * MIB };
+    // B, with its launch profile:
+    // * video memory: its own working footprint, 1,830–1,865 MiB (the full-pipeline evaluation). The real-engine
+    //   validation's sampled peak, +1,649 MiB, is below it;
+    // * on the GPU, 1.7–1.9 GB resident. The file is memory-mapped, and that memory was recorded as clean,
+    //   reclaimable file cache; it is counted in full, because how much of it can go without slowing a translation
+    //   was not measured;
+    // * on the CPU, 2.7 GB resident (2 and 6 threads alike).
+    const B: ModelNeeds = ModelNeeds { gpu_vram: 1_865 * MIB, gpu_ram: 1_946 * MIB, cpu_ram: 2_765 * MIB };
+    if a.id == MODEL_A.id {
+        Some(A)
+    } else if a.id == MODEL_B.id {
+        Some(B)
+    } else {
+        None
+    }
+}
+
 /// Every file in the catalog.
 pub const ALL: &[Artifact] = &[MODEL_A, MODEL_B, RUNTIME_WINDOWS_X64];
 
@@ -346,6 +392,33 @@ mod tests {
                 } else {
                     assert!(s.url.contains("/releases/download/"), "{}: unrecognised source form {}", a.id, s.url);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn every_model_has_estimated_needs_and_nothing_else_does() {
+        for a in ALL {
+            assert_eq!(needs(a).is_some(), a.kind == Kind::Model, "{}", a.id);
+            assert_eq!(needs(a).is_some(), launch_profile(a).is_some(), "{}", a.id);
+            if let Some(n) = needs(a) {
+                assert!(n.gpu_vram > 0 && n.gpu_ram > 0 && n.cpu_ram > 0, "{}: {n:?}", a.id);
+                // The hardware check relies on it: a computer without the memory for the GPU path has none for the
+                // CPU path either.
+                assert!(n.gpu_ram <= n.cpu_ram, "{}: {n:?}", a.id);
+            }
+        }
+    }
+
+    #[test]
+    fn every_gpu_profile_puts_the_whole_model_on_the_gpu() {
+        // No partial offload: on the GPU every layer, on the CPU none. A model that does not fit in full runs on the
+        // CPU.
+        let layers = |flags: &[&'static str]| flags.iter().position(|f| *f == "-ngl").map(|i| flags[i + 1]);
+        for a in ALL {
+            if let Some(p) = launch_profile(a) {
+                assert_eq!(layers(p.gpu), Some("99"), "{}", a.id);
+                assert_eq!(layers(p.cpu), Some("0"), "{}", a.id);
             }
         }
     }

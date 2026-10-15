@@ -1748,6 +1748,41 @@ mod process {
         (ids.len() == 2).then_some(ids)
     }
 
+    /// What a test that holds or races a start undoes however it ends — a failed assertion included — so that it
+    /// never waits on a start it left blocked: the held hook is let go, the start is stopped, and the processes the
+    /// test has watched are ended. Made inside the `thread::scope`, so that it is dropped before the scope waits.
+    struct LetGo<'a> {
+        manager: &'a EngineManager,
+        go: Option<mpsc::Sender<()>>,
+        watched: Vec<Watched>,
+    }
+
+    impl<'a> LetGo<'a> {
+        fn new(manager: &'a EngineManager, go: Option<mpsc::Sender<()>>) -> Self {
+            LetGo { manager, go, watched: Vec::new() }
+        }
+
+        /// Let the held hook go on now (it is waiting for `go` to be dropped).
+        fn release(&mut self) {
+            self.go = None;
+        }
+
+        /// Hold these processes, while they run, to end them if the test fails: by handle, so never another's.
+        fn watch(&mut self, ids: impl IntoIterator<Item = u32>) {
+            self.watched.extend(ids.into_iter().filter_map(Watched::open));
+        }
+    }
+
+    impl Drop for LetGo<'_> {
+        fn drop(&mut self) {
+            self.release();
+            let _ = self.manager.stop();
+            for process in &self.watched {
+                process.kill();
+            }
+        }
+    }
+
     #[test]
     fn a_stop_while_the_gpus_are_listed_ends_the_listing_and_the_start() {
         let _serial = serial_for_tests();
@@ -1761,8 +1796,10 @@ mod process {
         let chose = std::sync::Mutex::new(None);
         let (done_tx, done_rx) = mpsc::channel();
         std::thread::scope(|scope| {
+            let mut guard = LetGo::new(&manager, None);
             scope.spawn(|| done_tx.send(start_listing(&f, &manager, &chose)).unwrap());
             wait_for("the listing to be running", Duration::from_secs(60), || listing_ids(&pids).is_some());
+            guard.watch(listing_ids(&pids).into_iter().flatten());
             // Nothing is asserted until the stop has been made: a failed check here would otherwise wait out the
             // listing's 300 seconds before the test could end.
             let status = manager.status();
@@ -1802,13 +1839,14 @@ mod process {
         let manager = EngineManager::new(c);
         let chose = std::sync::Mutex::new(None);
         std::thread::scope(|scope| {
+            let mut guard = LetGo::new(&manager, Some(go_tx));
             let starting = scope.spawn(|| start_listing(&f, &manager, &chose));
             // Nothing is asserted until the start has been let go: a failed check while it is held would leave it
             // waiting for that word forever, and the test with it.
             let listed = listed_rx.recv_timeout(Duration::from_secs(60));
             let status = manager.status();
             let stopped = manager.stop();
-            drop(go_tx);
+            guard.release();
             let started = starting.join();
             assert_eq!(listed, Ok(()), "the listing ended");
             assert_eq!(status, EngineStatus::Starting(StartPhase::ListingDevices));
@@ -1872,20 +1910,23 @@ mod process {
             hang.hooks.extra_env.push((PID_FILE.into(), pids.to_string_lossy().into_owned()));
             let manager = EngineManager::new(hang);
             let chose = std::sync::Mutex::new(None);
+            let (done_tx, done_rx) = mpsc::channel();
             std::thread::scope(|scope| {
-                let starting = scope.spawn(|| start_listing(&f, &manager, &chose));
+                let mut guard = LetGo::new(&manager, None);
+                scope.spawn(|| done_tx.send(start_listing(&f, &manager, &chose)).unwrap());
                 wait_for("the listing to be running", Duration::from_secs(60), || listing_ids(&pids).is_some());
+                guard.watch(listing_ids(&pids).into_iter().flatten());
                 // Nothing is asserted until the stop has been made, so that a failed check cannot wait out the listing.
                 let same = start(&f, &manager);
                 let other = start(&f, &EngineManager::new(config("normal")));
                 let status = manager.status();
                 let stopped = manager.stop();
-                let started = starting.join();
+                let started = done_rx.recv_timeout(Duration::from_secs(30));
                 assert_eq!(same, Err(EngineError::AlreadyActive), "round {round}");
                 assert_eq!(other, Err(EngineError::AlreadyActive), "round {round}");
                 assert_eq!(status, EngineStatus::Starting(StartPhase::ListingDevices), "round {round}");
                 assert_eq!(stopped, Ok(()));
-                assert_eq!(started.unwrap(), Err(NotLaunched::Engine(EngineError::Cancelled)), "round {round}");
+                assert_eq!(started, Ok(Err(NotLaunched::Engine(EngineError::Cancelled))), "round {round}: the stop did not end the listing");
             });
             assert_eq!(manager.status(), EngineStatus::Idle, "round {round}");
             assert_eq!(manager.stop(), Ok(()), "a second stop is harmless");
@@ -1897,6 +1938,118 @@ mod process {
             manager.stop().unwrap();
             assert_eq!(manager.status(), EngineStatus::Idle, "round {round}");
         }
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    /// A start listing on `devices_hang` (`devices_one` if `answers`), held by `place` at one point of its listing until
+    /// the test lets it go. Returns its manager, the channel that says it is held, and the `go` sender to drop.
+    fn held_listing(ran: &Path, answers: bool, place: fn(&mut TestHooks) -> &mut Option<Hook>) -> (EngineManager, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (held_tx, held_rx) = mpsc::channel::<()>();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let go_rx = std::sync::Mutex::new(go_rx);
+        // A listing that never answers by itself is given far longer than this test may take.
+        let mut c = if answers { config("devices_one") } else { EngineConfig { startup_timeout: Duration::from_secs(300), ..config("devices_hang") } };
+        c.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        *place(&mut c.hooks) = Some(Hook(Arc::new(move || {
+            let _ = held_tx.send(());
+            let _ = go_rx.lock().unwrap().recv();
+        })));
+        (EngineManager::new(c), held_rx, go_tx)
+    }
+
+    #[test]
+    fn a_stop_that_comes_before_the_listing_can_be_reached_still_ends_it_at_once() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-unreachable");
+        let ran = f.fx.tmp.0.join("ran.txt");
+        // Held once its process runs, before it is where a stop finds it: the stop that comes now has no process to end,
+        // and only the listing itself can honour it — at once, not when the listing would have given up.
+        let (manager, held, go) = held_listing(&ran, false, |h| &mut h.before_listing_reachable);
+        let chose = std::sync::Mutex::new(None);
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let mut guard = LetGo::new(&manager, Some(go));
+            scope.spawn(|| done_tx.send(start_listing(&f, &manager, &chose)).unwrap());
+            let was_held = held.recv_timeout(Duration::from_secs(60));
+            let running = engine_children();
+            guard.watch(running.iter().copied());
+            let stopped = manager.stop();
+            guard.release();
+            let ended = done_rx.recv_timeout(Duration::from_secs(30));
+            assert_eq!(was_held, Ok(()), "the listing was not held");
+            assert_eq!(running.len(), 1, "the listing's process was not running when the stop came");
+            assert_eq!(stopped, Ok(()));
+            assert_eq!(ended, Ok(Err(NotLaunched::Engine(EngineError::Cancelled))), "the stop did not end the listing");
+        });
+        assert!(chose.lock().unwrap().is_none(), "the start went on to decide after the stop");
+        assert!(!ran.exists(), "an engine was started after the stop");
+        assert_eq!(manager.status(), EngineStatus::Idle);
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    #[test]
+    fn a_stop_once_the_listing_can_be_reached_returns_only_when_its_process_has_ended() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-reachable");
+        let ran = f.fx.tmp.0.join("ran.txt");
+        // Held once its process is where a stop finds it, before the listing looks for a stop itself: the stop ends the
+        // process, and has ended it by the time it returns — as a stop during a launch does.
+        let (manager, held, go) = held_listing(&ran, false, |h| &mut h.after_listing_reachable);
+        let chose = std::sync::Mutex::new(None);
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let mut guard = LetGo::new(&manager, Some(go));
+            scope.spawn(|| done_tx.send(start_listing(&f, &manager, &chose)).unwrap());
+            let was_held = held.recv_timeout(Duration::from_secs(60));
+            let running: Vec<Watched> = engine_children().into_iter().filter_map(Watched::open).collect();
+            guard.watch(engine_children());
+            let stopped = manager.stop();
+            let ended_by_the_stop = !running.is_empty() && running.iter().all(|p| p.gone_within(Duration::ZERO));
+            guard.release();
+            let ended = done_rx.recv_timeout(Duration::from_secs(30));
+            assert_eq!(was_held, Ok(()), "the listing was not held");
+            assert_eq!(running.len(), 1, "the listing's process was not running when the stop came");
+            assert_eq!(stopped, Ok(()));
+            assert!(ended_by_the_stop, "the stop returned before the listing's process had ended");
+            assert_eq!(ended, Ok(Err(NotLaunched::Engine(EngineError::Cancelled))));
+        });
+        assert!(chose.lock().unwrap().is_none(), "the start went on to decide after the stop");
+        assert!(!ran.exists(), "an engine was started after the stop");
+        assert_eq!(manager.status(), EngineStatus::Idle);
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    #[test]
+    fn a_stop_as_the_listing_ends_by_itself_is_honoured_before_anything_is_decided() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-ends-as-stopped");
+        let ran = f.fx.tmp.0.join("ran.txt");
+        // The listing's process has answered and ended by itself, and the listing has not yet seen that, when the stop
+        // comes: the stop wins, and nothing is decided or started. (A stop that comes once the listing has returned is
+        // `a_stop_that_comes_as_the_listing_ends_or_as_the_start_is_decided_starts_nothing`.)
+        let (manager, held, go) = held_listing(&ran, true, |h| &mut h.after_listing_reachable);
+        let chose = std::sync::Mutex::new(None);
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let mut guard = LetGo::new(&manager, Some(go));
+            scope.spawn(|| done_tx.send(start_listing(&f, &manager, &chose)).unwrap());
+            let was_held = held.recv_timeout(Duration::from_secs(60));
+            let running: Vec<Watched> = engine_children().into_iter().filter_map(Watched::open).collect();
+            let answered = !running.is_empty() && running.iter().all(|p| p.gone_within(Duration::from_secs(30)));
+            let stopped = manager.stop();
+            guard.release();
+            let ended = done_rx.recv_timeout(Duration::from_secs(30));
+            assert_eq!(was_held, Ok(()), "the listing was not held");
+            assert!(answered, "the listing's process did not end by itself");
+            assert_eq!(stopped, Ok(()));
+            assert_eq!(ended, Ok(Err(NotLaunched::Engine(EngineError::Cancelled))));
+        });
+        assert!(chose.lock().unwrap().is_none(), "the start went on to decide after the stop");
+        assert!(!ran.exists(), "an engine was started after the stop");
+        assert_eq!(manager.status(), EngineStatus::Idle);
         assert_no_engine_left();
         drop(slot::claim(Holder::Engine).expect("the slot is free again"));
     }

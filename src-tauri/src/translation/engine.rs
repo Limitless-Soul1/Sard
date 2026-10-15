@@ -349,6 +349,12 @@ pub(crate) struct TestHooks {
     /// Run the moment the device list of a `start_after_listing` has been had, before anything else: a test
     /// blocks here to make a stop arrive just after the listing ended.
     pub after_listing: Option<Hook>,
+    /// Run during a listing, once its process runs and before it is put where a stop finds it: a test blocks
+    /// here to make a stop come while nothing can end the process but the listing itself.
+    pub before_listing_reachable: Option<Hook>,
+    /// Run during a listing, once its process is where a stop finds it and before the listing looks for a stop:
+    /// a test blocks here to show that the stop ends the process by itself.
+    pub after_listing_reachable: Option<Hook>,
 }
 
 /// A test's code, run at a fixed point of a start.
@@ -830,8 +836,16 @@ fn list_devices_windows(config: &EngineConfig, store: &Store, spec: &EngineSpec,
     // From here a stop can end the listing: it finds the process in the start's control. The flag is read only
     // after the process is put there, so a stop that came first is seen here, and one that comes later finds it.
     let child = Arc::new(Mutex::new(child));
+    #[cfg(test)]
+    if let Some(hook) = &config.hooks.before_listing_reachable {
+        (hook.0)();
+    }
     if let Some(c) = control {
         *c.child.lock().unwrap_or_else(|p| p.into_inner()) = Some(child.clone());
+    }
+    #[cfg(test)]
+    if let Some(hook) = &config.hooks.after_listing_reachable {
+        (hook.0)();
     }
 
     let deadline = Instant::now() + config.startup_timeout;

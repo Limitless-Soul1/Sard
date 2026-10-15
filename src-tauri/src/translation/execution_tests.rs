@@ -10,8 +10,8 @@ use rusqlite::Connection;
 use super::catalog::{self, ModelNeeds, ENGINE_WINDOWS_X64, MODEL_A, MODEL_B};
 use super::engine::{EngineError, EngineInfo, Execution, PhaseTimes};
 use super::execution::{
-    decide, load_preference, save_preference, start_with, Assessment, Consent, ConsentRequest, Decision, NotStarted, Path, Preference,
-    CONSENT_LIFETIME, CPU_THREADS, PREFERENCE_KEY,
+    decide, discovered, load_preference, save_preference, start_with, Assessment, Consent, ConsentRequest, Decision, NotStarted, Path,
+    Preference, CONSENT_LIFETIME, CPU_THREADS, PREFERENCE_KEY,
 };
 use super::hardware::{
     parse_device_list, Adapter, EngineDevice, Fit, HardwareError, HardwareReport, Memory, NoGpu, Undetermined, VideoMemory, DISK_HEADROOM,
@@ -498,23 +498,46 @@ fn a_reading_that_fails_or_an_engine_that_fails_is_reported() {
     assert_eq!(result, Err(NotStarted::Engine(EngineError::AlreadyActive)));
 }
 
-/// The real start on this computer, with an empty translation directory: there is no engine to list devices with,
-/// so the GPU is not determined, and without consent nothing can be started — whatever this computer has.
+/// The real start on this computer, with an empty translation directory: there is no engine, so no start can be
+/// made on any path — and that is the answer, at once. Nobody is asked to agree to the CPU for a start that would
+/// fail anyway, and the computer is not even assessed.
 #[test]
-fn without_an_engine_the_real_start_never_assumes_a_gpu_and_starts_nothing() {
+fn without_an_engine_the_real_start_fails_at_once_and_asks_nothing() {
     // The engine slot is the whole process's: the tests that take it run one at a time.
     let _serial = super::slot::serial_for_tests();
     let tmp = super::install_tests::TempDir::new("execution_start");
     let store = super::store::Store::open(tmp.0.join("translation")).unwrap();
     let manager = super::engine::EngineManager::new(super::engine::EngineConfig::default());
     let result = super::execution::start(&manager, &store, &ENGINE_WINDOWS_X64, &MODEL_B, Preference::Auto, None);
-    match &result {
-        Err(NotStarted::Assessment(HardwareError::Unsupported)) => assert!(!cfg!(windows), "{result:?}"),
-        Err(NotStarted::NeedsConsent(request)) => {
-            assert!(matches!(request.gpu_verdict, Fit::NotDetermined { why: Undetermined::DeviceListUnknown, .. }), "{result:?}")
-        }
-        Err(NotStarted::Refused { .. }) => {}
-        other => panic!("{other:?}"),
+    if cfg!(windows) {
+        assert!(matches!(result, Err(NotStarted::Engine(EngineError::EngineNotInstalled(_)))), "{result:?}");
+    } else {
+        assert_eq!(result, Err(NotStarted::Engine(EngineError::Unsupported)));
+    }
+    assert_eq!(manager.status(), super::engine::EngineStatus::Idle);
+}
+
+#[test]
+fn only_a_device_list_that_could_not_be_had_leaves_the_gpu_undetermined() {
+    let one = vec![EngineDevice { name: "Vulkan0".into(), description: RTX.into() }];
+    assert_eq!(discovered(Ok(one.clone())), Ok(Some(one)));
+    assert_eq!(discovered(Ok(vec![])), Ok(Some(vec![])));
+    // The list itself could not be had or understood: the GPU is not determined, and the policy for that applies.
+    assert_eq!(discovered(Err(EngineError::DeviceListFailed("no answer within 150 s".into()))), Ok(None));
+    // Everything else means no start can be made at all, and is handed back as it is.
+    let fatal = [
+        EngineError::Unsupported,
+        EngineError::AlreadyActive,
+        EngineError::EngineNotInstalled("the record is missing".into()),
+        EngineError::MissingVcRuntime(vec!["MSVCP140.dll".into()]),
+        EngineError::VcRuntimeTooOld { file: "MSVCP140.dll".into(), found: Some("14.29.0.0".into()), needed: "14.51".into() },
+        EngineError::SpawnFailed("the system directory is unknown".into()),
+        EngineError::JobFailed("denied".into()),
+        EngineError::EngineChanged("ggml-extra.dll appeared".into()),
+        EngineError::Cancelled,
+    ];
+    for error in fatal {
+        assert_eq!(discovered(Err(error.clone())), Err(error));
     }
 }
 

@@ -42,7 +42,7 @@ use std::time::{Duration, Instant};
 use rusqlite::Connection;
 
 use super::catalog::{self, Artifact, EngineSpec};
-use super::engine::{EngineError, EngineInfo, EngineManager, Execution};
+use super::engine::{EngineError, EngineInfo, EngineManager, Execution, NotLaunched};
 use super::hardware::{classify, disk_still_needed, probe, EngineDevice, Fit, HardwareError, NoGpu, Undetermined};
 use super::store::Store;
 
@@ -288,8 +288,26 @@ pub enum NotStarted {
     /// A consent was given, but it does not cover what the fresh decision is: another situation, another model, an
     /// expired consent, or a decision that now needs no consent — on another path. The user is asked again.
     ConsentDoesNotApply(Decision),
-    /// The decision allowed the start, and the engine itself failed.
+    /// The decision allowed the start, and the engine itself failed — or the start cannot be made at all: the engine
+    /// is not installed, an engine is already running or starting, its runtime is missing or too old, a stop ended
+    /// the start (`EngineError::Cancelled`).
     Engine(EngineError),
+}
+
+/// The path the fresh decision allows for `assessment`, or why none: the decision, and the consent rules.
+fn authorise(preference: Preference, consent: Option<&Consent>, now: Instant, assessment: &Assessment) -> Result<Path, NotStarted> {
+    let decision = decide(preference, assessment);
+    match &decision {
+        // A consent was given to the CPU. A decision that needs none is fine on that same path, never on another.
+        Decision::Run { path, .. } if consent.is_some_and(|c| c.basis.path != *path) => Err(NotStarted::ConsentDoesNotApply(decision.clone())),
+        Decision::Run { path, .. } => Ok(path.clone()),
+        Decision::NeedsConsent(request) => match consent {
+            Some(c) if c.covers(request, now) => Ok(request.path.clone()),
+            Some(_) => Err(NotStarted::ConsentDoesNotApply(decision.clone())),
+            None => Err(NotStarted::NeedsConsent(request.clone())),
+        },
+        Decision::Refused { why, alternative } => Err(NotStarted::Refused { why: why.clone(), alternative: alternative.clone() }),
+    }
 }
 
 /// The start, with its two effects given: `assess` reads the computer now, and `launch` starts the engine.
@@ -305,29 +323,31 @@ pub fn start_with(
     launch: impl FnOnce(Execution) -> Result<EngineInfo, EngineError>,
 ) -> Result<(Path, EngineInfo), NotStarted> {
     let assessment = assess().map_err(NotStarted::Assessment)?;
-    let decision = decide(preference, &assessment);
-    let path = match &decision {
-        // A consent was given to the CPU. A decision that needs none is fine on that same path, never on another.
-        Decision::Run { path, .. } if consent.is_some_and(|c| c.basis.path != *path) => {
-            return Err(NotStarted::ConsentDoesNotApply(decision.clone()));
-        }
-        Decision::Run { path, .. } => path.clone(),
-        Decision::NeedsConsent(request) => match consent {
-            Some(c) if c.covers(request, now) => request.path.clone(),
-            Some(_) => return Err(NotStarted::ConsentDoesNotApply(decision.clone())),
-            None => return Err(NotStarted::NeedsConsent(request.clone())),
-        },
-        Decision::Refused { why, alternative } => return Err(NotStarted::Refused { why: why.clone(), alternative: alternative.clone() }),
-    };
+    let path = authorise(preference, consent, now, &assessment)?;
     let info = launch(path.execution()).map_err(NotStarted::Engine)?;
     Ok((path, info))
 }
 
-/// Start `model` with `manager` the way `preference` says, assessing the computer — and asking the engine for its
-/// GPUs — immediately before. Load the preference right before calling (`load_preference`), and do not hold the
-/// database while this runs: a start can take minutes.
+/// What a start can use of the engine's device list: the GPUs it offers, or `None` when the list itself could not
+/// be had or understood (`DeviceListFailed`) — the GPU is then not determined, and the hardware check's policy
+/// applies. Any other error means that no start can be made, on any path — the engine is not installed or not as it
+/// was installed, its runtime is missing or too old, it could not be run, another engine is active, a stop ended
+/// the start — and it is returned as it is, so that nobody is asked to agree to a start that would fail anyway.
+pub fn discovered(listing: Result<Vec<EngineDevice>, EngineError>) -> Result<Option<Vec<EngineDevice>>, EngineError> {
+    match listing {
+        Ok(devices) => Ok(Some(devices)),
+        Err(EngineError::DeviceListFailed(_)) => Ok(None),
+        Err(other) => Err(other),
+    }
+}
+
+/// Start `model` with `manager` the way `preference` says, asking the engine for its GPUs and assessing the computer
+/// immediately before — all of it one start of the manager's (`EngineManager::start_after_listing`), so that a stop
+/// at any point ends it. Load the preference right before calling (`load_preference`), and do not hold the database
+/// while this runs: a start can take minutes.
 ///
-/// If the engine's device list cannot be had, the GPU is not determined: never assumed.
+/// If the engine's device list cannot be had, the GPU is not determined: never assumed. If the engine cannot be
+/// started at all, that is the answer (`NotStarted::Engine`), and no consent is asked for.
 pub fn start(
     manager: &EngineManager,
     store: &Store,
@@ -336,14 +356,35 @@ pub fn start(
     preference: Preference,
     consent: Option<&Consent>,
 ) -> Result<(Path, EngineInfo), NotStarted> {
-    start_with(
-        preference,
-        consent,
-        Instant::now(),
-        || {
-            let devices = manager.list_devices(store, spec).ok();
-            assess(store, spec, model, devices.as_deref())
-        },
-        |execution| manager.start(store, spec, model, execution),
-    )
+    start_using(manager, store, spec, model, preference, consent, |devices| assess(store, spec, model, devices))
+}
+
+/// `start`, with the reading of the computer given: `assess` is called once, after the listing, with the engine's
+/// GPUs (`None` if they could not be had) — and not at all if the start cannot be made.
+pub(crate) fn start_using(
+    manager: &EngineManager,
+    store: &Store,
+    spec: &EngineSpec,
+    model: &Artifact,
+    preference: Preference,
+    consent: Option<&Consent>,
+    assess: impl FnOnce(Option<&[EngineDevice]>) -> Result<Assessment, HardwareError>,
+) -> Result<(Path, EngineInfo), NotStarted> {
+    let started = manager.start_after_listing(store, spec, model, |listing| {
+        let devices = discovered(listing).map_err(NotStarted::Engine)?;
+        let assessment = assess(devices.as_deref()).map_err(NotStarted::Assessment)?;
+        // The consent is judged when the decision is made, after the listing.
+        authorise(preference, consent, Instant::now(), &assessment).map(|path| path.execution())
+    });
+    match started {
+        Ok(info) => {
+            let path = match &info.execution {
+                Execution::Gpu { device } => Path::Gpu { device: device.clone() },
+                Execution::Cpu { .. } => Path::Cpu,
+            };
+            Ok((path, info))
+        }
+        Err(NotLaunched::Declined(why)) => Err(why),
+        Err(NotLaunched::Engine(error)) => Err(NotStarted::Engine(error)),
+    }
 }

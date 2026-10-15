@@ -542,7 +542,7 @@ mod process {
             // else of the test runner's environment.
             for (name, _) in std::env::vars_os() {
                 let name = name.to_string_lossy();
-                let allowed = PASSED_ENV.iter().chain(&["PATH", MODE, PID_FILE]).any(|p| p.eq_ignore_ascii_case(&name));
+                let allowed = PASSED_ENV.iter().chain(&["PATH", MODE, PID_FILE, KEY_FILE]).any(|p| p.eq_ignore_ascii_case(&name));
                 if !allowed {
                     violations.push(format!("the variable {name} reached the engine"));
                 }
@@ -1727,5 +1727,286 @@ mod process {
         let mut seen = Vec::new();
         let listed = host.wait_line("HOST listed ", &mut seen);
         assert_eq!(listed, r#"Ok([EngineDevice { name: "Vulkan0", description: "Test GPU" }])"#, "{seen:#?}");
+    }
+
+    // ---- A start that lists the GPUs first, and the stops that may come during it ----
+
+    type Listing = Result<Vec<EngineDevice>, EngineError>;
+
+    /// A start that lists the engine's GPUs and then starts on the CPU; `chose` records what the listing gave the
+    /// decision, if the start got that far.
+    fn start_listing(f: &EngineFixture, manager: &EngineManager, chose: &std::sync::Mutex<Option<Listing>>) -> Result<EngineInfo, NotLaunched<()>> {
+        manager.start_after_listing(&f.fx.store, f.fx.spec, f.model, |listing| {
+            *chose.lock().unwrap() = Some(listing);
+            Ok(Execution::Cpu { threads: 2 })
+        })
+    }
+
+    /// The process ids a hanging listing wrote (its own and its child's), once it has written both.
+    fn listing_ids(pids: &Path) -> Option<Vec<u32>> {
+        let ids: Vec<u32> = fs::read_to_string(pids).ok()?.split_whitespace().filter_map(|id| id.parse().ok()).collect();
+        (ids.len() == 2).then_some(ids)
+    }
+
+    #[test]
+    fn a_stop_while_the_gpus_are_listed_ends_the_listing_and_the_start() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-stopped");
+        let (pids, ran) = (f.fx.tmp.0.join("pids.txt"), f.fx.tmp.0.join("ran.txt"));
+        // A listing that never answers — given far longer than this test may take, so only the stop can end it.
+        let mut c = EngineConfig { startup_timeout: Duration::from_secs(300), ..config("devices_hang") };
+        c.hooks.extra_env.push((PID_FILE.into(), pids.to_string_lossy().into_owned()));
+        c.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        let manager = EngineManager::new(c);
+        let chose = std::sync::Mutex::new(None);
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| done_tx.send(start_listing(&f, &manager, &chose)).unwrap());
+            wait_for("the listing to be running", Duration::from_secs(60), || listing_ids(&pids).is_some());
+            // Nothing is asserted until the stop has been made: a failed check here would otherwise wait out the
+            // listing's 300 seconds before the test could end.
+            let status = manager.status();
+            let stopped = manager.stop();
+            let ended = done_rx.recv_timeout(Duration::from_secs(30)).expect("the stop did not end the listing");
+            assert_eq!(status, EngineStatus::Starting(StartPhase::ListingDevices));
+            assert_eq!(stopped, Ok(()));
+            assert_eq!(ended, Err(NotLaunched::Engine(EngineError::Cancelled)));
+        });
+        assert!(chose.lock().unwrap().is_none(), "the start went on to decide after the stop");
+        assert!(!ran.exists(), "an engine was started after the stop");
+        for id in listing_ids(&pids).unwrap() {
+            assert!(Watched::open(id).is_none_or(|w| w.gone_within(Duration::from_secs(3))), "process {id} outlived the stop");
+        }
+        assert_eq!(manager.status(), EngineStatus::Idle);
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    #[test]
+    fn a_stop_that_comes_as_the_listing_ends_or_as_the_start_is_decided_starts_nothing() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-then-stop");
+        let ran = f.fx.tmp.0.join("ran.txt");
+
+        // The listing ends, with its GPU found; the start is held there while a stop comes; then it goes on — let go
+        // when the test drops its end of the `go` channel.
+        let (listed_tx, listed_rx) = mpsc::channel::<()>();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let go_rx = std::sync::Mutex::new(go_rx);
+        let mut c = config("devices_one");
+        c.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        c.hooks.after_listing = Some(Hook(Arc::new(move || {
+            listed_tx.send(()).unwrap();
+            let _ = go_rx.lock().unwrap().recv();
+        })));
+        let manager = EngineManager::new(c);
+        let chose = std::sync::Mutex::new(None);
+        std::thread::scope(|scope| {
+            let starting = scope.spawn(|| start_listing(&f, &manager, &chose));
+            // Nothing is asserted until the start has been let go: a failed check while it is held would leave it
+            // waiting for that word forever, and the test with it.
+            let listed = listed_rx.recv_timeout(Duration::from_secs(60));
+            let status = manager.status();
+            let stopped = manager.stop();
+            drop(go_tx);
+            let started = starting.join();
+            assert_eq!(listed, Ok(()), "the listing ended");
+            assert_eq!(status, EngineStatus::Starting(StartPhase::ListingDevices));
+            assert_eq!(stopped, Ok(()));
+            assert_eq!(started.unwrap(), Err(NotLaunched::Engine(EngineError::Cancelled)));
+        });
+        assert!(chose.lock().unwrap().is_none(), "the start went on to decide after the stop");
+        assert!(!ran.exists(), "an engine was started after the stop");
+        assert_eq!(manager.status(), EngineStatus::Idle);
+
+        // The stop comes while the start is being decided: the decision is made, and still nothing is started — the
+        // launch is not even begun, so its engine files are not verified again (the planted file marks that step).
+        let verified = f.fx.tmp.0.join("verified.txt");
+        let mut c = config("devices_one");
+        c.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        c.hooks.plant_after_verify = Some(verified.clone());
+        let manager = EngineManager::new(c);
+        let decided = manager.start_after_listing(&f.fx.store, f.fx.spec, f.model, |listing| {
+            assert_eq!(listing, Ok(vec![gpu("Vulkan0", "Test GPU")]));
+            assert_eq!(manager.stop(), Ok(()));
+            Ok::<_, ()>(Execution::Cpu { threads: 2 })
+        });
+        assert_eq!(decided, Err(NotLaunched::Engine(EngineError::Cancelled)));
+        assert!(!verified.exists(), "the launch was begun after the stop");
+        assert!(!ran.exists(), "an engine was started after the stop");
+        assert_eq!(manager.status(), EngineStatus::Idle);
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    #[test]
+    fn a_start_after_listing_lists_decides_and_starts() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-start");
+        let manager = EngineManager::new(config("devices_one"));
+        let chose = std::sync::Mutex::new(None);
+        let info = start_listing(&f, &manager, &chose).unwrap();
+        assert_eq!(*chose.lock().unwrap(), Some(Ok(vec![gpu("Vulkan0", "Test GPU")])));
+        assert_eq!(info.execution, Execution::Cpu { threads: 2 });
+        assert!(matches!(manager.status(), EngineStatus::Ready(_)));
+        manager.stop().unwrap();
+        assert_eq!(manager.status(), EngineStatus::Idle);
+
+        // A decision not to start: nothing is started, the manager is idle and the slot is free.
+        let declined = manager.start_after_listing(&f.fx.store, f.fx.spec, f.model, |_| Err::<Execution, &str>("not now"));
+        assert_eq!(declined, Err(NotLaunched::Declined("not now")));
+        assert_eq!(manager.status(), EngineStatus::Idle);
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    #[test]
+    fn starts_that_list_first_and_stops_follow_each_other_cleanly() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-rounds");
+        let pids = f.fx.tmp.0.join("pids.txt");
+        for round in 0..3 {
+            // A start stopped while it lists. Meanwhile nothing else starts, from this manager or another.
+            let _ = fs::remove_file(&pids);
+            let mut hang = EngineConfig { startup_timeout: Duration::from_secs(300), ..config("devices_hang") };
+            hang.hooks.extra_env.push((PID_FILE.into(), pids.to_string_lossy().into_owned()));
+            let manager = EngineManager::new(hang);
+            let chose = std::sync::Mutex::new(None);
+            std::thread::scope(|scope| {
+                let starting = scope.spawn(|| start_listing(&f, &manager, &chose));
+                wait_for("the listing to be running", Duration::from_secs(60), || listing_ids(&pids).is_some());
+                // Nothing is asserted until the stop has been made, so that a failed check cannot wait out the listing.
+                let same = start(&f, &manager);
+                let other = start(&f, &EngineManager::new(config("normal")));
+                let status = manager.status();
+                let stopped = manager.stop();
+                let started = starting.join();
+                assert_eq!(same, Err(EngineError::AlreadyActive), "round {round}");
+                assert_eq!(other, Err(EngineError::AlreadyActive), "round {round}");
+                assert_eq!(status, EngineStatus::Starting(StartPhase::ListingDevices), "round {round}");
+                assert_eq!(stopped, Ok(()));
+                assert_eq!(started.unwrap(), Err(NotLaunched::Engine(EngineError::Cancelled)), "round {round}");
+            });
+            assert_eq!(manager.status(), EngineStatus::Idle, "round {round}");
+            assert_eq!(manager.stop(), Ok(()), "a second stop is harmless");
+            // Then a whole start, from the same manager's kind, and its stop.
+            let manager = EngineManager::new(config("devices_one"));
+            let chose = std::sync::Mutex::new(None);
+            start_listing(&f, &manager, &chose).unwrap();
+            assert!(matches!(manager.status(), EngineStatus::Ready(_)), "round {round}");
+            manager.stop().unwrap();
+            assert_eq!(manager.status(), EngineStatus::Idle, "round {round}");
+        }
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    // ---- What a start makes of the listing's errors ----
+
+    use super::super::execution::{start_using, Assessment, NotStarted, Path as RunPath, Preference};
+    use super::super::hardware::{Adapter, Fit, HardwareReport, Memory, Undetermined, VideoMemory};
+
+    /// A reading of a computer on which model B fits, in full, on a GPU called "Test GPU" — the stand-in's.
+    fn fits_test_gpu(devices: Option<&[EngineDevice]>) -> Assessment {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        let card = Adapter {
+            description: "Test GPU".into(),
+            vendor_id: 0x10DE,
+            device_id: 1,
+            luid: 1,
+            dedicated: 8 * GIB,
+            software: false,
+            video: Some(VideoMemory { budget: 8 * GIB, usage: 0 }),
+            in_use: Some(0),
+        };
+        let found = HardwareReport { memory: Some(Memory { total: 16 * GIB, available: 12 * GIB }), disk_free: Some(100 * GIB), adapters: Some(vec![card]) };
+        Assessment::of(MODEL_B.id, &super::super::catalog::needs(&MODEL_B).unwrap(), 0, &found, devices)
+    }
+
+    /// `start_using` on the fake engine, recording what the assessment was given — `None` if it was never asked.
+    fn start_on(f: &EngineFixture, manager: &EngineManager, preference: Preference) -> (Result<(RunPath, EngineInfo), NotStarted>, Option<Option<Vec<EngineDevice>>>) {
+        let seen = std::cell::RefCell::new(None);
+        let result = start_using(manager, &f.fx.store, f.fx.spec, f.model, preference, None, |devices| {
+            *seen.borrow_mut() = Some(devices.map(<[EngineDevice]>::to_vec));
+            Ok(fits_test_gpu(devices))
+        });
+        (result, seen.into_inner())
+    }
+
+    #[test]
+    fn a_device_list_that_cannot_be_read_leaves_the_gpu_undetermined_and_nothing_else() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-unreadable");
+        let ran = f.fx.tmp.0.join("ran.txt");
+        let mut c = config("devices_garbage");
+        c.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        let manager = EngineManager::new(c);
+        let undetermined = Fit::NotDetermined { why: Undetermined::DeviceListUnknown, cpu_offered: true };
+
+        // Automatic: assessed with no GPUs known, and the CPU asked about — never started without consent.
+        let (result, seen) = start_on(&f, &manager, Preference::Auto);
+        assert_eq!(seen, Some(None), "the assessment was not told the GPUs are unknown");
+        assert!(matches!(&result, Err(NotStarted::NeedsConsent(request)) if request.gpu_verdict == undetermined), "{result:?}");
+        // The GPU chosen: refused, the CPU offered.
+        let (result, _) = start_on(&f, &manager, Preference::Gpu);
+        assert_eq!(result, Err(NotStarted::Refused { why: undetermined, alternative: Some(RunPath::Cpu) }));
+        assert!(!ran.exists(), "an engine was started");
+        assert_eq!(manager.status(), EngineStatus::Idle);
+        // The CPU chosen: started, as the user asked.
+        let (result, _) = start_on(&f, &manager, Preference::Cpu);
+        let (path, info) = result.unwrap();
+        assert_eq!((path, info.execution), (RunPath::Cpu, Execution::Cpu { threads: super::super::execution::CPU_THREADS }));
+        manager.stop().unwrap();
+        assert_no_engine_left();
+    }
+
+    #[test]
+    fn a_start_that_cannot_be_made_says_why_at_once_and_asks_nothing() {
+        let _serial = serial_for_tests();
+        let refused_at_once = |f: &EngineFixture, manager: &EngineManager, what: &str| -> EngineError {
+            for preference in [Preference::Auto, Preference::Gpu, Preference::Cpu] {
+                let (result, seen) = start_on(f, manager, preference);
+                assert_eq!(seen, None, "{what} / {preference:?}: the computer was assessed for a start that cannot be made");
+                let Err(NotStarted::Engine(error)) = result else { panic!("{what} / {preference:?}: {result:?}") };
+                if preference == Preference::Cpu {
+                    return error;
+                }
+            }
+            unreachable!()
+        };
+
+        // No engine installed.
+        let gone = engine_fixture("listing-no-engine");
+        install::remove(&gone.fx.store, gone.fx.spec).unwrap();
+        let error = refused_at_once(&gone, &EngineManager::new(config("devices_one")), "no engine");
+        assert!(matches!(error, EngineError::EngineNotInstalled(_)), "{error:?}");
+        // A runtime too old for the engine.
+        let f = engine_fixture("listing-fatal");
+        let mut old = config("devices_one");
+        old.hooks.runtime_version = Some([13, 0, 0, 0]);
+        let error = refused_at_once(&f, &EngineManager::new(old), "an old runtime");
+        assert!(matches!(error, EngineError::VcRuntimeTooOld { .. }), "{error:?}");
+        // Another engine already running.
+        let running = EngineManager::new(config("normal"));
+        start(&f, &running).unwrap();
+        let error = refused_at_once(&f, &EngineManager::new(config("devices_one")), "another engine running");
+        assert_eq!(error, EngineError::AlreadyActive);
+        running.stop().unwrap();
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    #[test]
+    fn a_device_list_that_names_the_gpu_lets_the_assessment_start_it_there() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-gpu");
+        let manager = EngineManager::new(config("devices_one"));
+        let (result, seen) = start_on(&f, &manager, Preference::Auto);
+        assert_eq!(seen, Some(Some(vec![gpu("Vulkan0", "Test GPU")])));
+        let (path, info) = result.unwrap();
+        assert_eq!(path, RunPath::Gpu { device: "Vulkan0".into() });
+        assert_eq!(info.execution, Execution::Gpu { device: "Vulkan0".into() });
+        manager.stop().unwrap();
+        assert_no_engine_left();
     }
 }

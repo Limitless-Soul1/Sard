@@ -1497,8 +1497,8 @@ mod process {
         // leaves nothing behind for the tests after it.
         engine.kill();
         let ended = engine.gone_within(Duration::from_secs(3));
+        release_kept_for_tests();
         slot::release_for_tests();
-        release_kept_models_for_tests();
 
         assert!(matches!(stopped, Err(EngineError::ShutdownFailed(_))), "{stopped:?}");
         assert!(alive, "the control did not leave an engine running");
@@ -2274,6 +2274,278 @@ mod process {
         assert_eq!(manager.status(), EngineStatus::Idle);
         assert_no_engine_left();
         drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    // ---- A start that unwinds (a panic) ----
+
+    /// What a panic carried, as text.
+    fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+        payload.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_default()
+    }
+
+    /// Undoes, however a test of an unwind ends, what the unwind may have left behind, so that the tests after it
+    /// start clean: the processes the test watched are ended, and what a hold kept for good — models, process
+    /// handles, the slot — is let go of.
+    struct AfterUnwind(Vec<Watched>);
+
+    impl Drop for AfterUnwind {
+        fn drop(&mut self) {
+            for process in &self.0 {
+                process.kill();
+            }
+            for process in &self.0 {
+                let _ = process.gone_within(Duration::from_secs(5));
+            }
+            release_kept_for_tests();
+            slot::release_for_tests();
+        }
+    }
+
+    #[test]
+    fn a_panic_while_the_gpus_are_listed_ends_the_listing_and_lets_the_start_go() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("unwind-listing");
+        let (pids, ran) = (f.fx.tmp.0.join("pids.txt"), f.fx.tmp.0.join("ran.txt"));
+        let _after = AfterUnwind(Vec::new());
+        // A listing that never answers by itself, and a process it started: both run when a defect strikes — once —
+        // in the start, which is held at the hook until the test has watched them.
+        let (held_tx, held_rx) = mpsc::channel::<()>();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let go_rx = std::sync::Mutex::new(go_rx);
+        let struck = Arc::new(AtomicBool::new(false));
+        let strike = struck.clone();
+        let mut c = EngineConfig { startup_timeout: Duration::from_secs(300), ..config("devices_hang") };
+        c.hooks.extra_env.push((PID_FILE.into(), pids.to_string_lossy().into_owned()));
+        c.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        c.hooks.after_listing_reachable = Some(Hook(Arc::new(move || {
+            if !strike.swap(true, Ordering::SeqCst) {
+                let _ = held_tx.send(());
+                let _ = go_rx.lock().unwrap().recv();
+                panic!("a defect while the GPUs are listed");
+            }
+        })));
+        let manager = EngineManager::new(c);
+        let chose = std::sync::Mutex::new(None);
+        let (unwound, ended_with_it) = std::thread::scope(|scope| {
+            let mut guard = LetGo::new(&manager, Some(go_tx));
+            let starting = scope.spawn(|| start_listing(&f, &manager, &chose));
+            let was_held = held_rx.recv_timeout(Duration::from_secs(60));
+            wait_for("the listing and its own process to run", Duration::from_secs(60), || listing_ids(&pids).is_some());
+            let ids = listing_ids(&pids).unwrap_or_default();
+            let running: Vec<Watched> = ids.iter().copied().filter_map(Watched::open).collect();
+            guard.watch(ids.iter().copied());
+            guard.release();
+            let unwound = starting.join();
+            // The listing's own process is awaited by the unwind; the one it started, ended by its job, a moment later.
+            let ended = running.len() == 2 && running[0].gone_within(Duration::ZERO) && running[1].gone_within(Duration::from_secs(3));
+            assert_eq!(was_held, Ok(()), "the listing was not held");
+            (unwound, ended)
+        });
+        let message = unwound.as_ref().err().map(|p| panic_text(p.as_ref()));
+        assert_eq!(message.as_deref(), Some("a defect while the GPUs are listed"), "the panic did not reach the caller");
+        assert!(ended_with_it, "the listing's processes outlived the unwind");
+        assert!(chose.lock().unwrap().is_none(), "the start went on to decide");
+        assert!(!ran.exists(), "an engine was started");
+        assert_eq!(manager.status(), EngineStatus::Idle, "the manager was left starting");
+        assert_no_engine_left();
+
+        // The same manager starts again — it lists, rather than being refused — and a stop ends that.
+        let _ = fs::remove_file(&pids);
+        let chose = std::sync::Mutex::new(None);
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let mut guard = LetGo::new(&manager, None);
+            scope.spawn(|| done_tx.send(start_listing(&f, &manager, &chose)).unwrap());
+            wait_for("the second listing to run", Duration::from_secs(60), || listing_ids(&pids).is_some());
+            guard.watch(listing_ids(&pids).into_iter().flatten());
+            let status = manager.status();
+            let stopped = manager.stop();
+            let ended = done_rx.recv_timeout(Duration::from_secs(30));
+            assert_eq!(status, EngineStatus::Starting(StartPhase::ListingDevices));
+            assert_eq!(stopped, Ok(()));
+            assert_eq!(ended, Ok(Err(NotLaunched::Engine(EngineError::Cancelled))));
+        });
+        // And nothing is held any more: another manager starts an engine, all the way.
+        let other = EngineManager::new(config("devices_one"));
+        start_listing(&f, &other, &std::sync::Mutex::new(None)).unwrap();
+        assert!(matches!(other.status(), EngineStatus::Ready(_)));
+        other.stop().unwrap();
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    #[test]
+    fn a_panic_while_the_computer_is_assessed_lets_the_start_go_and_the_next_start_works() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("unwind-assessment");
+        let ran = f.fx.tmp.0.join("ran.txt");
+        let _after = AfterUnwind(Vec::new());
+        let mut c = config("devices_one");
+        c.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        let manager = EngineManager::new(c);
+        // The listing has answered, and its process has ended, when the hardware check fails with a defect.
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            start_using(&manager, &f.fx.store, f.fx.spec, f.model, Preference::Auto, None, |_| panic!("a defect in the hardware check"))
+        }));
+        let message = unwound.as_ref().err().map(|p| panic_text(p.as_ref()));
+        assert_eq!(message.as_deref(), Some("a defect in the hardware check"), "the panic did not reach the caller");
+        assert!(!ran.exists(), "an engine was started");
+        assert_eq!(manager.status(), EngineStatus::Idle, "the manager was left starting");
+        assert_no_engine_left();
+
+        // The same manager starts again, and all the way: on the GPU that the hardware check now confirms.
+        let started = start_using(&manager, &f.fx.store, f.fx.spec, f.model, Preference::Auto, None, |devices| Ok(fits_test_gpu(devices)));
+        assert!(matches!(started, Ok((RunPath::Gpu { .. }, _))), "{started:?}");
+        assert!(ran.exists(), "the engine did not start");
+        manager.stop().unwrap();
+        assert_eq!(manager.status(), EngineStatus::Idle);
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    /// A launch in which a defect strikes, once, while the engine runs; the engine's process id is recorded first.
+    fn striking_once(mut c: EngineConfig) -> (EngineManager, Arc<std::sync::Mutex<Option<u32>>>) {
+        let pid = Arc::new(std::sync::Mutex::new(None));
+        let (seen, struck) = (pid.clone(), AtomicBool::new(false));
+        c.hooks.launch_running = Some(Hook(Arc::new(move || {
+            if !struck.swap(true, Ordering::SeqCst) {
+                *seen.lock().unwrap() = engine_children().first().copied();
+                panic!("a defect while the engine runs");
+            }
+        })));
+        (EngineManager::new(c), pid)
+    }
+
+    #[test]
+    fn a_panic_during_a_launch_whose_engine_survives_keeps_everything_and_refuses_new_starts() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("unwind-launch-stuck");
+        let model = f.fx.store.installed_path(f.model);
+        // Nothing can end this engine: the kill does nothing, and there is no job.
+        let mut stuck = EngineConfig { stop_timeout: Duration::from_secs(1), ..config("normal") };
+        stuck.hooks.fail_kill = true;
+        stuck.hooks.no_job = true;
+        let (manager, pid) = striking_once(stuck);
+        let kept_before = kept_processes_for_tests();
+        let mut after = AfterUnwind(Vec::new());
+
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| start(&f, &manager)));
+        after.0.extend(pid.lock().unwrap().and_then(Watched::open));
+        let alive = after.0.first().is_some_and(|engine| !engine.gone_within(Duration::ZERO));
+        let status = manager.status();
+        let slot_taken = slot::claim(Holder::Engine).is_err();
+        let again = start(&f, &manager);
+        let elsewhere = start(&f, &EngineManager::new(config("normal")));
+        let listed = manager.list_devices(&f.fx.store, f.fx.spec);
+        let held = !writable(&model) && !deletable(&model);
+        let removed = f.fx.store.remove(f.model).is_ok();
+        let kept = kept_processes_for_tests() - kept_before;
+        // The test ends the engine itself and lets go of what the unwind kept — first, so that a failure below leaves
+        // nothing behind for the tests after it.
+        drop(after);
+        let freed = writable(&model) && deletable(&model);
+
+        let message = unwound.as_ref().err().map(|p| panic_text(p.as_ref()));
+        assert_eq!(message.as_deref(), Some("a defect while the engine runs"), "the panic did not reach the caller");
+        assert!(alive, "the engine did not outlive the unwind: this test proves nothing");
+        assert_eq!(status, EngineStatus::Idle, "the manager was left starting");
+        assert!(slot_taken, "the slot was let go of beside an engine that may still run");
+        assert_eq!(again.map(|_| ()), Err(EngineError::AlreadyActive), "a second engine could start beside it");
+        assert_eq!(elsewhere.map(|_| ()), Err(EngineError::AlreadyActive), "another manager could start one beside it");
+        assert_eq!(listed, Err(EngineError::AlreadyActive));
+        assert!(held, "the model was let go of while its engine may still read it");
+        assert!(!removed, "the model was removed while its engine may still read it");
+        assert_eq!(kept, 1, "the handle of the engine that may still run was not kept");
+        assert!(freed, "still held once released");
+
+        // Once everything has been let go of, an engine starts again.
+        let manager = EngineManager::new(config("normal"));
+        start(&f, &manager).unwrap();
+        manager.stop().unwrap();
+        assert_no_engine_left();
+    }
+
+    #[test]
+    fn a_panic_during_a_launch_lets_everything_go_once_the_engine_is_seen_to_end() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("unwind-launch");
+        let model = f.fx.store.installed_path(f.model);
+        // The kill does nothing: only the closing of its job ends this engine — which is awaited, never assumed.
+        let mut c = EngineConfig { stop_timeout: Duration::from_secs(1), ..config("normal") };
+        c.hooks.fail_kill = true;
+        let (manager, pid) = striking_once(c);
+        let kept_before = kept_processes_for_tests();
+        let _after = AfterUnwind(Vec::new());
+
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| start(&f, &manager)));
+        let pid = *pid.lock().unwrap();
+        let ended = pid.is_some_and(|id| Watched::open(id).is_none_or(|engine| engine.gone_within(Duration::ZERO)));
+        let message = unwound.as_ref().err().map(|p| panic_text(p.as_ref()));
+        assert_eq!(message.as_deref(), Some("a defect while the engine runs"), "the panic did not reach the caller");
+        assert!(ended, "the unwind returned before the engine had ended");
+        assert_eq!(manager.status(), EngineStatus::Idle, "the manager was left starting");
+        assert!(writable(&model) && deletable(&model), "the model is still held");
+        assert_eq!(kept_processes_for_tests(), kept_before, "a handle was kept for an engine that has ended");
+        assert_no_engine_left();
+
+        // The same manager starts again, all the way, and stops (its job ends the engine the kill cannot).
+        start(&f, &manager).unwrap();
+        assert!(matches!(manager.status(), EngineStatus::Ready(_)));
+        manager.stop().unwrap();
+        assert_eq!(manager.status(), EngineStatus::Idle);
+        assert_no_engine_left();
+        drop(slot::claim(Holder::Engine).expect("the slot is free again"));
+    }
+
+    #[test]
+    fn a_listing_whose_process_cannot_be_ended_keeps_the_slot_and_starts_nothing() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("listing-unending");
+        let (pids, ran) = (f.fx.tmp.0.join("pids.txt"), f.fx.tmp.0.join("ran.txt"));
+        let mut after = AfterUnwind(Vec::new());
+        // A listing that never answers, and that nothing can end — the kill does nothing, and there is no job. It is
+        // given up after its start timeout, and then cannot be shown to be gone.
+        let mut c = EngineConfig { startup_timeout: Duration::from_secs(2), stop_timeout: Duration::from_secs(1), ..config("devices_hang") };
+        c.hooks.fail_kill = true;
+        c.hooks.no_job = true;
+        c.hooks.extra_env.push((PID_FILE.into(), pids.to_string_lossy().into_owned()));
+        c.hooks.extra_env.push((KEY_FILE.into(), ran.to_string_lossy().into_owned()));
+        let manager = EngineManager::new(c);
+        let kept_before = kept_processes_for_tests();
+        let chose = std::sync::Mutex::new(None);
+        let (done_tx, done_rx) = mpsc::channel();
+        let (ended, alive) = std::thread::scope(|scope| {
+            // Should the start not end by itself, the processes are ended here, which lets it — and the scope — finish.
+            let mut guard = LetGo::new(&manager, None);
+            scope.spawn(|| done_tx.send(start_listing(&f, &manager, &chose)).unwrap());
+            wait_for("the listing and its own process to run", Duration::from_secs(60), || listing_ids(&pids).is_some());
+            let ids = listing_ids(&pids).unwrap_or_default();
+            after.0.extend(ids.iter().copied().filter_map(Watched::open));
+            guard.watch(ids.iter().copied());
+            let ended = done_rx.recv_timeout(Duration::from_secs(60));
+            let alive = after.0.iter().filter(|p| !p.gone_within(Duration::ZERO)).count();
+            (ended, alive)
+        });
+        let status = manager.status();
+        let slot_taken = slot::claim(Holder::Engine).is_err();
+        let again = start(&f, &manager).map(|_| ());
+        let kept = kept_processes_for_tests() - kept_before;
+        // The test ends the processes itself and lets go of what was kept — first, so that a failure below leaves
+        // nothing behind for the tests after it.
+        drop(after);
+
+        assert!(matches!(ended, Ok(Err(NotLaunched::Engine(EngineError::ShutdownFailed(_))))), "{ended:?}");
+        assert_eq!(alive, 2, "the listing's processes did not outlive it: this test proves nothing");
+        assert!(chose.lock().unwrap().is_none(), "the start went on to decide beside a listing that may still run");
+        assert!(!ran.exists(), "an engine was started beside a listing that may still run");
+        assert_eq!(status, EngineStatus::Idle, "the manager was left starting");
+        assert!(slot_taken, "the slot was let go of beside a listing that may still run");
+        assert_eq!(again, Err(EngineError::AlreadyActive));
+        assert_eq!(kept, 1, "the handle of the listing that may still run was not kept");
+
+        // Once everything has been let go of, a listing works again.
+        assert_eq!(EngineManager::new(config("devices_one")).list_devices(&f.fx.store, f.fx.spec), Ok(vec![gpu("Vulkan0", "Test GPU")]));
+        assert_no_engine_left();
     }
 
     // ---- What a start makes of the listing's errors ----

@@ -517,9 +517,9 @@ enum Signal {
 
 struct Session {
     child: Arc<Mutex<Child>>,
-    /// The slot, the model, and the process with its job, ended and let go of by one rule (`EngineHold`). It comes
-    /// before the other fields that hold something, so that a session dropped without `teardown` — by an unwind —
-    /// ends its process before anything else it holds is let go of.
+    /// The slot, the engine's verified files, the model, and the process with its job, ended and let go of by one rule
+    /// (`EngineHold`). It comes before the other fields that hold something, so that a session dropped without
+    /// `teardown` — by an unwind — ends its process before anything else it holds is let go of.
     hold: EngineHold,
     pid: u32,
     info: EngineInfo,
@@ -529,9 +529,6 @@ struct Session {
     monitor: Option<JoinHandle<()>>,
     readers: Vec<JoinHandle<()>>,
     log: Arc<LogBuffer>,
-    /// The engine's verified files, held open for as long as the session exists. A stop that could not end
-    /// the process lets go of them with the session; what remains then is the slot, which stays taken.
-    _files: VerifiedEngine,
 }
 
 impl Drop for Session {
@@ -546,6 +543,10 @@ impl Drop for Session {
 /// it, by its Job Object, any engine still alive.
 static KEPT_MODELS: Mutex<Vec<std::fs::File>> = Mutex::new(Vec::new());
 
+/// The verified files of those engines, still held as they were verified: no program can replace one of them while
+/// that engine may still be running — and loading it.
+static KEPT_FILES: Mutex<Vec<VerifiedEngine>> = Mutex::new(Vec::new());
+
 /// The processes of those engines: their handles, kept so that an engine that may still be running is never left
 /// without one — the only means to observe or end it.
 static KEPT_PROCESSES: Mutex<Vec<Arc<Mutex<Child>>>> = Mutex::new(Vec::new());
@@ -558,6 +559,7 @@ pub(crate) fn release_kept_for_tests() {
         let _ = child.lock().unwrap_or_else(|p| p.into_inner()).kill();
         let _ = wait_for_exit(&child, Duration::from_secs(5));
     }
+    KEPT_FILES.lock().unwrap_or_else(|p| p.into_inner()).clear();
     KEPT_MODELS.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
@@ -568,17 +570,19 @@ pub(crate) fn kept_processes_for_tests() -> usize {
 }
 
 /// What a start holds for as long as a process of it may be alive: the engine slot (so that no second engine, and
-/// no installation, runs beside it), the model once it is held, and the process with its job.
+/// no installation by Sard, runs beside it), the engine's verified files and the model once they are held (so that
+/// no other program can change them either), and the process with its job.
 ///
 /// One rule lets go of it, whichever way the start or the engine ends — a stop, a failed start, a listing that is
-/// over, or an unwind (a panic), which drops it: the process is ended, and the slot and the model are let go of only
-/// once that process is known to be gone. Known means seen to exit, through its own handle; closing its job asks
-/// the kernel to end what is in it, and is never taken to mean that anything has ended. If the process cannot be
-/// seen to exit within the stop timeout and the grace that follows the job's closing, everything is kept for the
-/// rest of this run of Sard — the slot taken, the model held, and the process handle (`KEPT_PROCESSES`), so that
-/// it is never lost. Every part is let go of, or kept, at most once.
+/// over, or an unwind (a panic), which drops it: the process is ended, and the slot, the files and the model are let
+/// go of only once that process is known to be gone. Known means seen to exit, through its own handle; closing its
+/// job asks the kernel to end what is in it, and is never taken to mean that anything has ended. If the process
+/// cannot be seen to exit within the stop timeout and the grace that follows the job's closing, everything is kept
+/// for the rest of this run of Sard — the slot taken, the files and the model held, and the process handle
+/// (`KEPT_PROCESSES`), so that it is never lost. Every part is let go of, or kept, at most once.
 struct EngineHold {
     slot: Option<SlotGuard>,
+    files: Option<VerifiedEngine>,
     model: Option<std::fs::File>,
     process: Option<(Arc<Mutex<Child>>, u32)>,
     #[cfg(windows)]
@@ -592,6 +596,7 @@ impl EngineHold {
     fn new(slot: SlotGuard, config: &EngineConfig) -> EngineHold {
         EngineHold {
             slot: Some(slot),
+            files: None,
             model: None,
             process: None,
             #[cfg(windows)]
@@ -609,8 +614,8 @@ impl EngineHold {
     }
 
     /// End the process, if there is one: killed, awaited up to the stop timeout, its job closed — which ends anything
-    /// left in it — and awaited 2 s more. The slot and the model stay held. `ShutdownFailed` if the process cannot be
-    /// seen to exit; it is then kept with them, for good. Either way the hold has no process afterwards.
+    /// left in it — and awaited 2 s more. The slot, the files and the model stay held. `ShutdownFailed` if the process
+    /// cannot be seen to exit; it is then kept with them, for good. Either way the hold has no process afterwards.
     fn end(&mut self) -> Result<(), EngineError> {
         let Some((child, pid)) = self.process.take() else {
             #[cfg(windows)]
@@ -640,10 +645,14 @@ impl EngineHold {
         }
     }
 
-    /// Keep everything for the rest of this run of Sard: the engine may still be running, and reading its model.
+    /// Keep everything for the rest of this run of Sard: the engine may still be running, loading its files and
+    /// reading its model.
     fn keep(&mut self, child: Arc<Mutex<Child>>) {
         if let Some(slot) = self.slot.take() {
             std::mem::forget(slot);
+        }
+        if let Some(files) = self.files.take() {
+            KEPT_FILES.lock().unwrap_or_else(|p| p.into_inner()).push(files);
         }
         if let Some(model) = self.model.take() {
             KEPT_MODELS.lock().unwrap_or_else(|p| p.into_inner()).push(model);
@@ -651,10 +660,11 @@ impl EngineHold {
         KEPT_PROCESSES.lock().unwrap_or_else(|p| p.into_inner()).push(child);
     }
 
-    /// End the process (`end`), then let go of the model and the slot — unless the process could not be ended,
-    /// which keeps them (`ShutdownFailed`). A second call lets go of nothing more.
+    /// End the process (`end`), then let go of the files, the model and the slot — unless the process could not be
+    /// ended, which keeps them (`ShutdownFailed`). A second call lets go of nothing more.
     fn release(&mut self) -> Result<(), EngineError> {
         self.end()?;
+        drop(self.files.take());
         drop(self.model.take());
         drop(self.slot.take());
         Ok(())
@@ -982,9 +992,11 @@ fn list_devices_windows(
     let stopped = || control.is_some_and(|c| c.cancelled());
     use std::os::windows::process::CommandExt;
 
-    // Held until the process has ended: what is hashed is what runs.
+    // Held until the process has ended — by the hold, which keeps them if it cannot be shown to end: what is hashed is
+    // what runs.
     let verified = install::verify(store, spec).map_err(|e| EngineError::EngineNotInstalled(e.to_string()))?;
     let (dir, executable) = (plain_path(&verified.dir), plain_path(&verified.executable));
+    hold.files = Some(verified);
     #[cfg(test)]
     let system_dir = config.hooks.system_dir.clone().or_else(win::system_dir);
     #[cfg(not(test))]
@@ -1084,7 +1096,8 @@ fn list_devices_windows(
     ended?;
     let stdout = stdout.and_then(|r| r.join().ok()).flatten();
     let stderr = stderr.and_then(|r| r.join().ok()).flatten();
-    drop(verified);
+    // The process is gone: its files are let go of.
+    drop(hold.files.take());
 
     if cancelled || stopped() {
         return Err(EngineError::Cancelled);
@@ -1355,9 +1368,11 @@ fn launch_windows(
 
     let t0 = Instant::now();
     control.set_phase(StartPhase::Launching);
-    // Every file is hashed and then HELD: from here until the engine has exited, nothing can change them.
+    // Every file is hashed and then HELD: from here until the engine has exited, nothing can change them — and if it
+    // cannot be shown to have exited, they stay held with the slot (`EngineHold`).
     let verified = install::verify(store, spec).map_err(|e| EngineError::EngineNotInstalled(e.to_string()))?;
     let (dir, executable) = (plain_path(&verified.dir), plain_path(&verified.executable));
+    hold.files = Some(verified);
     #[cfg(test)]
     if let Some(planted) = &config.hooks.plant_after_verify {
         let _ = std::fs::write(planted, b"planted after verification");
@@ -1464,7 +1479,6 @@ fn launch_windows(
         monitor: None,
         readers,
         log,
-        _files: verified,
     });
     session.info.phases.created_ms = t0.elapsed().as_millis();
     #[cfg(test)]

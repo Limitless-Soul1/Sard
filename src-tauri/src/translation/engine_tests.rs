@@ -1428,6 +1428,23 @@ mod process {
     }
 
     #[test]
+    fn the_model_is_held_only_at_its_own_size() {
+        let _serial = serial_for_tests();
+        let f = engine_fixture("model-size-held");
+        let model = f.fx.store.installed_path(f.model);
+        let held = hold_model(&model, f.model).expect("the installed model is held");
+        assert!(!writable(&model), "not held");
+        drop(held);
+        assert!(writable(&model), "still held once the handle is gone");
+        // What a program replacing the file between the store's check and the hold would leave: a plain file of
+        // another size, at that very place. The store checked by the path a moment before; the hold checks the file
+        // it holds, and refuses it.
+        fs::write(&model, b"another size, written after the store's check").unwrap();
+        assert_eq!(hold_model(&model, f.model).map(|_| ()), Err(EngineError::ModelNotInstalled));
+        assert!(writable(&model), "a refused hold keeps nothing open");
+    }
+
+    #[test]
     fn a_model_that_cannot_be_held_is_never_started() {
         let _serial = serial_for_tests();
         let f = engine_fixture("model-not-held");

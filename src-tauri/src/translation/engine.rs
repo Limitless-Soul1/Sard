@@ -877,8 +877,12 @@ fn launch(
 /// A model that some handle already has open for writing cannot be opened this way at all: that is `ModelNotHeld`,
 /// and so is a file the handle shows to be anything but the store's own. A plain file of another size is not the
 /// model that was installed (`ModelNotInstalled`). Nothing here writes, moves or deletes anything.
+///
+/// The size is checked here, on the handle, although the store has just checked it by the path: until this
+/// handle is open nothing stops another program replacing the file at that path, and the store's check was of
+/// what was there a moment before. This check is the only one made of the file that is actually held.
 #[cfg(windows)]
-fn hold_model(path: &Path, model: &Artifact) -> Result<std::fs::File, EngineError> {
+pub(crate) fn hold_model(path: &Path, model: &Artifact) -> Result<std::fs::File, EngineError> {
     let file = install::open_held(path).map_err(|e| EngineError::ModelNotHeld(e.to_string()))?;
     let len = super::download::prove_own(&file, path, "the model's folder").map_err(EngineError::ModelNotHeld)?;
     if len != model.size {

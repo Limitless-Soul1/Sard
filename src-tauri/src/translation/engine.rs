@@ -91,6 +91,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::catalog::{launch_profile, Artifact, EngineSpec, LaunchProfile};
+use super::hardware::{parse_device_list, EngineDevice};
 use super::install::{self, VerifiedEngine};
 use super::slot::{self, Holder, SlotGuard};
 use super::store::{random_hex, State as ArtifactState, Store};
@@ -230,6 +231,8 @@ pub enum EngineError {
     ProbeTimeout,
     Cancelled,
     ShutdownFailed(String),
+    /// The engine's list of GPUs could not be had, or was not understood in full. Nothing is guessed from it.
+    DeviceListFailed(String),
 }
 
 impl std::fmt::Display for EngineError {
@@ -267,11 +270,19 @@ impl std::fmt::Display for EngineError {
             Self::ProbeTimeout => write!(f, "the engine's test request timed out"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::ShutdownFailed(why) => write!(f, "the engine did not stop: {why}"),
+            Self::DeviceListFailed(why) => write!(f, "the engine's list of graphics devices could not be read: {why}"),
         }
     }
 }
 
 impl std::error::Error for EngineError {}
+
+/// Why `start_after_listing` started nothing: the engine side, or what the caller's `choose` declined with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotLaunched<E> {
+    Engine(EngineError),
+    Declined(E),
+}
 
 impl EngineError {
     /// What the user can do about this failure, where there is something they can do. Sard only says it:
@@ -335,6 +346,27 @@ pub(crate) struct TestHooks {
     /// A pause between putting the process in its job and the last check before it is resumed, so that a test
     /// can tell a suspended engine from a running one.
     pub hold_before_resume: Duration,
+    /// Run the moment the device list of a `start_after_listing` has been had, before anything else: a test
+    /// blocks here to make a stop arrive just after the listing ended.
+    pub after_listing: Option<Hook>,
+    /// Run during a listing, once its process runs and before it is put where a stop finds it: a test blocks
+    /// here to make a stop come while nothing can end the process but the listing itself.
+    pub before_listing_reachable: Option<Hook>,
+    /// Run during a listing, once its process is where a stop finds it and before the listing looks for a stop:
+    /// a test blocks here to show that the stop ends the process by itself.
+    pub after_listing_reachable: Option<Hook>,
+}
+
+/// A test's code, run at a fixed point of a start.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct Hook(pub std::sync::Arc<dyn Fn() + Send + Sync>);
+
+#[cfg(test)]
+impl std::fmt::Debug for Hook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Hook")
+    }
 }
 
 /// The session key. Its `Debug` never shows it.
@@ -372,6 +404,8 @@ pub struct Endpoint {
 /// The steps of a start, in order. A start that fails or times out names the step it was in.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum StartPhase {
+    /// Asking the installed engine which GPUs it offers, before deciding how to start it (`start_after_listing`).
+    ListingDevices,
     /// Verifying the files and creating the process.
     #[default]
     Launching,
@@ -388,6 +422,7 @@ pub enum StartPhase {
 impl StartPhase {
     pub fn describe(self) -> &'static str {
         match self {
+            StartPhase::ListingDevices => "asking the engine which graphics devices it can use",
             StartPhase::Launching => "starting the engine process",
             StartPhase::Listening => "waiting for the engine's server",
             StartPhase::LoadingModel => "loading the model",
@@ -529,20 +564,72 @@ impl EngineManager {
     /// This blocks for as long as the start takes — a model load can take a minute — so it belongs on a
     /// worker thread, never on the one that draws the interface. `stop` from another thread ends it at once.
     pub fn start(&self, store: &Store, spec: &EngineSpec, model: &Artifact, execution: Execution) -> Result<EngineInfo, EngineError> {
+        let (control, slot_guard) = self.begin(StartPhase::Launching)?;
+        let result = launch(&self.config, store, spec, model, execution, &control, slot_guard);
+        self.finish(&control, result)
+    }
+
+    /// Ask the installed engine for its GPUs, let `choose` decide from that how to start it — or not to — and start
+    /// it so: one start, from the device list to a ready engine, under one starting state and one hold of the slot.
+    ///
+    /// So a stop at any point ends it: during the listing it ends the listing process, and the start goes no
+    /// further — after the listing, and again after `choose`, a stop that has been asked for is honoured before
+    /// anything else is done, and the launch itself checks once more before the engine is created. Nothing else
+    /// can start or install in between. The listing is `list_devices`'s, with the same safeguards; its result,
+    /// error or not, is `choose`'s to judge.
+    pub fn start_after_listing<E>(
+        &self,
+        store: &Store,
+        spec: &EngineSpec,
+        model: &Artifact,
+        choose: impl FnOnce(Result<Vec<EngineDevice>, EngineError>) -> Result<Execution, E>,
+    ) -> Result<EngineInfo, NotLaunched<E>> {
+        let (control, slot_guard) = self.begin(StartPhase::ListingDevices).map_err(NotLaunched::Engine)?;
+        let listing = list_devices(&self.config, store, spec, Some(&control));
+        #[cfg(test)]
+        if let Some(hook) = &self.config.hooks.after_listing {
+            (hook.0)();
+        }
+        if control.cancelled() {
+            return Err(self.abandon(slot_guard, NotLaunched::Engine(EngineError::Cancelled)));
+        }
+        let execution = match choose(listing) {
+            Ok(execution) => execution,
+            Err(declined) => return Err(self.abandon(slot_guard, NotLaunched::Declined(declined))),
+        };
+        if control.cancelled() {
+            return Err(self.abandon(slot_guard, NotLaunched::Engine(EngineError::Cancelled)));
+        }
+        control.set_phase(StartPhase::Launching);
+        let result = launch(&self.config, store, spec, model, execution, &control, slot_guard);
+        self.finish(&control, result).map_err(NotLaunched::Engine)
+    }
+
+    /// Enter the starting state, holding the slot, or say why not.
+    fn begin(&self, phase: StartPhase) -> Result<(Arc<StartControl>, SlotGuard), EngineError> {
         if !cfg!(windows) {
             return Err(EngineError::Unsupported);
         }
         let control = Arc::new(StartControl::default());
-        let slot_guard = {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            if !matches!(*state, ManagerState::Idle) {
-                return Err(EngineError::AlreadyActive);
-            }
-            let guard = slot::claim(Holder::Engine).map_err(|_| EngineError::AlreadyActive)?;
-            *state = ManagerState::Starting(control.clone());
-            guard
-        };
-        let result = launch(&self.config, store, spec, model, execution, &control, slot_guard);
+        control.set_phase(phase);
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if !matches!(*state, ManagerState::Idle) {
+            return Err(EngineError::AlreadyActive);
+        }
+        let guard = slot::claim(Holder::Engine).map_err(|_| EngineError::AlreadyActive)?;
+        *state = ManagerState::Starting(control.clone());
+        Ok((control, guard))
+    }
+
+    /// Leave the starting state with nothing started: back to idle, and then the slot is given back.
+    fn abandon<T>(&self, slot_guard: SlotGuard, outcome: T) -> T {
+        *self.state.lock().unwrap_or_else(|p| p.into_inner()) = ManagerState::Idle;
+        drop(slot_guard);
+        outcome
+    }
+
+    /// Leave the starting state with what the launch made of it.
+    fn finish(&self, control: &StartControl, result: Result<Box<Session>, EngineError>) -> Result<EngineInfo, EngineError> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         *state = ManagerState::Idle;
         match result {
@@ -647,6 +734,180 @@ impl EngineManager {
             _ => Vec::new(),
         }
     }
+
+    /// The GPUs the installed engine offers, by its own account (`llama-server --list-devices`): the list the
+    /// hardware check matches against the computer's adapters.
+    ///
+    /// The engine is run exactly as for a translation, but for this one question: its files verified and held,
+    /// a cleared environment (no session key — it serves nothing), no window, suspended until it is inside a
+    /// kill-on-close Job Object, and its directory checked once more before it runs. It is given the start
+    /// timeout to answer, which covers a first launch's reputation check. Anything but a clean exit with a list
+    /// understood in full — a timeout, another exit code, output that is not exactly a device list, a name given
+    /// twice — is `DeviceListFailed`; nothing is guessed. Not while an engine runs or starts, nor during an
+    /// installation: it takes the engine slot for as long as it runs.
+    pub fn list_devices(&self, store: &Store, spec: &EngineSpec) -> Result<Vec<EngineDevice>, EngineError> {
+        if !cfg!(windows) {
+            return Err(EngineError::Unsupported);
+        }
+        if !matches!(*self.state.lock().unwrap_or_else(|p| p.into_inner()), ManagerState::Idle) {
+            return Err(EngineError::AlreadyActive);
+        }
+        let _slot = slot::claim(Holder::Engine).map_err(|_| EngineError::AlreadyActive)?;
+        list_devices(&self.config, store, spec, None)
+    }
+}
+
+/// The most of either stream of `--list-devices` that is read. A real list is a few lines.
+const DEVICE_LIST_MAX: u64 = 64 * 1024;
+
+/// The listing, for `list_devices` (`control` is `None`) or as the first step of a start (`control` is that start's:
+/// the listing process is then the start's process, so a stop ends it, and a stop is honoured before it is created).
+fn list_devices(config: &EngineConfig, store: &Store, spec: &EngineSpec, control: Option<&StartControl>) -> Result<Vec<EngineDevice>, EngineError> {
+    #[cfg(not(windows))]
+    {
+        let _ = (config, store, spec, control);
+        Err(EngineError::Unsupported)
+    }
+    #[cfg(windows)]
+    {
+        list_devices_windows(config, store, spec, control)
+    }
+}
+
+#[cfg(windows)]
+fn list_devices_windows(config: &EngineConfig, store: &Store, spec: &EngineSpec, control: Option<&StartControl>) -> Result<Vec<EngineDevice>, EngineError> {
+    let stopped = || control.is_some_and(|c| c.cancelled());
+    use std::os::windows::process::CommandExt;
+
+    // Held until the process has ended: what is hashed is what runs.
+    let verified = install::verify(store, spec).map_err(|e| EngineError::EngineNotInstalled(e.to_string()))?;
+    let (dir, executable) = (plain_path(&verified.dir), plain_path(&verified.executable));
+    #[cfg(test)]
+    let system_dir = config.hooks.system_dir.clone().or_else(win::system_dir);
+    #[cfg(not(test))]
+    let system_dir = win::system_dir();
+    let system_dir = system_dir.ok_or_else(|| EngineError::SpawnFailed("the system directory is unknown".into()))?;
+    let version_on_disk = |file: &Path| std::fs::read(file).ok().and_then(|bytes| file_version(&bytes));
+    #[cfg(test)]
+    let version_of = |file: &Path| config.hooks.runtime_version.or_else(|| version_on_disk(file));
+    #[cfg(not(test))]
+    let version_of = version_on_disk;
+    if let Some(problem) = vc_runtime_problem(&system_dir, spec.min_vc_runtime, version_of) {
+        return Err(problem);
+    }
+
+    let mut cmd = Command::new(&executable);
+    #[cfg(test)]
+    cmd.args(&config.hooks.prefix_args);
+    cmd.arg("--list-devices")
+        .current_dir(&dir)
+        .env_clear()
+        .envs(passed_env(std::env::vars_os(), &system_dir))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .creation_flags(win::CREATION_FLAGS);
+    #[cfg(test)]
+    cmd.envs(config.hooks.extra_env.iter().cloned());
+
+    // Always in a job: unlike a start, there is no test switch to leave it out.
+    let job = win::Job::kill_on_close().map_err(EngineError::JobFailed)?;
+    // A stop asked for while the files were verified: nothing is run at all.
+    if stopped() {
+        return Err(EngineError::Cancelled);
+    }
+    let mut child = cmd.spawn().map_err(|e| EngineError::SpawnFailed(e.to_string()))?;
+    let refuse = |child: &mut Child, error: EngineError| {
+        let _ = child.kill();
+        let _ = child.wait();
+        error
+    };
+    if let Err(e) = job.assign(&child) {
+        return Err(refuse(&mut child, EngineError::JobFailed(e)));
+    }
+    if let Err(e) = install::check_unchanged(store, spec) {
+        return Err(refuse(&mut child, EngineError::EngineChanged(e.to_string())));
+    }
+    if let Err(e) = win::resume_threads(child.id()) {
+        return Err(refuse(&mut child, EngineError::SpawnFailed(e)));
+    }
+    let stdout = child.stdout.take().map(read_bounded);
+    let stderr = child.stderr.take().map(read_bounded);
+    // From here a stop can end the listing: it finds the process in the start's control. The flag is read only
+    // after the process is put there, so a stop that came first is seen here, and one that comes later finds it.
+    let child = Arc::new(Mutex::new(child));
+    #[cfg(test)]
+    if let Some(hook) = &config.hooks.before_listing_reachable {
+        (hook.0)();
+    }
+    if let Some(c) = control {
+        *c.child.lock().unwrap_or_else(|p| p.into_inner()) = Some(child.clone());
+    }
+    #[cfg(test)]
+    if let Some(hook) = &config.hooks.after_listing_reachable {
+        (hook.0)();
+    }
+
+    let deadline = Instant::now() + config.startup_timeout;
+    let mut cancelled = false;
+    let status = loop {
+        if stopped() {
+            cancelled = true;
+            break None;
+        }
+        match child.lock().unwrap_or_else(|p| p.into_inner()).try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => {}
+            _ => break None,
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    if status.is_none() {
+        let mut c = child.lock().unwrap_or_else(|p| p.into_inner());
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    // The listing is over: a stop from now on has no process of it to end.
+    if let Some(c) = control {
+        *c.child.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+    // Closing the job ends anything the engine left behind; then its pipes close and the readers finish.
+    drop(job);
+    let stdout = stdout.and_then(|r| r.join().ok()).flatten();
+    let stderr = stderr.and_then(|r| r.join().ok()).flatten();
+    drop(verified);
+
+    if cancelled || stopped() {
+        return Err(EngineError::Cancelled);
+    }
+    let Some(status) = status else {
+        return Err(EngineError::DeviceListFailed(format!("no answer within {} s", config.startup_timeout.as_secs())));
+    };
+    if !status.success() {
+        let said = stderr.as_deref().map(String::from_utf8_lossy).map(|s| s.trim().chars().take(200).collect::<String>()).unwrap_or_default();
+        return Err(EngineError::DeviceListFailed(format!("exit code {:?} {said}", status.code()).trim_end().to_string()));
+    }
+    let stdout = stdout.ok_or_else(|| EngineError::DeviceListFailed("the output was too long, or could not be read".into()))?;
+    let devices = parse_device_list(&String::from_utf8_lossy(&stdout)).map_err(EngineError::DeviceListFailed)?;
+    for (i, d) in devices.iter().enumerate() {
+        if devices[..i].iter().any(|e| e.name == d.name) {
+            return Err(EngineError::DeviceListFailed(format!("{} is listed twice", d.name)));
+        }
+    }
+    Ok(devices)
+}
+
+/// All of `stream`, if it is no longer than `DEVICE_LIST_MAX` (`None` if longer, or unreadable). Whatever comes after
+/// the limit is still read and discarded, so that the process is never stopped by a full pipe.
+#[cfg(windows)]
+fn read_bounded(stream: impl Read + Send + 'static) -> JoinHandle<Option<Vec<u8>>> {
+    std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut limited = stream.take(DEVICE_LIST_MAX + 1);
+        let read = limited.read_to_end(&mut kept);
+        let _ = std::io::copy(&mut limited.into_inner(), &mut std::io::sink());
+        (read.is_ok() && kept.len() as u64 <= DEVICE_LIST_MAX).then_some(kept)
+    })
 }
 
 impl Drop for EngineManager {
@@ -687,6 +948,14 @@ pub(crate) fn engine_env(
     system_dir: &Path,
     key: &SessionKey,
 ) -> Vec<(OsString, OsString)> {
+    let mut env = passed_env(parent, system_dir);
+    env.push(("LLAMA_API_KEY".into(), key.as_str().into()));
+    env
+}
+
+/// The allowed inherited variables and a fixed `PATH`: every engine process gets these, and nothing else of its
+/// parent's environment.
+pub(crate) fn passed_env(parent: impl Iterator<Item = (OsString, OsString)>, system_dir: &Path) -> Vec<(OsString, OsString)> {
     let mut env: Vec<(OsString, OsString)> = parent
         .filter(|(k, _)| {
             let k = k.to_string_lossy();
@@ -698,7 +967,6 @@ pub(crate) fn engine_env(
     path.push(";");
     path.push(windows_dir.as_os_str());
     env.push(("PATH".into(), path));
-    env.push(("LLAMA_API_KEY".into(), key.as_str().into()));
     env
 }
 

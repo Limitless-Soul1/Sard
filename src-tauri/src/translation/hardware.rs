@@ -113,15 +113,30 @@ impl Adapter {
 
 /// What every program holds of the adapter with `luid`, from the GPU counters' instances and their values. An
 /// adapter's instances are named `luid_0x<high>_0x<low>_phys_<n>`, one per physical part of it, and are added up.
-/// `None` if no instance is that adapter's.
+///
+/// `None` if no instance is that adapter's — and also if any instance that names the adapter is not exactly one of its
+/// parts, or names a part twice. Such a name is not skipped: whatever it counts would then be left out, and what is
+/// free overstated. So nothing is concluded, and the GPU is not determined.
 pub fn dedicated_in_use(luid: u64, instances: &[(String, u64)]) -> Option<u64> {
-    let prefix = format!("luid_0x{:08x}_0x{:08x}_phys_", luid >> 32, luid & 0xFFFF_FFFF);
+    let adapter = format!("0x{:08x}_0x{:08x}", luid >> 32, luid & 0xFFFF_FFFF);
+    let prefix = format!("luid_{adapter}_phys_");
+    let mut parts: Vec<u32> = Vec::new();
     let mut total: Option<u64> = None;
     for (name, bytes) in instances {
-        let part = name.get(..prefix.len()).filter(|head| head.eq_ignore_ascii_case(&prefix)).map(|_| &name[prefix.len()..]);
-        if part.is_some_and(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit())) {
-            total = Some(total.unwrap_or(0).saturating_add(*bytes));
+        let name = name.to_ascii_lowercase();
+        if !name.contains(&adapter) {
+            continue; // another adapter's
         }
+        let part = name.strip_prefix(&prefix)?;
+        if part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let part: u32 = part.parse().ok()?;
+        if parts.contains(&part) {
+            return None;
+        }
+        parts.push(part);
+        total = Some(total.unwrap_or(0).saturating_add(*bytes));
     }
     total
 }

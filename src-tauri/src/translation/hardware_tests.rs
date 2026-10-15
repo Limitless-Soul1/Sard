@@ -395,21 +395,81 @@ fn the_counters_are_matched_to_an_adapter_by_its_luid() {
     // The high part of the identifier counts; letter case does not.
     assert_eq!(dedicated_in_use(0x1_0000_E1AD, &this_pc), None);
     assert_eq!(dedicated_in_use(0x1_0000_E1AD, &[("LUID_0x00000001_0x0000E1AD_PHYS_0".to_string(), 5)]), Some(5));
-    // An adapter in several physical parts is added up; nothing else of a similar name is.
-    let parts: Vec<(String, u64)> = [
-        ("luid_0x00000000_0x0000e1ad_phys_0", 3),
-        ("luid_0x00000000_0x0000e1ad_phys_1", 4),
-        ("luid_0x00000000_0x0000e1ad_phys_", 100),
-        ("luid_0x00000000_0x0000e1ad_phys_0x", 100),
-        ("xluid_0x00000000_0x0000e1ad_phys_0", 100),
-        ("luid_0x00000000_0x0000e1ad", 100),
-        ("ذاكرة_0x00000000_0x0000e1ad_phys_0", 100),
-    ]
-    .iter()
-    .map(|(n, v)| (n.to_string(), *v))
-    .collect();
+    // An adapter in several physical parts is added up. (Names that mention it but are not one of its parts are not
+    // skipped: see the next tests.)
+    let parts = vec![("luid_0x00000000_0x0000e1ad_phys_0".to_string(), 3), ("luid_0x00000000_0x0000e1ad_phys_1".to_string(), 4)];
     assert_eq!(dedicated_in_use(0xE1AD, &parts), Some(7));
     assert_eq!(dedicated_in_use(0xE1AD, &[]), None);
+}
+
+#[test]
+fn another_adapters_instances_never_count_towards_this_one() {
+    let instances = vec![
+        ("luid_0x00000000_0x0000e1ad_phys_0".to_string(), 1000 * MIB),
+        // Another adapter; one with the same low part and another high part; the next identifier along.
+        ("luid_0x00000000_0x0000fba8_phys_0".to_string(), 3000 * MIB),
+        ("luid_0x00000001_0x0000e1ad_phys_0".to_string(), 3000 * MIB),
+        ("luid_0x00000000_0x0000e1ae_phys_0".to_string(), 3000 * MIB),
+        // Another adapter's instance that is not understood: it says nothing about this one.
+        ("luid_0x00000000_0x0000fba8_phys_0#1".to_string(), 3000 * MIB),
+    ];
+    assert_eq!(dedicated_in_use(0xE1AD, &instances), Some(1000 * MIB));
+    // ...but that other adapter's own use is then unknown.
+    assert_eq!(dedicated_in_use(0xFBA8, &instances), None);
+}
+
+#[test]
+fn an_instance_that_names_the_adapter_but_is_not_understood_leaves_its_use_unknown() {
+    // Skipping such a name would leave out whatever it holds, and so overstate what is free.
+    let valid = ("luid_0x00000000_0x0000e1ad_phys_0".to_string(), 1000 * MIB);
+    for odd in [
+        "luid_0x00000000_0x0000e1ad_phys_0#1",
+        "luid_0x00000000_0x0000e1ad_phys_",
+        "luid_0x00000000_0x0000e1ad_phys_0x",
+        "luid_0x00000000_0x0000e1ad_phys_-1",
+        "luid_0x00000000_0x0000e1ad_phys_ 1",
+        "luid_0x00000000_0x0000e1ad_phys_1_extra",
+        "luid_0x00000000_0x0000e1ad_phys_99999999999",
+        "luid_0x00000000_0x0000e1ad",
+        "luid_0x00000000_0x0000e1ad_engtype_3D",
+        "xluid_0x00000000_0x0000e1ad_phys_0",
+        "LUID_0x00000000_0x0000E1AD_PHYS_0#1",
+        "ذاكرة_0x00000000_0x0000e1ad_phys_0",
+    ] {
+        let after = vec![valid.clone(), (odd.to_string(), 1)];
+        assert_eq!(dedicated_in_use(0xE1AD, &after), None, "{odd:?} was skipped");
+        let before = vec![(odd.to_string(), 1), valid.clone()];
+        assert_eq!(dedicated_in_use(0xE1AD, &before), None, "{odd:?} was skipped");
+        assert_eq!(dedicated_in_use(0xE1AD, &[(odd.to_string(), 1)]), None, "{odd:?} was taken for a part");
+    }
+}
+
+#[test]
+fn a_part_listed_twice_leaves_the_use_unknown() {
+    // Two figures for one part: which is right cannot be told, so neither is used.
+    for (first, second) in [("phys_0", "phys_0"), ("phys_0", "phys_00"), ("phys_1", "PHYS_1")] {
+        let instances = vec![
+            (format!("luid_0x00000000_0x0000e1ad_{first}"), 5 * MIB),
+            (format!("luid_0x00000000_0x0000e1ad_{second}"), 5 * MIB),
+        ];
+        assert_eq!(dedicated_in_use(0xE1AD, &instances), None, "{first} / {second}");
+    }
+}
+
+#[test]
+fn a_use_that_is_not_known_never_confirms_a_gpu_fit() {
+    // A part that is understood says almost nothing is in use; one that is not hides most of the card.
+    let instances = vec![("luid_0x00000000_0x0000e1ad_phys_0".to_string(), 0), ("luid_0x00000000_0x0000e1ad_phys_0#1".to_string(), 7 * GIB)];
+    let card = Adapter { in_use: dedicated_in_use(0xE1AD, &instances), ..rtx() };
+    assert_eq!(card.in_use, None);
+    // No figure from the DXGI budget alone takes its place.
+    assert_eq!(card.free_video_memory(), None);
+    for needs in [a(), b()] {
+        assert_eq!(
+            on(&needs, &roomy(vec![card.clone()]), &[device("Vulkan0", RTX)]),
+            Fit::NotDetermined { why: Undetermined::VideoMemoryUnknown(RTX.into()), cpu_offered: true }
+        );
+    }
 }
 
 #[test]

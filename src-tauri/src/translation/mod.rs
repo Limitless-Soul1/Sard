@@ -1,12 +1,15 @@
 //! Translation — the files a local translation needs, getting them onto disk safely, and running the
 //! engine that uses them.
 //!
-//! Two stages exist so far:
+//! Three stages exist so far:
 //!
 //! * **Delivery:** the catalog of downloadable files (`catalog`), where they live and what state they
 //!   are in (`store`), and the verified, resumable download (`download`).
 //! * **The engine:** installing it from its verified archive (`install`), and starting, checking and
 //!   stopping its process (`engine`). One slot (`slot`) keeps the two apart.
+//! * **The hardware check** (`hardware`): reading the computer's memory, disk space and graphics adapters,
+//!   and deciding whether a model runs on the GPU, on the CPU, or not at all. It reads; it never loads a
+//!   model or starts the engine.
 //!
 //! Nothing here is reachable from the interface yet. There is no command, so nothing can be
 //! downloaded, installed or started until the screens that ask the user — and show each file's licence
@@ -30,6 +33,7 @@
 pub mod catalog;
 pub mod download;
 pub mod engine;
+pub mod hardware;
 pub mod install;
 pub mod slot;
 pub mod store;
@@ -38,6 +42,8 @@ pub mod store;
 mod download_server_tests;
 #[cfg(test)]
 mod engine_tests;
+#[cfg(test)]
+mod hardware_tests;
 #[cfg(test)]
 mod install_tests;
 #[cfg(test)]

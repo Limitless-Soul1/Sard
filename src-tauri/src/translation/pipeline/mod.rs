@@ -39,7 +39,7 @@ mod pipeline_tests;
 #[cfg(test)]
 mod replay_tests;
 
-pub use adapter::{AdapterError, EngineSource, Model};
+pub use adapter::{AdapterError, EngineSource, Model, PROVISIONAL_GPU_EXCHANGE_TIMEOUT};
 pub use chunk::Planner;
 pub use decide::translate;
 

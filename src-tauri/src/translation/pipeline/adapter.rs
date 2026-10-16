@@ -13,8 +13,11 @@
 //!
 //! Every request is greedy, never reuses a cached prompt, and carries the pipeline's token budget.
 //!
-//! Each exchange is bounded by the timeout the caller gives; there is no default here, because no production value
-//! has been chosen. A cancellation is checked before every exchange.
+//! Each exchange is bounded, end to end, by the timeout the caller gives: from connecting until the answer has been
+//! read. A chunk of model B is two exchanges, each with its own budget. There is no paragraph deadline and no
+//! default: `PROVISIONAL_GPU_EXCHANGE_TIMEOUT` is a proposed value for an engine on the GPU only, and no value for
+//! the CPU exists yet. A cancellation is checked before every exchange, so an exchange already sent runs until its
+//! answer or its timeout.
 
 use super::text::{is_space, strip};
 use super::{Kind, Profile, Raw, Request, Sampling, Source};
@@ -29,6 +32,11 @@ const A_HEAD: &str = "Translate this from English to Arabic:\nEnglish: ";
 const A_TAIL: &str = "\nArabic:";
 const A_STOP: &str = "\nEnglish:";
 const B_INSTRUCTION: &str = "Translate the following English text into Modern Standard Arabic. Output only the translation, nothing else.\n\n";
+
+/// A proposed timeout for one exchange with an engine on the GPU — provisional, not a measured production value. It
+/// is not meant for the CPU: there, a generation that runs to its token budget can take several times as long, and
+/// a timeout that ends it first would turn the recovery of a looping output into an error.
+pub const PROVISIONAL_GPU_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The two translation models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,8 +101,8 @@ pub struct EngineSource {
 }
 
 impl EngineSource {
-    /// `timeout` bounds every single exchange (a chunk of model B is two). `cancel`, once set, stops the next
-    /// exchange from being sent.
+    /// `timeout` bounds every single exchange (a chunk of model B is two); there is no default. `cancel`, once set,
+    /// stops the next exchange from being sent.
     pub fn new(endpoint: Endpoint, model: Model, timeout: Duration, cancel: Arc<AtomicBool>) -> EngineSource {
         EngineSource { endpoint, model, timeout, cancel }
     }

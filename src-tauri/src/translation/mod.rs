@@ -1,7 +1,7 @@
 //! Translation — the files a local translation needs, getting them onto disk safely, and running the
 //! engine that uses them.
 //!
-//! Four parts exist so far:
+//! Five parts exist so far:
 //!
 //! * **Delivery:** the catalog of downloadable files (`catalog`), where they live and what state they
 //!   are in (`store`), and the verified, resumable download (`download`).
@@ -13,6 +13,9 @@
 //! * **The execution choice** (`execution`): the user's preference (`auto`, `gpu` or `cpu`), the decision
 //!   it leads to on the hardware check's verdicts, and a start that assesses again and asks for consent
 //!   before running on the CPU in place of the GPU.
+//! * **The pipeline** (`pipeline`): for one paragraph, which requests to make, how each answer is checked,
+//!   which translation is accepted and the status it ends with. It is pure — it makes no request itself —
+//!   and nothing calls it yet.
 //!
 //! Nothing here is reachable from the interface yet. There is no command, so nothing can be
 //! downloaded, installed or started until the screens that ask the user — and show each file's licence
@@ -38,6 +41,7 @@ pub mod download;
 pub mod engine;
 pub mod execution;
 pub mod hardware;
+pub mod pipeline;
 pub mod install;
 pub mod slot;
 pub mod store;

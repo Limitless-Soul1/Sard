@@ -1,0 +1,24 @@
+{"frozen":{"out":"نص.","stop":"eos","tokens":4},"id":0,"model":"A","reply":{"content":"نص.","stopped_eos":true,"tokens_predicted":4},"route":"completion","template":null}
+{"frozen":{"out":"نص","stop":"limit","tokens":99},"id":1,"model":"A","reply":{"content":"نص","stopped_limit":true,"tokens_predicted":99},"route":"completion","template":null}
+{"frozen":{"out":"نص","stop":"word","tokens":3},"id":2,"model":"A","reply":{"content":"نص","stopped_eos":false,"stopped_word":true,"tokens_predicted":3},"route":"completion","template":null}
+{"frozen":{"out":"نص","stop":"none","tokens":null},"id":3,"model":"A","reply":{"content":"نص","stop_type":"none"},"route":"completion","template":null}
+{"frozen":{"out":"نص","stop":"limit","tokens":null},"id":4,"model":"A","reply":{"content":"نص","stopped_eos":0,"stopped_limit":1,"stopped_word":""},"route":"completion","template":null}
+{"frozen":{"out":"","stop":"eos","tokens":0},"id":5,"model":"A","reply":{"content":"","stopped_eos":true,"tokens_predicted":0},"route":"completion","template":null}
+{"frozen":{"out":"  نص  \n","stop":"eos","tokens":null},"id":6,"model":"A","reply":{"content":"  نص  \n","stopped_eos":true,"tokens_predicted":null},"route":"completion","template":null}
+{"frozen":{"raises":"KeyError"},"id":7,"model":"A","reply":{"stopped_eos":true,"tokens_predicted":2},"route":"completion","template":null}
+{"frozen":{"out":"x","stop":"eos","tokens":null},"id":8,"model":"A","reply":{"content":"x","stopped_eos":true,"stopped_limit":true},"route":"completion","template":null}
+{"frozen":{"out":"نص.","stop":"eos","tokens":5},"id":9,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":{"content":"نص."}}],"usage":{"completion_tokens":5}},"route":"chat","template":null}
+{"frozen":{"out":"نص","stop":"limit","tokens":99},"id":10,"model":"B","reply":{"choices":[{"finish_reason":"length","message":{"content":"<think>\n</think>\n نص"}}],"usage":{"completion_tokens":99}},"route":"chat","template":null}
+{"frozen":{"out":"نص","stop":"eos","tokens":null},"id":11,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":{"content":"  <think> </think>نص"}}]},"route":"chat","template":null}
+{"frozen":{"out":"<think>نص","stop":"eos","tokens":null},"id":12,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":{"content":"<think>نص"}}],"usage":null},"route":"chat","template":null}
+{"frozen":{"out":"نص <think></think>","stop":"eos","tokens":null},"id":13,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":{"content":"نص <think></think>"}}],"usage":{}},"route":"chat","template":null}
+{"frozen":{"out":"","stop":"eos","tokens":0},"id":14,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":{"content":null}}],"usage":{"completion_tokens":0}},"route":"chat","template":null}
+{"frozen":{"out":"","stop":"eos","tokens":null},"id":15,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":{}}]},"route":"chat","template":null}
+{"frozen":{"out":"","stop":"eos","tokens":null},"id":16,"model":"B","reply":{"choices":[{"message":{"content":""}}]},"route":"chat","template":null}
+{"frozen":{"raises":"IndexError"},"id":17,"model":"B","reply":{"choices":[]},"route":"chat","template":null}
+{"frozen":{"raises":"KeyError"},"id":18,"model":"B","reply":{"choices":[{"finish_reason":"stop"}]},"route":"chat","template":null}
+{"frozen":{"raises":"KeyError"},"id":19,"model":"B","reply":{"usage":{"completion_tokens":1}},"route":"chat","template":null}
+{"frozen":{"out":"نص","stop":"eos","tokens":7},"id":20,"model":"B","reply":{"content":"نص","stopped_limit":false,"tokens_predicted":7},"route":"raw","template":{"prompt":"<<T>>"}}
+{"frozen":{"out":"نص","stop":"limit","tokens":99},"id":21,"model":"B","reply":{"content":"نص","stopped_limit":true,"tokens_predicted":99},"route":"raw","template":{"prompt":"<<T>>"}}
+{"frozen":{"out":"نص","stop":"eos","tokens":null},"id":22,"model":"B","reply":{"content":"نص","stopped_eos":true},"route":"raw","template":{"prompt":"<<T>>"}}
+{"frozen":{"raises":"KeyError"},"id":23,"model":"B","reply":{"tokens_predicted":1},"route":"raw","template":{"prompt":"<<T>>"}}

@@ -16,10 +16,12 @@
 //! Every paragraph ends with a status and its reasons: OK, RECOVERED, SECOND, REVIEW (a translation shown with an
 //! unresolved check) or FAILED (no acceptable translation, and no text). Nothing is ever edited by rule.
 //!
-//! This module is the pure part: it plans requests and judges answers. It makes no request itself — a `Source`
-//! answers them — and it keeps no state between paragraphs, so a paragraph interrupted by an error is simply done
-//! again from the start.
+//! The pipeline plans requests and judges answers; it makes no request itself — a `Source` answers them — and it
+//! keeps no state between paragraphs, so a paragraph interrupted by an error is simply done again from the start.
+//! `EngineSource` (the model adapters, `adapter`) is the source that carries each request to a running engine and
+//! back, with no decision and no retry of its own.
 
+mod adapter;
 mod chunk;
 mod complete;
 mod decide;
@@ -29,10 +31,15 @@ mod text;
 mod unicode_tables;
 
 #[cfg(test)]
+mod adapter_replay_tests;
+#[cfg(test)]
+mod adapter_tests;
+#[cfg(test)]
 mod pipeline_tests;
 #[cfg(test)]
 mod replay_tests;
 
+pub use adapter::{AdapterError, EngineSource, Model};
 pub use chunk::Planner;
 pub use decide::translate;
 

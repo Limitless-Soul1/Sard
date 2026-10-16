@@ -470,7 +470,9 @@ pub fn check_unchanged(store: &Store, spec: &EngineSpec) -> Result<(), InstallEr
 /// * No other handle can then open it for writing, delete it, or rename it or any folder above it.
 /// * The open itself fails if some handle already has it open for writing.
 /// * A link is opened as itself rather than followed, so the caller's check of the handle sees it.
-fn open_held(path: &Path) -> io::Result<fs::File> {
+///
+/// The engine's files are held this way by `verify`, and the model by the engine's launch.
+pub(crate) fn open_held(path: &Path) -> io::Result<fs::File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(windows)]

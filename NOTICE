@@ -21,8 +21,8 @@ The licence above covers Sard's own source code only. It does not, and cannot, c
 the terms of the third-party components listed below: each remains governed by the
 licence granted by its own copyright holder, and those terms are not superseded here.
 
-Every component Sard now ships is under permissive terms (MIT, Apache-2.0, SIL OFL 1.1),
-so none of them constrains the licence above.
+Every component Sard now ships is under permissive terms (MIT, Apache-2.0, SIL OFL 1.1,
+PSF-2.0, Unicode-3.0), so none of them constrains the licence above.
 
 ================================================================================
 THIRD-PARTY COMPONENTS
@@ -85,6 +85,21 @@ THIRD-PARTY COMPONENTS
 
    All are permissive. Each remains under the terms granted by its own copyright holder,
    and those terms continue to apply to those components.
+
+5) TRANSLATION CHECKS
+
+   Sequence matching — Python Software Foundation License Version 2
+   The similarity measure of the translation checks reimplements, in Rust, the matching-
+   block method of difflib.SequenceMatcher from CPython 3.12.0.
+   Copyright (c) 2001-2023 Python Software Foundation; All Rights Reserved.
+   Location: src-tauri/src/translation/pipeline/text.rs
+   Licence and summary of changes: src-tauri/src/translation/pipeline/NOTICES.txt
+
+   Unicode character data — Unicode License V3
+   Character-class tables derived from the Unicode Character Database 15.0.0.
+   Copyright (c) 1991-2023 Unicode, Inc.
+   Location: src-tauri/src/translation/pipeline/unicode_tables.rs
+   Licence: src-tauri/src/translation/pipeline/NOTICES.txt
 
 ================================================================================
 The full text of Sard's licence is in the LICENSE file at the root of this repository.

@@ -37,7 +37,8 @@ pub use chunk::Planner;
 pub use decide::translate;
 
 /// The notices of the third-party work this module derives from: the sequence-matching algorithm (Python Software
-/// Foundation License Version 2) and the Unicode character data (Unicode License V3). Shipped with the code.
+/// Foundation License Version 2) and the Unicode character data (Unicode License V3). They are kept with the source;
+/// nothing reads this constant yet, so the text is not part of the built program.
 pub const NOTICES: &str = include_str!("NOTICES.txt");
 
 /// One paragraph to translate: its text and its sentences, each an exact substring of the text, in order.

@@ -22,3 +22,9 @@
 {"frozen":{"out":"نص","stop":"limit","tokens":99},"id":21,"model":"B","reply":{"content":"نص","stopped_limit":true,"tokens_predicted":99},"route":"raw","template":{"prompt":"<<T>>"}}
 {"frozen":{"out":"نص","stop":"eos","tokens":null},"id":22,"model":"B","reply":{"content":"نص","stopped_eos":true},"route":"raw","template":{"prompt":"<<T>>"}}
 {"frozen":{"raises":"KeyError"},"id":23,"model":"B","reply":{"tokens_predicted":1},"route":"raw","template":{"prompt":"<<T>>"}}
+{"frozen":{"raises":"AttributeError"},"id":24,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":null}],"usage":{"completion_tokens":1}},"route":"chat","template":null}
+{"frozen":{"raises":"AttributeError"},"id":25,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":"نص"}],"usage":{"completion_tokens":1}},"route":"chat","template":null}
+{"frozen":{"raises":"AttributeError"},"id":26,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":["نص"]}],"usage":{"completion_tokens":1}},"route":"chat","template":null}
+{"frozen":{"raises":"AttributeError"},"id":27,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":{"content":"نص"}}],"usage":5},"route":"chat","template":null}
+{"frozen":{"raises":"AttributeError"},"id":28,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":{"content":"نص"}}],"usage":"5"},"route":"chat","template":null}
+{"frozen":{"raises":"AttributeError"},"id":29,"model":"B","reply":{"choices":[{"finish_reason":"stop","message":{"content":"نص"}}],"usage":[5]},"route":"chat","template":null}

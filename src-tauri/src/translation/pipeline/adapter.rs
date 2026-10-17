@@ -256,7 +256,11 @@ fn chat_raw(r: &Value, path: &'static str) -> Result<Raw, AdapterError> {
         .and_then(Value::as_array)
         .and_then(|c| c.first())
         .ok_or_else(|| AdapterError::Malformed { path, what: "no first choice".into() })?;
-    let message = choice.get("message").ok_or_else(|| AdapterError::Malformed { path, what: "no message".into() })?;
+    let message = match choice.get("message") {
+        Some(m @ Value::Object(_)) => m,
+        Some(_) => return Err(AdapterError::Malformed { path, what: "the message is not an object".into() }),
+        None => return Err(AdapterError::Malformed { path, what: "no message".into() }),
+    };
     let content = match message.get("content") {
         Some(Value::String(s)) => s.clone(),
         v if !truthy(v) => String::new(),

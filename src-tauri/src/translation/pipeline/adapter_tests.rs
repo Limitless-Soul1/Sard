@@ -222,7 +222,7 @@ fn model_b_applies_its_template_before_every_chunk() {
 #[test]
 fn every_answer_is_read_as_the_evaluated_client_reads_it() {
     let cases = lines(&fixture_dir().join("adapter-replies.jsonl"));
-    assert_eq!(cases.len(), 24);
+    assert_eq!(cases.len(), 30);
     for c in &cases {
         let id = c["id"].to_string();
         let route = c["route"].as_str().unwrap();

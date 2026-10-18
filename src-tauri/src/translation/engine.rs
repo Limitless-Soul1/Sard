@@ -1807,14 +1807,14 @@ fn wait_for_exit(child: &Arc<Mutex<Child>>, limit: Duration) -> bool {
     }
 }
 
-struct HttpReply {
-    status: u16,
+pub(crate) struct HttpReply {
+    pub(crate) status: u16,
     allow_origin: Option<String>,
-    body: String,
+    pub(crate) body: String,
 }
 
 #[derive(Debug)]
-enum HttpError {
+pub(crate) enum HttpError {
     Timeout,
     Other(String),
 }
@@ -1830,7 +1830,7 @@ impl std::fmt::Display for HttpError {
 
 /// One request to the engine on loopback. No proxy is ever used (`ureq` would otherwise take one from the
 /// environment and send the key to it), redirects are not followed, and errors never include the key.
-fn http(port: u16, method: &str, path: &str, key: Option<&SessionKey>, body: Option<&str>, timeout: Duration) -> Result<HttpReply, HttpError> {
+pub(crate) fn http(port: u16, method: &str, path: &str, key: Option<&SessionKey>, body: Option<&str>, timeout: Duration) -> Result<HttpReply, HttpError> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .proxy(None)
         .max_redirects(0)

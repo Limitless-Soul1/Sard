@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS translation_editions (
   execution_detail TEXT NOT NULL,          -- JSON: {"device": "..."} or {"threads": n}
   launch_flags     TEXT NOT NULL,          -- JSON array: the engine flags the model runs with
   pipeline_id      TEXT NOT NULL,
+  implementation_sha256 TEXT NOT NULL,     -- the fingerprint of the translation code of the build that made it
   profile_k        REAL NOT NULL,
   extraction_id    TEXT NOT NULL,          -- how paragraphs and sentences were taken from the book
   webview_version  TEXT NOT NULL,          -- the WebView2 runtime that took them
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS translation_paragraphs (
   input_detail     TEXT,
   CHECK ((input_state = 'ok') = (input_detail IS NULL)),
   PRIMARY KEY (edition_id, section_index, ordinal),
+  UNIQUE (edition_id, section_index, ordinal, input_state),   -- what a result's key names: only an 'ok' paragraph
   FOREIGN KEY (edition_id, section_index)
     REFERENCES translation_sections(edition_id, section_index) ON DELETE CASCADE
 );
@@ -86,6 +88,7 @@ CREATE TABLE IF NOT EXISTS translation_sessions (
   runtime_sha256   TEXT NOT NULL,
   execution        TEXT NOT NULL,
   execution_detail TEXT NOT NULL,
+  implementation_sha256 TEXT NOT NULL,
   app_build        TEXT NOT NULL,
   engine_info      TEXT,
   CHECK ((ended_at IS NULL) = (end_reason IS NULL)),
@@ -98,6 +101,10 @@ CREATE TABLE IF NOT EXISTS translation_results (
   edition_id     TEXT NOT NULL,
   section_index  INTEGER NOT NULL,
   ordinal        INTEGER NOT NULL,
+  -- A RESULT EXISTS ONLY FOR A PARAGRAPH THAT PASSED THE INPUT RULES. The key below names the paragraph WITH
+  -- its verdict, and this column can only say 'ok': a result for a rejected paragraph finds no row to point at,
+  -- and the verdict of a paragraph that has a result cannot change under it.
+  input_state    TEXT NOT NULL DEFAULT 'ok' CHECK (input_state = 'ok'),
   session_id     TEXT NOT NULL,
   status         TEXT NOT NULL CHECK (status IN ('OK', 'RECOVERED', 'SECOND', 'REVIEW', 'FAILED')),
   text           TEXT,
@@ -112,8 +119,8 @@ CREATE TABLE IF NOT EXISTS translation_results (
   CHECK ((status IN ('REVIEW', 'SECOND')) = (why_review IS NOT NULL)),
   CHECK (length(CAST(outcome_json AS BLOB)) <= 1048576),   -- the stored detail's bound, in bytes (1 MiB)
   PRIMARY KEY (edition_id, section_index, ordinal),
-  FOREIGN KEY (edition_id, section_index, ordinal)
-    REFERENCES translation_paragraphs(edition_id, section_index, ordinal) ON DELETE CASCADE,
+  FOREIGN KEY (edition_id, section_index, ordinal, input_state)
+    REFERENCES translation_paragraphs(edition_id, section_index, ordinal, input_state) ON DELETE CASCADE,
   FOREIGN KEY (edition_id, session_id) REFERENCES translation_sessions(edition_id, id) ON DELETE CASCADE
 );
 

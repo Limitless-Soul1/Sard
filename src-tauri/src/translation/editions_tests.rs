@@ -343,6 +343,8 @@ fn the_identity_covers_every_translation_affecting_input_and_setting() {
         assert_ne!(id_of("bookA", &c, &m).0, base.0, "changing {what} must change the identity");
     }
     assert_ne!(id_of("bookB", &config(), &manifest()).0, base.0, "another book, another identity");
+    let other = create_with_implementation(db.c(), "bookA", &config(), "1.4.1 TEST", &manifest(), 100, &"e".repeat(64)).unwrap();
+    assert_ne!(get(db.c(), &other).unwrap().unwrap().identity_sha256, base.0, "another translation implementation, another identity");
 }
 
 /// The canonical form is pinned: these two values were computed independently of this code (in Python, from
@@ -353,9 +355,11 @@ fn the_identity_covers_every_translation_affecting_input_and_setting() {
 fn the_canonical_input_and_identity_hashes_are_pinned() {
     let db = scratch("golden");
     add_book(db.c(), "bookA");
-    let ed = get(db.c(), &make(db.c(), "bookA")).unwrap().unwrap();
+    // A fixed implementation, so that the pin holds whatever this build's translation code is.
+    let id = create_with_implementation(db.c(), "bookA", &config(), "1.4.1 TEST", &manifest(), 100, &"a".repeat(64)).unwrap();
+    let ed = get(db.c(), &id).unwrap().unwrap();
     assert_eq!(ed.manifest_sha256, "66c7f856ec7cd4721af728d15db53474ddbe1bd68bfb07867717ef7c7b370e22");
-    assert_eq!(ed.identity_sha256, "f50a358b54e1c54d88e66c160c7e7845775f2e11f424151d897d000803547114");
+    assert_eq!(ed.identity_sha256, "de93fb9a37ad6802b63f42de36e20d85cbe771aa7f70bc817a4e215f132e4365");
 }
 
 #[test]
@@ -571,6 +575,7 @@ fn stored_inputs_settings_and_hashes_are_verified_before_every_session() {
         ("the constant", "UPDATE translation_editions SET profile_k = 0.95 WHERE id = ?1".into()),
         ("the webview version", "UPDATE translation_editions SET webview_version = '156.0.0.0' WHERE id = ?1".into()),
         ("the execution", "UPDATE translation_editions SET execution_detail = '{\"device\":\"Vulkan1\"}' WHERE id = ?1".into()),
+        ("the implementation", format!("UPDATE translation_editions SET implementation_sha256 = '{}' WHERE id = ?1", "e".repeat(64))),
         ("the identity hash", format!("UPDATE translation_editions SET identity_sha256 = '{}' WHERE id = ?1", "0".repeat(64))),
         ("the manifest hash", format!("UPDATE translation_editions SET manifest_sha256 = '{}' WHERE id = ?1", "0".repeat(64))),
     ];
@@ -585,6 +590,26 @@ fn stored_inputs_settings_and_hashes_are_verified_before_every_session() {
         assert_eq!(db.c().query_row("SELECT COUNT(*) FROM translation_sessions WHERE edition_id = ?1", [&id], |r| r.get::<_, i64>(0)).unwrap(), 0, "{what}: no session");
     }
     assert!(begin_session(db.c(), &untouched, &engine(), "1.4.1 TEST", None, 3).is_ok(), "the positive control");
+}
+
+/// The implementation fingerprint: an edition records the one it was made with, a build whose translation
+/// code differs cannot resume it — even with an intact edition and an identical engine — and the same one can.
+#[test]
+fn an_edition_made_by_another_translation_implementation_cannot_be_resumed() {
+    let db = scratch("implementation");
+    add_book(db.c(), "bookA");
+    let current = make(db.c(), "bookA");
+    assert_eq!(get(db.c(), &current).unwrap().unwrap().implementation_sha256, implementation(), "an edition records this build's");
+    let older = create_with_implementation(db.c(), "bookA", &config(), "1.4.1 TEST", &manifest(), 1, &"e".repeat(64)).unwrap();
+    assert_eq!(verify(db.c(), &older), Ok(()), "the older edition is intact; only its implementation differs");
+    let before = dump(db.c());
+    assert_eq!(begin_session(db.c(), &older, &engine(), "1.4.1 TEST", None, 2).unwrap_err(), EditionError::ConfigurationChanged { field: "implementation" });
+    assert_eq!(dump(db.c()), before, "a refused resume writes nothing");
+    let s = begin_session_with_implementation(db.c(), &older, &engine(), "1.4.1 TEST", None, 3, &"e".repeat(64)).unwrap();
+    let recorded: String = db.c().query_row("SELECT implementation_sha256 FROM translation_sessions WHERE id = ?1", [&s], |r| r.get(0)).unwrap();
+    assert_eq!(recorded, "e".repeat(64), "each session records the implementation it ran");
+    assert!(begin_session(db.c(), &current, &engine(), "1.4.1 TEST", None, 4).is_ok());
+    assert_eq!(create_with_implementation(db.c(), "bookA", &config(), "1.4.1 TEST", &manifest(), 5, "not-a-hash").unwrap_err(), EditionError::Config("the implementation fingerprint is not a lowercase SHA-256".into()));
 }
 
 #[test]
@@ -712,6 +737,48 @@ fn a_result_cannot_name_another_editions_session_or_a_missing_paragraph() {
         params![b, sb],
     );
     assert!(missing.is_err(), "a result needs its paragraph");
+}
+
+/// The database itself — not only the store — keeps a result away from a paragraph the input rules rejected,
+/// and keeps the verdict of a paragraph that has a result from changing under it. Whatever writes the SQL.
+#[test]
+fn the_database_refuses_a_result_for_a_rejected_paragraph_and_a_verdict_change_under_a_result() {
+    let db = scratch("rejected");
+    add_book(db.c(), "bookA");
+    let a = make(db.c(), "bookA");
+    let b = make(db.c(), "bookA");
+    let sa = begin_session(db.c(), &a, &engine(), "1.4.1 TEST", None, 2).unwrap();
+    let sb = begin_session(db.c(), &b, &engine(), "1.4.1 TEST", None, 2).unwrap();
+    let insert = |edition: &str, session: &str, section: u32, ordinal: u32, state: Option<&str>| {
+        match state {
+            None => db.c().execute(
+                "INSERT INTO translation_results(edition_id, section_index, ordinal, session_id, status, text, final_kind, why_review, outcome_json, outcome_schema, took_ms, created_at) \
+                 VALUES(?1, ?2, ?3, ?4, 'OK', 'x', 'fast', NULL, '{}', 1, 0, 0)",
+                params![edition, section, ordinal, session],
+            ),
+            Some(st) => db.c().execute(
+                "INSERT INTO translation_results(edition_id, section_index, ordinal, input_state, session_id, status, text, final_kind, why_review, outcome_json, outcome_schema, took_ms, created_at) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, 'OK', 'x', 'fast', NULL, '{}', 1, 0, 0)",
+                params![edition, section, ordinal, st, session],
+            ),
+        }
+    };
+    // (3, 2) broke the input contract when the edition was made.
+    assert!(insert(&a, &sa, 3, 2, None).is_err(), "a result for the rejected paragraph");
+    assert!(insert(&a, &sa, 3, 2, Some("contract")).is_err(), "even when it says so");
+    assert!(insert(&a, &sa, 3, 0, Some("contract")).is_err(), "a result can only name an 'ok' paragraph");
+    // The ownership constraints still hold.
+    assert!(insert(&a, &sb, 3, 0, None).is_err(), "a session of another edition");
+    assert!(insert(&a, &sa, 9, 9, None).is_err(), "a paragraph that does not exist");
+    // A valid paragraph accepts a valid result — and then its verdict cannot change.
+    assert!(insert(&a, &sa, 3, 0, None).is_ok(), "the positive control");
+    let flip = |section: u32, ordinal: u32| db.c().execute("UPDATE translation_paragraphs SET input_state = 'contract', input_detail = 'x' WHERE edition_id = ?1 AND section_index = ?2 AND ordinal = ?3", params![a, section, ordinal]);
+    assert!(flip(3, 0).is_err(), "the verdict of a paragraph that has a result");
+    assert_eq!(db.c().query_row("SELECT input_state FROM translation_paragraphs WHERE edition_id = ?1 AND section_index = 3 AND ordinal = 0", [&a], |r| r.get::<_, String>(0)).unwrap(), "ok");
+    assert!(flip(3, 1).is_ok(), "a paragraph with no result is not held by this rule (verify catches such an edit)");
+    assert!(matches!(verify(db.c(), &a), Err(EditionError::Integrity(_))), "and verify does catch it");
+    // The store still answers first, with its own error.
+    assert_eq!(record_result(db.c(), &sb, 3, 2, &outcome(Status::Ok), 1, 3).unwrap_err(), EditionError::NotTranslatable);
 }
 
 #[test]

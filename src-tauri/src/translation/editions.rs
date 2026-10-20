@@ -4,7 +4,9 @@
 //! An edition belongs to ONE book and ONE configuration. The book is its id, which is the SHA-256 of its
 //! bytes, so an edition is bound to the exact source it was made from. The configuration is everything
 //! besides the inputs that decides the output: the model, the engine, the execution path, the engine's
-//! flags, the pipeline and its constant. Both are summed up in the edition's identity (`identity_sha256`).
+//! flags, the pipeline and its constant — and the translation implementation itself, a fingerprint of its code
+//! taken when Sard is built (`implementation`). All of it is summed up in the edition's identity
+//! (`identity_sha256`).
 //!
 //! THE INPUTS ARE FROZEN WHEN THE EDITION IS MADE. Every paragraph's exact text and sentence list, as the
 //! extraction took them from the book, is checked against the pipeline's input contract and stored, with
@@ -53,6 +55,13 @@ pub const IDENTITY_SCHEMA: i64 = 1;
 /// is already capped by the pipeline's token budget, so level 1 is what the recordings need (largest seen:
 /// about 8 KB a paragraph).
 pub const MAX_OUTCOME_JSON_BYTES: usize = 1 << 20;
+
+/// The translation implementation this build carries: the fingerprint of the code that decides what a
+/// translation is (`fingerprint`), computed when Sard is built. An edition records the one it was made with,
+/// and a session runs only with the same one — so a build whose translation code differs never resumes it.
+pub fn implementation() -> &'static str {
+    env!("SARD_TRANSLATION_IMPLEMENTATION")
+}
 
 /// Python 3.12.0's whitespace (`str.isspace`, which is `re`'s `\s`; Unicode 15.0.0), as inclusive ranges.
 /// It is the set the measured extraction collapses and trims with, derived from that interpreter, not typed
@@ -372,6 +381,8 @@ pub struct Edition {
     pub id: String,
     pub book_id: String,
     pub config: EditionConfig,
+    /// The translation implementation it was made with (`implementation`).
+    pub implementation_sha256: String,
     pub app_build: String,
     pub manifest_sha256: String,
     pub identity_sha256: String,
@@ -476,11 +487,12 @@ fn manifest_value(sections: &[(SectionInput, Vec<Checked>)]) -> Value {
 }
 
 /// The edition's identity: every translation-affecting input and setting, as one canonical JSON value.
-pub fn identity(book_id: &str, c: &EditionConfig, manifest_sha256: &str) -> Value {
+pub fn identity(book_id: &str, c: &EditionConfig, manifest_sha256: &str, implementation_sha256: &str) -> Value {
     let e = &c.engine;
     json!({
         "schema": IDENTITY_SCHEMA,
         "book_id": book_id,
+        "implementation_sha256": implementation_sha256,
         "source_lang": c.source_lang, "target_lang": c.target_lang, "target_dir": c.target_dir,
         "model_id": e.model_id, "model_sha256": e.model_sha256,
         "runtime_id": e.runtime_id, "runtime_sha256": e.runtime_sha256,
@@ -551,16 +563,34 @@ fn immediate(conn: &Connection) -> Result<Transaction<'_>, EditionError> {
 
 // ---- The store ----
 
-/// Make an edition of `book_id`: validate the configuration and the extraction's output, check every
-/// paragraph against the input contract, and store everything in one transaction. Returns the new id.
+/// Make an edition of `book_id` with this build's translation implementation: validate the configuration and
+/// the extraction's output, check every paragraph against the input contract, and store everything in one
+/// transaction. Returns the new id.
 pub fn create(conn: &Connection, book_id: &str, config: &EditionConfig, app_build: &str, sections: &[SectionInput], now: i64) -> Result<String, EditionError> {
+    create_as(conn, book_id, config, app_build, sections, now, implementation())
+}
+
+/// `create`, as a build with another translation implementation would have made it.
+#[cfg(test)]
+pub(crate) fn create_with_implementation(conn: &Connection, book_id: &str, config: &EditionConfig, app_build: &str, sections: &[SectionInput], now: i64, implementation: &str) -> Result<String, EditionError> {
+    create_as(conn, book_id, config, app_build, sections, now, implementation)
+}
+
+fn is_sha256(v: &str) -> bool {
+    v.len() == 64 && v.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn create_as(conn: &Connection, book_id: &str, config: &EditionConfig, app_build: &str, sections: &[SectionInput], now: i64, implementation: &str) -> Result<String, EditionError> {
     validate_config(config)?;
     if app_build.trim().is_empty() {
         return Err(EditionError::Config("app_build is empty".into()));
     }
+    if !is_sha256(implementation) {
+        return Err(EditionError::Config("the implementation fingerprint is not a lowercase SHA-256".into()));
+    }
     let checked = validate_manifest(sections)?;
     let manifest_sha256 = sha256_hex(canonical(&manifest_value(&checked)).as_bytes());
-    let identity_sha256 = sha256_hex(canonical(&identity(book_id, config, &manifest_sha256)).as_bytes());
+    let identity_sha256 = sha256_hex(canonical(&identity(book_id, config, &manifest_sha256, implementation)).as_bytes());
     let id = random_hex(16).map_err(|e| EditionError::Io(e.to_string()))?;
     let e = &config.engine;
 
@@ -571,15 +601,15 @@ pub fn create(conn: &Connection, book_id: &str, config: &EditionConfig, app_buil
     }
     tx.execute(
         "INSERT INTO translation_editions(id, book_id, source_lang, target_lang, target_dir, model_id, model_sha256, \
-         runtime_id, runtime_sha256, execution, execution_detail, launch_flags, pipeline_id, profile_k, extraction_id, \
-         webview_version, app_build, manifest_sha256, identity_sha256, mixing_approved, state, created_at, updated_at) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,0,'ready',?20,?20)",
+         runtime_id, runtime_sha256, execution, execution_detail, launch_flags, pipeline_id, implementation_sha256, profile_k, \
+         extraction_id, webview_version, app_build, manifest_sha256, identity_sha256, mixing_approved, state, created_at, updated_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,0,'ready',?21,?21)",
         params![
             id, book_id, config.source_lang, config.target_lang, config.target_dir, e.model_id, e.model_sha256,
             e.runtime_id, e.runtime_sha256, e.execution.kind(), e.execution.detail().to_string(),
             serde_json::to_string(&e.launch_flags).map_err(|x| EditionError::Config(x.to_string()))?,
-            e.pipeline_id, e.profile_k, config.extraction_id, config.webview_version, app_build, manifest_sha256,
-            identity_sha256, now
+            e.pipeline_id, implementation, e.profile_k, config.extraction_id, config.webview_version, app_build,
+            manifest_sha256, identity_sha256, now
         ],
     )?;
     for (s, ps) in &checked {
@@ -622,14 +652,14 @@ pub fn get(conn: &Connection, edition_id: &str) -> Result<Option<Edition>, Editi
         .query_row(
             "SELECT id, book_id, source_lang, target_lang, target_dir, model_id, model_sha256, runtime_id, runtime_sha256, \
              execution, execution_detail, launch_flags, pipeline_id, profile_k, extraction_id, webview_version, app_build, \
-             manifest_sha256, identity_sha256, mixing_approved, state, created_at, updated_at \
+             manifest_sha256, identity_sha256, mixing_approved, state, created_at, updated_at, implementation_sha256 \
              FROM translation_editions WHERE id = ?1",
             [edition_id],
             |r| {
                 Ok((
                     [r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?],
                     r.get::<_, f64>(13)?,
-                    [r.get::<_, String>(14)?, r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?],
+                    [r.get::<_, String>(14)?, r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?, r.get(23)?],
                     r.get::<_, bool>(19)?,
                     r.get::<_, String>(20)?,
                     r.get::<_, i64>(21)?,
@@ -642,7 +672,7 @@ pub fn get(conn: &Connection, edition_id: &str) -> Result<Option<Edition>, Editi
         return Ok(None);
     };
     let [id, book_id, source_lang, target_lang, target_dir, model_id, model_sha256, runtime_id, runtime_sha256, execution, execution_detail, launch_flags, pipeline_id] = a;
-    let [extraction_id, webview_version, app_build, manifest_sha256, identity_sha256] = b;
+    let [extraction_id, webview_version, app_build, manifest_sha256, identity_sha256, implementation_sha256] = b;
     let config = EditionConfig {
         source_lang,
         target_lang,
@@ -661,7 +691,7 @@ pub fn get(conn: &Connection, edition_id: &str) -> Result<Option<Edition>, Editi
         webview_version,
     };
     let counts = counts(conn, &id)?;
-    Ok(Some(Edition { id, book_id, config, app_build, manifest_sha256, identity_sha256, mixing_approved, state: EditionState::parse(&state)?, counts, created_at, updated_at }))
+    Ok(Some(Edition { id, book_id, config, implementation_sha256, app_build, manifest_sha256, identity_sha256, mixing_approved, state: EditionState::parse(&state)?, counts, created_at, updated_at }))
 }
 
 /// The ids of a book's editions, oldest first.
@@ -753,15 +783,26 @@ pub fn verify(conn: &Connection, edition_id: &str) -> Result<(), EditionError> {
     if manifest_sha256 != ed.manifest_sha256 {
         return Err(EditionError::Integrity("the inputs do not match the edition's manifest hash".into()));
     }
-    if sha256_hex(canonical(&identity(&ed.book_id, &ed.config, &manifest_sha256)).as_bytes()) != ed.identity_sha256 {
+    if sha256_hex(canonical(&identity(&ed.book_id, &ed.config, &manifest_sha256, &ed.implementation_sha256)).as_bytes()) != ed.identity_sha256 {
         return Err(EditionError::Integrity("the configuration or the inputs do not match the edition's identity hash".into()));
     }
     Ok(())
 }
 
-/// Open a session on the edition, if what is stored still matches its hashes (`verify`) and the engine
-/// configuration is the edition's in every field.
+/// Open a session on the edition, if what is stored still matches its hashes (`verify`), this build's
+/// translation implementation is the one the edition was made with, and the engine configuration is the
+/// edition's in every field.
 pub fn begin_session(conn: &Connection, edition_id: &str, engine: &EngineConfig, app_build: &str, engine_info: Option<&str>, now: i64) -> Result<String, EditionError> {
+    begin_session_as(conn, edition_id, engine, app_build, engine_info, now, implementation())
+}
+
+/// `begin_session`, as a build with another translation implementation would run it.
+#[cfg(test)]
+pub(crate) fn begin_session_with_implementation(conn: &Connection, edition_id: &str, engine: &EngineConfig, app_build: &str, engine_info: Option<&str>, now: i64, implementation: &str) -> Result<String, EditionError> {
+    begin_session_as(conn, edition_id, engine, app_build, engine_info, now, implementation)
+}
+
+fn begin_session_as(conn: &Connection, edition_id: &str, engine: &EngineConfig, app_build: &str, engine_info: Option<&str>, now: i64, implementation: &str) -> Result<String, EditionError> {
     validate_engine(engine)?;
     let tx = immediate(conn)?;
     let Some(ed) = get(&tx, edition_id)? else {
@@ -779,7 +820,9 @@ pub fn begin_session(conn: &Connection, edition_id: &str, engine: &EngineConfig,
         return Err(EditionError::NothingPending);
     }
     let have = &ed.config.engine;
-    let field = if have.model_id != engine.model_id {
+    let field = if ed.implementation_sha256 != implementation {
+        Some("implementation")
+    } else if have.model_id != engine.model_id {
         Some("model_id")
     } else if have.model_sha256 != engine.model_sha256 {
         Some("model_sha256")
@@ -803,9 +846,9 @@ pub fn begin_session(conn: &Connection, edition_id: &str, engine: &EngineConfig,
     }
     let id = random_hex(16).map_err(|e| EditionError::Io(e.to_string()))?;
     tx.execute(
-        "INSERT INTO translation_sessions(id, edition_id, started_at, model_sha256, runtime_sha256, execution, execution_detail, app_build, engine_info) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-        params![id, edition_id, now, engine.model_sha256, engine.runtime_sha256, engine.execution.kind(), engine.execution.detail().to_string(), app_build, engine_info],
+        "INSERT INTO translation_sessions(id, edition_id, started_at, model_sha256, runtime_sha256, execution, execution_detail, implementation_sha256, app_build, engine_info) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![id, edition_id, now, engine.model_sha256, engine.runtime_sha256, engine.execution.kind(), engine.execution.detail().to_string(), implementation, app_build, engine_info],
     )?;
     tx.execute("UPDATE translation_editions SET state = 'running', updated_at = ?2 WHERE id = ?1", params![edition_id, now])?;
     tx.commit()?;

@@ -32,6 +32,7 @@ corpus-tests = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+sha2 = "0.10"   # the translation implementation's fingerprint (src/translation/fingerprint.rs)
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }

@@ -11,14 +11,17 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 
+use super::active::test::{Behaviour, StandIn};
 use super::catalog::{Artifact, EngineSpec, Kind, Licence, MODEL_A, MODEL_B};
+use super::download::{Mode, Policy};
 use super::edition_run_tests::{gpu, running};
 use super::engine::{self, EngineError, EngineInfo};
 use super::execution::{NotStarted, Path};
-use super::hardware::{Fit, HardwareError, NoGpu};
+use super::hardware::{Fit, HardwareError, HardwareReport, Memory, NoGpu};
 use super::install::{self, EngineState};
 use super::install_tests::{build_zip, entries, put_verified, sha, small_engine, spec_for, TempDir};
 use super::manage::{self, ActionError, InUseBy, LicenceError, LicenceStatus, StateKind, GEMMA_TERMS_REVISION};
+use super::model_commands::{self, ActionErrorView, EventView, StepView};
 use super::pipeline::{Raw, Request, Source, Status};
 use super::prepare::*;
 use super::slot::serial_for_tests;
@@ -86,6 +89,15 @@ impl Bench {
         let mut steps = Vec::new();
         let result = prepare(&ctx, model, engine, cancel, &mut |s| steps.push(s));
         (result, steps)
+    }
+
+    /// Prepare with any engine, without the events.
+    fn prepare_with_engine<E: Engine>(&self, model: &'static Artifact, engine: &E) -> Result<Prepared, PrepareError>
+    where
+        <E::Source as Source>::Error: std::fmt::Display,
+    {
+        let ctx = Context { db: &self.db, store: &self.store, spec: self.spec, now: &|| 1_000 };
+        prepare(&ctx, model, engine, &Arc::new(AtomicBool::new(false)), &mut |_| {})
     }
 
     fn ready(&self, model: &Artifact) -> Option<Ready> {
@@ -484,6 +496,133 @@ fn ready_names_the_exact_bytes_and_needs_both_installed() {
     assert_eq!(b.ready(m), None);
     put_verified(&b.store, m, &b.data);
     assert!(b.ready(m).is_some());
+}
+
+// ═══ ONE FETCH JOB: THE FETCH, THEN THE PREPARATION ═════════════════════════════════════════════════════════════════
+
+const GIB: u64 = 1024 * 1024 * 1024;
+
+fn roomy(_: &std::path::Path) -> Result<HardwareReport, HardwareError> {
+    Ok(HardwareReport { memory: Some(Memory { total: 32 * GIB, available: 24 * GIB }), disk_free: Some(500 * GIB), adapters: Some(Vec::new()) })
+}
+
+/// What the interface would see of one job, and when the preparation was said to begin and end.
+fn job<E: Engine>(b: &Bench, model: &'static Artifact, engine: &E, cancel: &Arc<AtomicBool>) -> (Vec<EventView>, Vec<bool>)
+where
+    <E::Source as Source>::Error: std::fmt::Display,
+{
+    let policy = Policy::loopback_for_tests();
+    let ctx = manage::Context { db: &b.db, store: &b.store, spec: b.spec, policy: &policy, probe: &roomy };
+    let flags = Mutex::new(Vec::new());
+    let mut events = Vec::new();
+    model_commands::run_job(&ctx, &|| 1_000, model, Mode::Start, engine, cancel, &|on| flags.lock().unwrap().push(on), &mut |e| events.push(e));
+    (events, flags.into_inner().unwrap())
+}
+
+/// The events as `kind[:step]`.
+fn kinds(events: &[EventView]) -> Vec<String> {
+    events
+        .iter()
+        .map(|e| match e {
+            EventView::Step { step, runtime, .. } => format!("step:{step:?}{}", if *runtime { " (runtime)" } else { "" }),
+            EventView::Progress { .. } => "progress".into(),
+            EventView::Finished { .. } => "finished".into(),
+            EventView::Failed { .. } => "failed".into(),
+        })
+        .collect()
+}
+
+#[test]
+fn a_fetch_goes_on_to_prepare_the_model_and_reports_it_finished_only_after() {
+    let _serial = serial_for_tests();
+    let b = bench("job-pass");
+    let m = b.installed(&MODEL_B);
+    let engine = Scripted::new();
+    let (events, flags) = job(&b, m, &engine, &Arc::new(AtomicBool::new(false)));
+    assert_eq!(kinds(&events), vec!["step:Checking", "step:Installing (runtime)", "step:Preparing", "finished"]);
+    assert_eq!(flags, vec![true, false]);
+    assert_eq!(engine.log(), vec!["start", "stop"]);
+    assert!(b.ready(m).is_some());
+}
+
+#[test]
+fn a_preparation_that_does_not_pass_ends_the_job_failed_with_the_model_still_downloaded() {
+    let _serial = serial_for_tests();
+    let b = bench("job-fail");
+    let m = b.installed(&MODEL_B);
+    let (events, _) = job(&b, m, &Scripted::answering(english), &Arc::new(AtomicBool::new(false)));
+    assert_eq!(kinds(&events).last().map(String::as_str), Some("failed"));
+    assert!(!kinds(&events).contains(&"finished".to_string()), "the model was never reported finished: {:?}", kinds(&events));
+    match events.last().unwrap() {
+        EventView::Failed { state, error: ActionErrorView::Prepare { memory: false, engine_busy: false, detail }, .. } => {
+            assert_eq!(serde_json::to_value(state).unwrap()["kind"], "installed", "it stays downloaded");
+            assert!(detail.contains("not accepted"), "{detail}");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(b.ready(m), None);
+
+    // Too little memory says so; another engine running says so.
+    let refused = NotStarted::Refused { why: Fit::InsufficientRam { needed: 4 * GIB, available: 2 * GIB }, alternative: None };
+    let (events, _) = job(&b, m, &Scripted::starting(Err(refused)), &Arc::new(AtomicBool::new(false)));
+    assert!(matches!(events.last(), Some(EventView::Failed { error: ActionErrorView::Prepare { memory: true, engine_busy: false, .. }, .. })), "{:?}", events.last());
+    let (events, _) = job(&b, m, &Scripted::starting(Err(NotStarted::Engine(EngineError::AlreadyActive))), &Arc::new(AtomicBool::new(false)));
+    assert!(matches!(events.last(), Some(EventView::Failed { error: ActionErrorView::Prepare { memory: false, engine_busy: true, .. }, .. })), "{:?}", events.last());
+}
+
+#[test]
+fn a_fetch_that_fails_or_is_refused_is_never_followed_by_a_preparation() {
+    let _serial = serial_for_tests();
+    let b = bench("job-no-fetch");
+    // Model A, its terms not accepted: the fetch refuses, and nothing is prepared.
+    let a = b.installed(&MODEL_A);
+    let engine = Scripted::starting(Ok(running(&MODEL_A, gpu("Vulkan0"))));
+    let (events, flags) = job(&b, a, &engine, &Arc::new(AtomicBool::new(false)));
+    assert_eq!(kinds(&events), vec!["failed"]);
+    assert!(matches!(events[0], EventView::Failed { error: ActionErrorView::LicenceNotAccepted { .. }, .. }));
+    assert!(flags.is_empty() && engine.log().is_empty());
+    // A model that cannot be downloaded (it has no source): the fetch fails, and nothing is prepared.
+    let m = b.model(&MODEL_B);
+    let engine = Scripted::new();
+    let (events, flags) = job(&b, m, &engine, &Arc::new(AtomicBool::new(false)));
+    assert_eq!(kinds(&events).last().map(String::as_str), Some("failed"));
+    assert!(!kinds(&events).contains(&"step:Preparing".to_string()));
+    assert!(flags.is_empty() && engine.log().is_empty());
+}
+
+#[test]
+fn a_cancel_while_preparing_ends_the_job_as_cancelled_not_failed() {
+    let _serial = serial_for_tests();
+    let b = bench("job-cancel");
+    let m = b.installed(&MODEL_B);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = cancel.clone();
+    let engine = Scripted { observe: Some(Arc::new(move || flag.store(true, Ordering::SeqCst))), ..Scripted::new() };
+    let (events, _) = job(&b, m, &engine, &cancel);
+    assert!(matches!(events.last(), Some(EventView::Failed { error: ActionErrorView::Cancelled, .. })), "{:?}", events.last());
+    assert_eq!(engine.log(), vec!["start", "stop"]);
+}
+
+#[test]
+fn the_interface_reads_the_preparing_step_and_a_preparation_failure() {
+    assert_eq!(serde_json::to_value(StepView::Preparing).unwrap(), "preparing");
+    let v = serde_json::to_value(ActionErrorView::from(&PrepareError::TestFailed("timeout".into()))).unwrap();
+    assert_eq!(v, serde_json::json!({ "kind": "prepare", "memory": false, "engineBusy": false, "detail": "the test translation failed: timeout" }));
+    assert_eq!(serde_json::to_value(ActionErrorView::from(&PrepareError::Cancelled)).unwrap(), serde_json::json!({ "kind": "cancelled" }));
+}
+
+#[test]
+fn a_test_catalogs_stand_in_starts_nothing_and_passes_or_fails_as_asked() {
+    let _serial = serial_for_tests();
+    let b = bench("stand-in");
+    let m = b.installed(&MODEL_B);
+    let stand_in = |behaviour| StandIn::new(m.id, Arc::new(AtomicBool::new(false)), behaviour);
+    let prepared = b.prepare_with_engine(m, &stand_in(Behaviour::Pass)).unwrap();
+    assert_eq!((prepared.device.as_str(), prepared.status), ("Test GPU (stand-in)", Status::Ok));
+    assert!(matches!(b.prepare_with_engine(m, &stand_in(Behaviour::Test)), Err(PrepareError::TestRejected { .. })));
+    let memory = b.prepare_with_engine(m, &stand_in(Behaviour::Memory));
+    assert!(matches!(memory, Err(PrepareError::NotStarted(NotStarted::Refused { why: Fit::InsufficientRam { .. }, .. }))), "{memory:?}");
+    assert_eq!(b.ready(m), None, "the failures removed the record");
 }
 
 // ═══ WITH THE REAL ENGINE ═══════════════════════════════════════════════════════════════════════════════════════════

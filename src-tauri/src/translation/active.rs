@@ -14,6 +14,9 @@
 //!   that model's licence and requirements: a test catalog cannot make a model's terms disappear.
 //! * **Only beside moved data.** The models section uses a test catalog only when the data directory has been moved
 //!   too (`SARD_DATA_DIR`), so test files never land in a real translation directory.
+//! * **No engine is run.** The test runtime's engine files are not a program. A test catalog's preparation uses a
+//!   stand-in (`test::StandIn`) that starts nothing and answers the test sentence after a short wait — or fails, as
+//!   `SARD_TRANSLATION_TEST_PREPARE` says (`memory` or `test`).
 
 use super::catalog::{self, Artifact, EngineSpec, Kind, ENGINE_WINDOWS_X64};
 use super::download::Policy;
@@ -58,11 +61,19 @@ pub fn active() -> Result<Active, String> {
 #[cfg(debug_assertions)]
 pub(crate) mod test {
     use std::ffi::OsString;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     use serde::Deserialize;
 
     use super::super::catalog::{self, Artifact, EngineFile, EngineSpec, Kind, Licence, Source};
     use super::super::download::Policy;
+    use super::super::engine::{EngineError, EngineInfo, Execution, PhaseTimes};
+    use super::super::execution::NotStarted;
+    use super::super::hardware::Fit;
+    use super::super::pipeline::{self, Raw, Request};
+    use super::super::prepare;
     use super::{builtin, Active};
 
     pub(crate) const VARIABLE: &str = "SARD_TRANSLATION_TEST_CATALOG";
@@ -165,5 +176,91 @@ pub(crate) mod test {
             models.push(artifact(built_in.id, Kind::Model, built_in.licence, m.download)?);
         }
         Ok(Active { spec, models, policy: Policy::loopback_for_development(), test: true })
+    }
+
+    // ---- The stand-in engine of a test catalog's preparation ------------------------------------------------------
+
+    pub(crate) const PREPARE_VARIABLE: &str = "SARD_TRANSLATION_TEST_PREPARE";
+
+    /// How long the stand-in takes to start, so that Preparing can be seen.
+    const START: Duration = Duration::from_secs(4);
+
+    /// A working model's translation of `prepare::TEST_SENTENCE`.
+    const ARABIC: &str = "تفتح المكتبة الصغيرة عند الزاوية أبوابها باكرًا كل صباح.";
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Behaviour {
+        Pass,
+        /// The hardware check refuses the GPU for too little memory.
+        Memory,
+        /// The test translation comes back in English, and is not accepted.
+        Test,
+    }
+
+    /// What a test catalog's preparation runs in place of an engine: nothing. It waits, then answers the test sentence as
+    /// a working model would — or fails as `PREPARE_VARIABLE` says.
+    pub(crate) struct StandIn {
+        model: &'static str,
+        cancel: Arc<AtomicBool>,
+        behaviour: Behaviour,
+    }
+
+    impl StandIn {
+        pub(crate) fn new(model: &'static str, cancel: Arc<AtomicBool>, behaviour: Behaviour) -> StandIn {
+            StandIn { model, cancel, behaviour }
+        }
+
+        pub(crate) fn from_environment(model: &'static str, cancel: Arc<AtomicBool>) -> StandIn {
+            let behaviour = match std::env::var(PREPARE_VARIABLE).as_deref() {
+                Ok("memory") => Behaviour::Memory,
+                Ok("test") => Behaviour::Test,
+                _ => Behaviour::Pass,
+            };
+            StandIn::new(model, cancel, behaviour)
+        }
+    }
+
+    impl prepare::Engine for StandIn {
+        type Source = StandInSource;
+
+        fn start(&self) -> Result<EngineInfo, NotStarted> {
+            let until = Instant::now() + START;
+            while Instant::now() < until {
+                if self.cancel.load(Ordering::SeqCst) {
+                    return Err(NotStarted::Engine(EngineError::Cancelled));
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if self.behaviour == Behaviour::Memory {
+                return Err(NotStarted::Refused { why: Fit::InsufficientRam { needed: 4 * 1024 * 1024 * 1024, available: 2 * 1024 * 1024 * 1024 }, alternative: None });
+            }
+            let execution = Execution::Gpu { device: "Test GPU (stand-in)".into() };
+            Ok(EngineInfo { pid: 0, port: 0, model_id: self.model.into(), execution, phases: PhaseTimes::default() })
+        }
+
+        fn source(&self, cancel: Arc<AtomicBool>) -> Result<StandInSource, String> {
+            Ok(StandInSource { cancel, english: self.behaviour == Behaviour::Test })
+        }
+
+        fn stop(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    pub(crate) struct StandInSource {
+        cancel: Arc<AtomicBool>,
+        english: bool,
+    }
+
+    impl pipeline::Source for StandInSource {
+        type Error = String;
+
+        fn answer(&mut self, r: &Request) -> Result<Raw, String> {
+            if self.cancel.load(Ordering::SeqCst) {
+                return Err("cancelled".into());
+            }
+            let out = if self.english { r.text.clone() } else { ARABIC.to_string() };
+            Ok(Raw { out, tokens: Some(14), stop: "eos".into() })
+        }
     }
 }

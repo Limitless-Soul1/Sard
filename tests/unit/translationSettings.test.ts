@@ -1,6 +1,6 @@
 // The Translation models section's decisions, without a DOM: what each card shows for each backend state and fetch
 // event, which actions are offered and why one is disabled, how a failure is worded — and the copy's own rules
-// (Latin names isolated inside Arabic, an ellipsis on every in-progress label, "Ready" nowhere yet).
+// (Latin names isolated inside Arabic, an ellipsis on every in-progress label, "Ready" only as the prepared state).
 import { describe, expect, it } from "vitest";
 
 import { ar } from "../../src/i18n/locales/ar";
@@ -20,6 +20,7 @@ function model(over: Partial<ModelView> = {}): ModelView {
     licenceStatus: { kind: "not_required" },
     termsAvailable: false,
     state: { kind: "not_downloaded" },
+    ready: false,
     diskStillNeeded: 2_900_000_000,
     notEnoughDisk: false,
     inUse: null,
@@ -32,7 +33,7 @@ function model(over: Partial<ModelView> = {}): ModelView {
 const modelA = (over: Partial<ModelView> = {}) =>
   model({ id: A, licence: "gemma_terms", licenceMustBeAccepted: true, licenceStatus: { kind: "missing", revision: "r" }, ...over });
 
-const ctx = { otherRunning: false, fetching: false, supported: true };
+const ctx = { otherRunning: false, fetching: false, preparing: false, supported: true };
 
 describe("the cards", () => {
   it("keeps Model A closed while its terms are not carried, and says why", () => {
@@ -55,12 +56,61 @@ describe("the cards", () => {
     expect(other.note).toBe("translation.unsupportedPlatform");
   });
 
-  it("says Downloaded after a download — never Ready, which waits for preparing", () => {
+  it("says Downloaded for a model no preparation has passed, and offers to try again", () => {
     const v = cardView(model({ state: { kind: "installed" } }), undefined, undefined, ctx);
     expect(v.state?.key).toBe("translation.state.downloaded");
+    expect(v.primary).toMatchObject({ action: "download", label: "err.act.retry", disabled: null });
     expect(v.verify).toEqual({ disabled: null });
     expect(v.remove).toEqual({ disabled: null });
-    expect(Object.keys(en).filter((k) => k.startsWith("translation.") && /\bready\b/i.test((en as Record<string, string>)[k]))).toEqual([]);
+    // "Ready" is only the prepared state's word.
+    expect(Object.keys(en).filter((k) => k.startsWith("translation.") && /\bready\b/i.test((en as Record<string, string>)[k]))).toEqual(["translation.state.ready"]);
+  });
+
+  it("says Ready only for a model the backend says is prepared, and offers nothing to start", () => {
+    const v = cardView(model({ state: { kind: "installed" }, ready: true }), undefined, undefined, ctx);
+    expect(v.state?.key).toBe("translation.state.ready");
+    expect(v.primary).toBeNull();
+    expect(v.verify).toEqual({ disabled: null });
+    expect(v.remove).toEqual({ disabled: null });
+    // Never for a model that is not installed, whatever the flag says.
+    expect(cardView(model({ ready: true }), undefined, undefined, ctx).state?.key).not.toBe("translation.state.ready");
+  });
+
+  it("shows Preparing while the model is prepared, with Cancel — and again when the section is reopened", () => {
+    const preparing: Job = { step: "preparing", runtime: false, done: null, total: null, cancelling: false };
+    const v = cardView(model({ state: { kind: "installed" } }), preparing, undefined, ctx);
+    expect(v.busy).toEqual({ label: "translation.state.preparing", progress: null, canCancel: true, cancelling: false });
+    expect(v.state).toBeNull();
+    const reopened = cardView(model({ state: { kind: "installed" } }), undefined, undefined, { ...ctx, fetching: true, preparing: true });
+    expect(reopened.busy?.label).toBe("translation.state.preparing");
+    const cancelling = cardView(model({ state: { kind: "installed" } }), { ...preparing, cancelling: true }, undefined, ctx);
+    expect(cancelling.busy).toMatchObject({ label: "upd.cancelling", canCancel: false });
+  });
+
+  it("turns the preparing step into the card's state, and the end of the job into a reload", () => {
+    const step: EventView = { kind: "step", model: B, artifact: B, runtime: false, step: "preparing" };
+    const a = applyEvent({}, {}, step);
+    expect(a.jobs[B]).toMatchObject({ step: "preparing", runtime: false });
+    const done = applyEvent(a.jobs, a.failures, { kind: "finished", model: B, artifact: B, runtime: false, state: { kind: "installed" } });
+    expect(done).toMatchObject({ jobs: {}, ended: true });
+  });
+
+  it("does not treat a cancelled preparation as a failure", () => {
+    const e: EventView = { kind: "failed", model: B, artifact: B, runtime: false, state: { kind: "installed" }, error: { kind: "cancelled" } };
+    expect(applyEvent({}, {}, e).failures).toEqual({});
+  });
+
+  it("words a failed preparation by what the backend found, with the technical text behind Details", () => {
+    const prepare = (memory: boolean, engineBusy: boolean): ActionErrorView => ({ kind: "prepare", memory, engineBusy, detail: "the test translation failed: timeout" });
+    expect(failureMessage(prepare(true, false)).message.key).toBe("translation.fail.memory");
+    expect(failureMessage(prepare(false, true)).message.key).toBe("translation.inUse.engine");
+    const other = failureMessage(prepare(false, false));
+    expect(other).toEqual({ message: { key: "translation.fail.unknown" }, resume: false, detail: "the test translation failed: timeout" });
+    // The card keeps the model downloaded, with the failure and Try again.
+    const v = cardView(model({ state: { kind: "installed" } }), undefined, prepare(false, false), ctx);
+    expect(v.state?.key).toBe("translation.state.downloaded");
+    expect(v.failure?.message.key).toBe("translation.fail.unknown");
+    expect(v.primary?.label).toBe("err.act.retry");
   });
 
   it("shows an interruption with what was kept, and offers Resume and Remove", () => {
@@ -200,10 +250,15 @@ describe("the copy", () => {
   });
 
   it("ends every in-progress label with an ellipsis, in both languages", () => {
-    for (const k of ["translation.state.checking", "translation.state.downloading", "translation.state.engine", "translation.state.verifying", "translation.state.removing"]) {
+    for (const k of ["translation.state.checking", "translation.state.downloading", "translation.state.engine", "translation.state.verifying", "translation.state.preparing", "translation.state.removing"]) {
       expect(english[k].endsWith("…"), k).toBe(true);
       expect(arabic[k].endsWith("…"), k).toBe(true);
     }
+  });
+
+  it("carries Preparing and Ready exactly as approved", () => {
+    expect([english["translation.state.preparing"], english["translation.state.ready"]]).toEqual(["Preparing…", "Ready"]);
+    expect([arabic["translation.state.preparing"], arabic["translation.state.ready"]]).toEqual(["جارٍ التجهيز…", "جاهز"]);
   });
 
   it("leaves the approved strings it reuses exactly as they were", () => {

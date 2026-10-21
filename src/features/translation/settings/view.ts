@@ -1,8 +1,8 @@
 // What a model card shows, decided from the backend's overview, the fetch events and the last failure — pure, so it
 // is tested without a DOM. The rules are the Settings design's (private plan): no hardware verdict is shown except an
-// exact disk shortage; a downloaded model is "Downloaded", never "Ready" (that waits for preparing); a disabled
-// action always carries its reason; a failure is a sentence in the card, with the technical text behind Details; a
-// cancel is not a failure (the card shows what was kept).
+// exact disk shortage; a downloaded model is "Downloaded" until a preparation has passed, and only then "Ready" (the
+// backend decides which); a disabled action always carries its reason; a failure is a sentence in the card, with the
+// technical text behind Details; a cancel is not a failure (the card shows what was kept).
 
 import type { TKey } from "../../../i18n/locales/en";
 import type { ActionErrorView, EventView, ModelView, StepView } from "./api";
@@ -49,7 +49,7 @@ export function applyEvent(jobs: Jobs, failures: Failures, e: EventView): Applie
       if (e.runtime) return { jobs, failures, ended: false };
       return { jobs: without(jobs, e.model), failures, ended: true };
     case "failed": {
-      const cancelled = e.error.kind === "download" && e.error.cause.kind === "cancelled";
+      const cancelled = (e.error.kind === "download" && e.error.cause.kind === "cancelled") || e.error.kind === "cancelled";
       return { jobs: without(jobs, e.model), failures: cancelled ? failures : { ...failures, [e.model]: e.error }, ended: true };
     }
   }
@@ -105,6 +105,8 @@ export function failureMessage(e: ActionErrorView): { message: Message; resume: 
     case "busy":
     case "running":
       return { message: m("translation.fail.busy"), resume: false, detail };
+    case "prepare":
+      return { message: m(e.memory ? "translation.fail.memory" : e.engineBusy ? "translation.inUse.engine" : "translation.fail.unknown"), resume: false, detail };
     default:
       return { message: m("translation.fail.unknown"), resume: false, detail };
   }
@@ -132,20 +134,35 @@ export interface CardContext {
   otherRunning: boolean;
   /** The backend says a fetch of this model runs, though no event has arrived yet (the section was reopened). */
   fetching: boolean;
+  /** The backend says that fetch is preparing the model. */
+  preparing: boolean;
   supported: boolean;
 }
 
 const stepLabel = (j: Job): TKey =>
-  j.cancelling ? "upd.cancelling" : j.step === "checking" ? "translation.state.checking" : j.step === "verifying" ? "translation.state.verifying" : j.step === "installing" ? "upd.installing" : j.runtime ? "translation.state.engine" : "translation.state.downloading";
+  j.cancelling
+    ? "upd.cancelling"
+    : j.step === "checking"
+      ? "translation.state.checking"
+      : j.step === "verifying"
+        ? "translation.state.verifying"
+        : j.step === "installing"
+          ? "upd.installing"
+          : j.step === "preparing"
+            ? "translation.state.preparing"
+            : j.runtime
+              ? "translation.state.engine"
+              : "translation.state.downloading";
 
 export function cardView(m: ModelView, job: Job | undefined, failure: ActionErrorView | undefined, ctx: CardContext): CardView {
   const inUseReason: TKey | null = m.inUse === "engine" ? "translation.inUse.engine" : m.inUse === "translation" ? "translation.inUse.translation" : null;
   const empty: CardView = { state: null, inUse: m.inUse != null, busy: null, primary: null, verify: null, remove: null, failure: null, note: null };
 
   if (job || ctx.fetching) {
-    const j = job ?? { step: "downloading" as StepView, runtime: false, done: null, total: null, cancelling: false };
+    const j = job ?? { step: (ctx.preparing ? "preparing" : "downloading") as StepView, runtime: false, done: null, total: null, cancelling: false };
     const progress = j.step === "downloading" && j.done != null && j.total != null && j.total > 0 ? { done: j.done, total: j.total } : null;
-    return { ...empty, busy: { label: stepLabel(j), progress, canCancel: (j.step === "checking" || j.step === "downloading") && !j.cancelling, cancelling: j.cancelling } };
+    const cancellable = j.step === "checking" || j.step === "downloading" || j.step === "preparing";
+    return { ...empty, busy: { label: stepLabel(j), progress, canCancel: cancellable && !j.cancelling, cancelling: j.cancelling } };
   }
 
   // Why a fetch cannot start, in order of what the reader can least change.
@@ -183,7 +200,18 @@ export function cardView(m: ModelView, job: Job | undefined, failure: ActionErro
         note: blocked === "translation.licence.pending" ? blocked : null,
       };
     case "installed":
-      return { ...empty, state: { key: "translation.state.downloaded" }, verify: { disabled: inUseReason }, remove: removable, failure: fail };
+      if (m.ready) return { ...empty, state: { key: "translation.state.ready" }, verify: { disabled: inUseReason }, remove: removable, failure: fail };
+      // Downloaded, but no preparation has passed: it was cancelled, it failed, or Sard closed during it. Trying again
+      // is the same fetch, which finds every file in place and prepares.
+      return {
+        ...empty,
+        state: { key: "translation.state.downloaded" },
+        primary: { action: "download", label: "err.act.retry", disabled: blocked, needsLicence },
+        verify: { disabled: inUseReason },
+        remove: removable,
+        failure: fail,
+        note: blocked === "translation.licence.pending" || blocked === "translation.unsupportedPlatform" ? blocked : null,
+      };
     case "unverified":
       return { ...empty, state: { key: "translation.state.unverified" }, primary: { action: "verify", label: "translation.action.verify", disabled: inUseReason, needsLicence: false }, remove: removable, failure: fail };
     case "damaged":

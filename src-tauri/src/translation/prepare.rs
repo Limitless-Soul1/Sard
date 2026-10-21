@@ -36,19 +36,23 @@
 //! run. One that ends without saying anything about the model leaves the row as it was: refused before the engine is
 //! asked anything (the licence, the files), cancelled, another engine running, or the computer unreadable.
 //!
+//! ## From the interface
+//!
+//! No command of its own. A fetch that ends with the model downloaded and verified goes on to prepare it, in the same
+//! job and under the same cancel (`model_commands`); "Try again" on a downloaded model that is not ready is that same
+//! fetch, which finds every file in place and prepares.
+//!
 //! ## Not here
 //!
 //! * **The CPU.** Whether the CPU path is offered at all is decision D4, and no exchange timeout is decided for it, so
 //!   a preparation runs on the GPU only.
-//! * **The interface.** No command is registered: the wording for Preparing, Ready and their failures is not approved
-//!   yet, and nothing can start the engine from the interface.
-//! * **A run with the real engine.** The steps are tested against scripted engines. The real engine and GPU are
-//!   exercised only by the ignored test at the end of `prepare_tests`, run by hand.
+//! * **A run with the real engine in the tests.** The steps are tested against scripted engines. The real engine and
+//!   GPU are exercised only by the ignored test at the end of `prepare_tests`, run by hand.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 
 use super::catalog::{Artifact, EngineSpec, Kind};
 use super::engine::{EngineError, EngineInfo, EngineManager, Execution, PhaseTimes};
@@ -160,9 +164,43 @@ pub enum PrepareError {
     Store(String),
 }
 
+impl std::fmt::Display for PrepareError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAModel(id) => write!(f, "{id} is not a translation model"),
+            Self::LicenceNotAccepted { model, .. } => write!(f, "the licence terms of {model} are not accepted"),
+            Self::NotInstalled { model, state } => write!(f, "{model} is not installed ({state:?})"),
+            Self::RuntimeMissing => write!(f, "the translation engine is not installed, and its archive is not downloaded"),
+            Self::Install(e) => write!(f, "the translation engine could not be installed: {e}"),
+            Self::NotStarted(NotStarted::Engine(e)) => match e.recovery() {
+                Some(recovery) => write!(f, "{e}. {recovery}"),
+                None => write!(f, "{e}"),
+            },
+            Self::NotStarted(NotStarted::Assessment(e)) => write!(f, "the computer could not be read: {e}"),
+            Self::NotStarted(NotStarted::Refused { why, .. }) => write!(f, "the hardware check did not confirm the GPU: {why:?}"),
+            Self::NotStarted(other) => write!(f, "the GPU is not used: {other:?}"),
+            Self::TestFailed(why) => write!(f, "the test translation failed: {why}"),
+            Self::TestRejected { status, reasons } => write!(f, "the test translation was not accepted ({}): {}", status.name(), reasons.join("; ")),
+            Self::StopFailed(why) => write!(f, "the engine did not stop: {why}"),
+            Self::Cancelled => write!(f, "cancelled"),
+            Self::Store(why) => write!(f, "{why}"),
+        }
+    }
+}
+
 /// A model prepared with its current bytes and the current engine, both still installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ready {
+    pub device: String,
+    pub prepared_at: i64,
+}
+
+/// One row of the record, as stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Record {
+    pub model: String,
+    pub model_sha256: String,
+    pub engine_sha256: String,
     pub device: String,
     pub prepared_at: i64,
 }
@@ -315,20 +353,26 @@ fn failed(ctx: &Context, model: &Artifact, error: PrepareError) -> PrepareError 
 
 /// Whether `model` is ready: prepared with its current bytes and the current engine, both still installed.
 pub fn ready(conn: &Connection, store: &Store, spec: &EngineSpec, model: &Artifact) -> Result<Option<Ready>, String> {
-    let row = conn
-        .query_row(
-            "SELECT device, prepared_at FROM translation_prepared WHERE model = ?1 AND model_sha256 = ?2 AND engine_sha256 = ?3",
-            [model.id, model.sha256, spec.archive.sha256],
-            |r| Ok(Ready { device: r.get(0)?, prepared_at: r.get(1)? }),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?;
-    let Some(row) = row else {
+    let records = records(conn).map_err(|e| e.to_string())?;
+    ready_in(&records, store, spec, model).map_err(|e| e.to_string())
+}
+
+/// Every row of the record. Read under the database lock; judged with `ready_in` without it.
+pub fn records(conn: &Connection) -> rusqlite::Result<Vec<Record>> {
+    let mut st = conn.prepare("SELECT model, model_sha256, engine_sha256, device, prepared_at FROM translation_prepared ORDER BY model")?;
+    let rows = st.query_map([], |r| {
+        Ok(Record { model: r.get(0)?, model_sha256: r.get(1)?, engine_sha256: r.get(2)?, device: r.get(3)?, prepared_at: r.get(4)? })
+    })?;
+    rows.collect()
+}
+
+/// Whether `records` make `model` ready: a row naming its current bytes and the current engine's, with both installed.
+pub fn ready_in(records: &[Record], store: &Store, spec: &EngineSpec, model: &Artifact) -> std::io::Result<Option<Ready>> {
+    let Some(row) = records.iter().find(|r| r.model == model.id && r.model_sha256 == model.sha256 && r.engine_sha256 == spec.archive.sha256) else {
         return Ok(None);
     };
-    let installed = store.state(model).map_err(|e| e.to_string())? == State::Installed
-        && install::state(store, spec).map_err(|e| e.to_string())? == EngineState::Installed;
-    Ok(installed.then_some(row))
+    let installed = store.state(model)? == State::Installed && install::state(store, spec)? == EngineState::Installed;
+    Ok(installed.then(|| Ready { device: row.device.clone(), prepared_at: row.prepared_at }))
 }
 
 fn record(conn: &Connection, model: &Artifact, spec: &EngineSpec, device: &str, at: i64) -> rusqlite::Result<()> {

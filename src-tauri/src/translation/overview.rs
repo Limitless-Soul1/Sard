@@ -21,6 +21,7 @@ use super::execution::Assessment;
 use super::hardware::{self, Fit, HardwareError, HardwareReport, NoGpu, Undetermined};
 use super::install::{self, EngineState};
 use super::manage::{self, InUseBy, LicenceStatus};
+use super::prepare;
 use super::store::{State, Store};
 
 /// Where translation keeps its files. `dir` is `None` if the application-data directory could not be resolved at
@@ -50,6 +51,8 @@ pub struct Overview {
     pub test_catalog: bool,
     /// The models a fetch is running for now (filled by the command; a reopened section shows them as busy).
     pub fetching: Vec<String>,
+    /// Of those, the models whose fetch is preparing them now (filled by the command).
+    pub preparing: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -65,6 +68,9 @@ pub struct ModelView {
     /// This build carries the text of those terms. Without it they cannot be accepted, and the model not fetched.
     pub terms_available: bool,
     pub state: StateView,
+    /// Prepared with its current bytes and the current engine, both installed (`prepare`): "Ready". Never true for a
+    /// model that was only downloaded.
+    pub ready: bool,
     /// The bytes still to be downloaded and installed before the model can run (the hardware check's own figure).
     pub disk_still_needed: u64,
     /// The free disk space was read and is less than that, with the check's margin: exact arithmetic, not an estimate.
@@ -244,12 +250,14 @@ impl From<&Undetermined> for UndeterminedView {
     }
 }
 
-/// The overview of the store at `root` for the catalog `active`, with each licence's acceptance read by `licence` and
-/// the computer read once by `probe` (in the app, `hardware::probe`).
+/// The overview of the store at `root` for the catalog `active`, with each licence's acceptance read by `licence`, the
+/// preparations recorded as `prepared` (`prepare::records`), and the computer read once by `probe` (in the app,
+/// `hardware::probe`).
 pub fn overview(
     root: &Path,
     active: &Active,
     licence: &dyn Fn(Licence) -> Result<LicenceStatus, String>,
+    prepared: &[prepare::Record],
     probe: impl Fn(&Path) -> Result<HardwareReport, HardwareError>,
 ) -> io::Result<Overview> {
     let store = Store::open(root)?;
@@ -275,6 +283,7 @@ pub fn overview(
             licence_status: (&status).into(),
             terms_available: manage::terms(a.licence).is_some(),
             state: (&store.state(a)?).into(),
+            ready: prepare::ready_in(prepared, &store, spec, a)?.is_some(),
             disk_still_needed,
             not_enough_disk: matches!(gpu, Some(FitView::InsufficientDisk { .. })),
             in_use: manage::in_use(a.id).map(Into::into),
@@ -291,6 +300,7 @@ pub fn overview(
         supported: cfg!(all(windows, target_arch = "x86_64")),
         test_catalog: active.test,
         fetching: Vec::new(),
+        preparing: Vec::new(),
     })
 }
 
@@ -299,20 +309,22 @@ pub fn overview(
 pub async fn translation_models(root: tauri::State<'_, Root>, app: tauri::State<'_, crate::db::AppState>) -> Result<Overview, String> {
     let dir = root.dir.clone().ok_or("the translation directory could not be found")?;
     let active = active::active()?;
-    // The acceptances, read now and briefly: the overview itself runs on another thread.
-    let statuses = {
+    // The acceptances and the preparations, read now and briefly: the overview itself runs on another thread.
+    let (statuses, prepared) = {
         let conn = app.conn();
-        [Licence::GemmaTerms, Licence::Apache2, Licence::LlamaCppRuntime]
-            .map(|l| (l, manage::licence_status(&conn, l).map_err(|e| e.to_string())))
+        let statuses = [Licence::GemmaTerms, Licence::Apache2, Licence::LlamaCppRuntime]
+            .map(|l| (l, manage::licence_status(&conn, l).map_err(|e| e.to_string())));
+        (statuses, prepare::records(&conn).map_err(|e| e.to_string())?)
     };
     tauri::async_runtime::spawn_blocking(move || {
         let licence = |l: Licence| statuses.iter().find(|(k, _)| *k == l).map(|(_, s)| s.clone()).unwrap_or_else(|| Err("unknown licence".into()));
-        overview(&dir, &active, &licence, hardware::probe)
+        overview(&dir, &active, &licence, &prepared, hardware::probe)
     })
     .await
     .map_err(|e| e.to_string())?
     .map(|mut o| {
         o.fetching = super::model_commands::running();
+        o.preparing = super::model_commands::preparing();
         o
     })
     .map_err(|e| e.to_string())

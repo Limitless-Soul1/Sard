@@ -6,7 +6,8 @@
 //! * **Delivery:** the catalog of downloadable files (`catalog`), where they live and what state they
 //!   are in (`store`), and the verified, resumable download (`download`).
 //! * **The engine:** installing it from its verified archive (`install`), and starting, checking and
-//!   stopping its process (`engine`). One slot (`slot`) keeps the two apart.
+//!   stopping its process (`engine`). One slot (`slot`) keeps the two apart. The supervisor (`supervisor`)
+//!   starts the engine for a translation, restarts it once if it fails, and stops it when it is not needed.
 //! * **The hardware check** (`hardware`): reading the computer's memory, disk space and graphics adapters,
 //!   and deciding whether a model runs on the GPU, on the CPU, or not at all. It reads; it never loads a
 //!   model or starts the engine.
@@ -54,6 +55,7 @@ pub mod pipeline;
 pub mod install;
 pub mod slot;
 pub mod store;
+pub mod supervisor;
 
 #[cfg(test)]
 mod download_server_tests;
@@ -71,5 +73,7 @@ mod fingerprint_tests;
 mod hardware_tests;
 #[cfg(test)]
 mod install_tests;
+#[cfg(test)]
+mod supervisor_tests;
 #[cfg(test)]
 mod tests;

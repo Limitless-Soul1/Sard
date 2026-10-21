@@ -28,13 +28,13 @@ use crate::db::migrations;
 
 // ---- Fixtures ----
 
-struct Db {
+pub(super) struct Db {
     db: Option<Mutex<Connection>>,
     dir: PathBuf,
 }
 
 impl Db {
-    fn m(&self) -> &Mutex<Connection> {
+    pub(super) fn m(&self) -> &Mutex<Connection> {
         self.db.as_ref().unwrap()
     }
 }
@@ -46,7 +46,7 @@ impl Drop for Db {
     }
 }
 
-fn scratch(tag: &str) -> Db {
+pub(super) fn scratch(tag: &str) -> Db {
     let dir = std::env::temp_dir().join(format!("sard_edition_run_{tag}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -56,11 +56,11 @@ fn scratch(tag: &str) -> Db {
     Db { db: Some(Mutex::new(conn)), dir }
 }
 
-fn gpu(device: &str) -> engine::Execution {
+pub(super) fn gpu(device: &str) -> engine::Execution {
     engine::Execution::Gpu { device: device.into() }
 }
 
-fn config_for(model: &Artifact, execution: &engine::Execution) -> EditionConfig {
+pub(super) fn config_for(model: &Artifact, execution: &engine::Execution) -> EditionConfig {
     EditionConfig {
         source_lang: "en".into(),
         target_lang: "ar".into(),
@@ -71,19 +71,19 @@ fn config_for(model: &Artifact, execution: &engine::Execution) -> EditionConfig 
     }
 }
 
-fn running(model: &Artifact, execution: engine::Execution) -> EngineInfo {
+pub(super) fn running(model: &Artifact, execution: engine::Execution) -> EngineInfo {
     EngineInfo { pid: 1, port: 1, model_id: model.id.into(), execution, phases: PhaseTimes::default() }
 }
 
 /// The paragraphs, and what the scripted engine answers for each request text. `TWO_SPACES` breaks the input
 /// contract, so it is stored as rejected and must never be sent.
-const P00: &str = "Alpha beta gamma. Delta epsilon.";
-const TWO_SPACES: &str = "Two  spaces here.";
-const P02: &str = "One two three.";
-const P10: &str = "The night was dark.";
-const P11: &str = "She ran home.";
-const P20: &str = "The end.";
-const ANSWERS: &[(&str, &str)] = &[
+pub(super) const P00: &str = "Alpha beta gamma. Delta epsilon.";
+pub(super) const TWO_SPACES: &str = "Two  spaces here.";
+pub(super) const P02: &str = "One two three.";
+pub(super) const P10: &str = "The night was dark.";
+pub(super) const P11: &str = "She ran home.";
+pub(super) const P20: &str = "The end.";
+pub(super) const ANSWERS: &[(&str, &str)] = &[
     (P00, "ألفا بيتا غاما. دلتا إبسلون."),
     (P02, "واحد اثنان ثلاثة."),
     (P10, "كانت الليلة مظلمة."),
@@ -91,14 +91,14 @@ const ANSWERS: &[(&str, &str)] = &[
     (P20, "النهاية."),
 ];
 
-fn sentences(text: &str) -> Vec<String> {
+pub(super) fn sentences(text: &str) -> Vec<String> {
     match text {
         P00 => vec!["Alpha beta gamma.".into(), "Delta epsilon.".into()],
         other => vec![other.into()],
     }
 }
 
-fn section(index: u32, texts: &[&str]) -> SectionInput {
+pub(super) fn section(index: u32, texts: &[&str]) -> SectionInput {
     let paragraphs: Vec<ParagraphInput> = texts
         .iter()
         .enumerate()
@@ -109,19 +109,19 @@ fn section(index: u32, texts: &[&str]) -> SectionInput {
 }
 
 /// Three sections, six paragraphs, one of them rejected: five to translate.
-fn manifest() -> Vec<SectionInput> {
+pub(super) fn manifest() -> Vec<SectionInput> {
     vec![section(0, &[P00, TWO_SPACES, P02]), section(1, &[P10, P11]), section(2, &[P20])]
 }
 
 /// The paragraphs a full run sends, in reading order.
-const SENT: [(u32, u32, &str); 5] = [(0, 0, P00), (0, 2, P02), (1, 0, P10), (1, 1, P11), (2, 0, P20)];
+pub(super) const SENT: [(u32, u32, &str); 5] = [(0, 0, P00), (0, 2, P02), (1, 0, P10), (1, 1, P11), (2, 0, P20)];
 
-fn make(db: &Db, model: &Artifact) -> String {
+pub(super) fn make(db: &Db, model: &Artifact) -> String {
     create(&db.m().lock().unwrap(), "book", &config_for(model, &gpu("Vulkan0")), "1.4.1 TEST", &manifest(), 10).unwrap()
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Fault {
+pub(super) enum Fault {
     Engine,
     Cancelled,
 }
@@ -192,7 +192,7 @@ impl Source for Script<'_> {
 }
 
 /// What the pipeline makes of `text` with the scripted answers — what the store must hold for it.
-fn expected(text: &str, model: &Artifact) -> Outcome {
+pub(super) fn expected(text: &str, model: &Artifact) -> Outcome {
     let k = engine_config(&ENGINE_WINDOWS_X64, model, &gpu("Vulkan0")).unwrap().profile_k;
     pipeline::translate(&mut Script::alone(), &Profile { k }, &Paragraph { text: text.into(), sentences: sentences(text) }).unwrap()
 }
@@ -213,26 +213,26 @@ fn first_requests(asked: &[String]) -> Vec<String> {
     seen
 }
 
-fn sessions(db: &Db, id: &str) -> Vec<(Option<String>, bool)> {
+pub(super) fn sessions(db: &Db, id: &str) -> Vec<(Option<String>, bool)> {
     let c = db.m().lock().unwrap();
     let mut st = c.prepare("SELECT end_reason, ended_at IS NOT NULL FROM translation_sessions WHERE edition_id = ?1 ORDER BY rowid").unwrap();
     let rows = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
     rows
 }
 
-fn failures(db: &Db, id: &str) -> Vec<(u32, u32, String, String)> {
+pub(super) fn failures(db: &Db, id: &str) -> Vec<(u32, u32, String, String)> {
     let c = db.m().lock().unwrap();
     let mut st = c.prepare("SELECT section_index, ordinal, kind, detail FROM translation_failures WHERE edition_id = ?1 ORDER BY rowid").unwrap();
     let rows = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap().map(|r| r.unwrap()).collect();
     rows
 }
 
-fn state(db: &Db, id: &str) -> Edition {
+pub(super) fn state(db: &Db, id: &str) -> Edition {
     get(&db.m().lock().unwrap(), id).unwrap().unwrap()
 }
 
 /// Every paragraph that has a result holds exactly what the pipeline makes of it; returns how many have one.
-fn results_are_the_pipelines(db: &Db, id: &str, model: &Artifact) -> usize {
+pub(super) fn results_are_the_pipelines(db: &Db, id: &str, model: &Artifact) -> usize {
     let c = db.m().lock().unwrap();
     let mut n = 0;
     for (si, ord, text) in SENT {

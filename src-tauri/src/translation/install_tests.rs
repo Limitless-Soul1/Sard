@@ -715,6 +715,35 @@ fn a_crash_between_the_two_moves_leaves_no_engine_at_all() {
 }
 
 #[test]
+fn a_failure_moving_the_new_engine_in_puts_the_old_one_back_whole_and_recorded() {
+    let _serial = serial_for_tests();
+    let f = fixture("second-move-fails");
+    install_engine(&f).unwrap();
+    let record = fs::read(f.base().join(ENGINE_RECORD)).unwrap();
+    let files = listing(&f.dir());
+    // An error, not a crash, after the old engine was moved aside: it is moved back, and its record restored.
+    let fail = Faults { fail_second_move: true, ..Faults::default() };
+    assert!(matches!(install::install_with(&f.store, f.spec, &never(), fail), Err(InstallError::Io(_))));
+    assert_eq!(install::state(&f.store, f.spec).unwrap(), EngineState::Installed);
+    install::verify(&f.store, f.spec).expect("the engine in place is the old one, whole");
+    assert_eq!(fs::read(f.base().join(ENGINE_RECORD)).unwrap(), record, "its record is the one it had");
+    assert_eq!(listing(&f.dir()), files);
+    assert_eq!(f.leftovers(), Vec::<String>::new(), "nothing is left staged or set aside");
+}
+
+#[test]
+fn removing_the_engine_also_removes_a_record_whose_writing_was_cut_short() {
+    let _serial = serial_for_tests();
+    let f = fixture("stale-record");
+    install_engine(&f).unwrap();
+    let tmp = f.base().join(format!("{ENGINE_RECORD}.tmp"));
+    fs::write(&tmp, b"{\"half\": ").unwrap();
+    install::remove(&f.store, f.spec).unwrap();
+    assert!(!tmp.exists(), "no temporary record is left behind");
+    f.assert_nothing_installed();
+}
+
+#[test]
 fn a_cleanup_that_fails_leaves_a_whole_engine_and_says_so() {
     let _serial = serial_for_tests();
     let f = fixture("cleanup-fails");

@@ -10,7 +10,9 @@
 //!   starts the engine for a translation, restarts it once if it fails, and stops it when it is not needed.
 //! * **Managing the models** (`manage`): the check before a download, the fetch of a model with the runtime and
 //!   the engine, verification and removal — with the licence acceptance a model's terms require recorded first.
-//!   The catalog it works with is the built-in one in a release build (`active`).
+//!   The catalog it works with is the built-in one in a release build (`active`). Preparing a downloaded model
+//!   (`prepare`) starts it once on the GPU and translates a test sentence; only a preparation that passes makes it
+//!   ready.
 //! * **The hardware check** (`hardware`): reading the computer's memory, disk space and graphics adapters,
 //!   and deciding whether a model runs on the GPU, on the CPU, or not at all. It reads; it never loads a
 //!   model or starts the engine.
@@ -64,6 +66,7 @@ pub mod install;
 pub mod manage;
 pub mod model_commands;
 pub mod overview;
+pub mod prepare;
 pub mod slot;
 pub mod store;
 pub mod supervisor;
@@ -92,6 +95,8 @@ mod install_tests;
 mod manage_tests;
 #[cfg(test)]
 mod overview_tests;
+#[cfg(test)]
+mod prepare_tests;
 #[cfg(test)]
 mod supervisor_tests;
 #[cfg(test)]

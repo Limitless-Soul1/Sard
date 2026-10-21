@@ -175,6 +175,24 @@ describe("assembleSection", () => {
     // The store refuses a section whose paragraphs are not its leaves less the dropped ones.
     expect(s.paragraphs.length).toBe(s.leaves - s.dropped_empty);
   });
+
+  it("produces exactly the sample the edition-creation command is tested with", () => {
+    // The same file is read by the Rust side's tests: the page's output and the command's input are one contract.
+    const sample = JSON.parse(read("tests/fixtures/translation/extraction-sample.json"));
+    const atoms: Atoms = { a: 2, br: 1, img: 0, noteref: 1 };
+    const extraction = {
+      extraction_id: EXTRACTION_ID,
+      sections: [
+        assembleSection(0, { id: "OEBPS/ch1.xhtml" }, "application/xhtml+xml", [
+          leaf([0], "h1", "  Chapter\n One "),
+          leaf([1], "p", " 　 "),
+          leaf([2, 0], "li", "First.  Second.", atoms),
+        ], false),
+        assembleSection(1, { id: "OEBPS/notes.xhtml", linear: "no" }, "text/html", [leaf([], "body", "Just text.")], true),
+      ],
+    };
+    expect(extraction).toEqual(sample);
+  });
 });
 
 describe("the extraction's identity", () => {

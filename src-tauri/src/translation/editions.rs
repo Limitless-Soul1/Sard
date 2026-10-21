@@ -196,8 +196,10 @@ pub struct EditionConfig {
     pub webview_version: String,
 }
 
-/// One section of the book, as the extraction saw it, with its paragraphs in order.
-#[derive(Debug, Clone, PartialEq)]
+/// One section of the book, as the extraction saw it, with its paragraphs in order. Read from the extraction
+/// module's output field for field; a field it does not have, or lacks, is refused.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SectionInput {
     pub index: u32,
     pub href: String,
@@ -212,7 +214,8 @@ pub struct SectionInput {
 }
 
 /// One paragraph: where it is, what is inside it, and the exact text and sentences the pipeline receives.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ParagraphInput {
     /// Child-element indices from `<body>` down to the leaf block (empty for the body itself).
     pub path: Vec<u32>,

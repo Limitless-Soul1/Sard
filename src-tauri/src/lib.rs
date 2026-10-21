@@ -234,6 +234,8 @@ macro_rules! sard_invoke_handler {
             window_chrome::window_fullscreen,
             window_chrome::window_fullscreen_exit,
             window_chrome::set_window_ground,
+            // TRANSLATION: making an edition writes only its rows; nothing is downloaded, started or translated.
+            translation::creation::translation_create_edition,
             $($diag_cmd),*
         ])
     };
@@ -667,6 +669,15 @@ fn dev_data_dir_override() -> Option<std::path::PathBuf> {
                 Ok(0) => {}
                 Ok(n) => eprintln!("reclaimed {n} image binding(s) from unsaved cards"),
                 Err(e) => eprintln!("could not reclaim unsaved card image bindings: {e}"),
+            }
+            // A translation run that never ended its session — Sard was killed, or crashed — left its edition
+            // `running`, and no run could start on it again. Nothing can be translating yet, so every open session
+            // is closed here as interrupted. One query that usually finds nothing.
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            match translation::editions::recover_interrupted(&conn, now) {
+                Ok(0) => {}
+                Ok(n) => eprintln!("closed {n} translation session(s) interrupted when Sard last ended"),
+                Err(e) => eprintln!("could not close interrupted translation sessions: {e:?}"),
             }
             let version = db::schema_version(&conn)?;
 

@@ -1,0 +1,30 @@
+{
+  "extraction_id": "leafblocks-1/pyws-3.12.0-ucd15/segmenter-en-1/atoms-1",
+  "sections": [
+    {
+      "index": 0,
+      "href": "OEBPS/ch1.xhtml",
+      "linear": true,
+      "content_type": "application/xhtml+xml",
+      "leaves": 3,
+      "dropped_empty": 1,
+      "body_fallback": false,
+      "paragraphs": [
+        { "path": [0], "tag": "h1", "atoms": { "a": 0, "br": 0, "img": 0, "noteref": 0 }, "text": "Chapter One", "sentences": ["Chapter One"] },
+        { "path": [2, 0], "tag": "li", "atoms": { "a": 2, "br": 1, "img": 0, "noteref": 1 }, "text": "First. Second.", "sentences": ["First.", "Second."] }
+      ]
+    },
+    {
+      "index": 1,
+      "href": "OEBPS/notes.xhtml",
+      "linear": false,
+      "content_type": "text/html",
+      "leaves": 1,
+      "dropped_empty": 0,
+      "body_fallback": true,
+      "paragraphs": [
+        { "path": [], "tag": "body", "atoms": { "a": 0, "br": 0, "img": 0, "noteref": 0 }, "text": "Just text.", "sentences": ["Just text."] }
+      ]
+    }
+  ]
+}

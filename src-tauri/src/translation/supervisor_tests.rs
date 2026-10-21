@@ -29,11 +29,15 @@ struct Scripted {
     cancel_on_fail: bool,
     /// How long each answer takes.
     delay: Duration,
+    /// Called as each request arrives, to look at the world while the job runs.
+    observe: Option<Observer>,
 }
+
+type Observer = Arc<dyn Fn() + Send + Sync>;
 
 impl Scripted {
     fn new(fail_on: Vec<Option<&'static str>>) -> Arc<Scripted> {
-        Arc::new(Scripted { log: Mutex::new(Vec::new()), up: Mutex::new(None), starts: Mutex::new(0), fail_on, cannot_start: false, cancel_after: None, cancel_on_fail: false, delay: Duration::ZERO })
+        Arc::new(Scripted { log: Mutex::new(Vec::new()), up: Mutex::new(None), starts: Mutex::new(0), fail_on, cannot_start: false, cancel_after: None, cancel_on_fail: false, delay: Duration::ZERO, observe: None })
     }
     fn log(&self) -> Vec<&'static str> {
         self.log.lock().unwrap().clone()
@@ -47,6 +51,7 @@ struct ScriptedSource {
     cancel_on_fail: bool,
     delay: Duration,
     answered: usize,
+    observe: Option<Observer>,
 }
 
 impl Source for ScriptedSource {
@@ -54,6 +59,9 @@ impl Source for ScriptedSource {
     fn answer(&mut self, r: &Request) -> Result<Raw, Fault> {
         if self.cancel.load(Ordering::SeqCst) {
             return Err(Fault::Cancelled);
+        }
+        if let Some(observe) = &self.observe {
+            observe();
         }
         std::thread::sleep(self.delay);
         if self.fail == Some(r.text.as_str()) {
@@ -88,7 +96,7 @@ impl Engine for Scripted {
     }
     fn source(&self, cancel: Arc<AtomicBool>) -> Result<ScriptedSource, String> {
         let n = *self.starts.lock().unwrap() - 1;
-        Ok(ScriptedSource { fail: self.fail_on.get(n).copied().flatten(), cancel, cancel_after: self.cancel_after, cancel_on_fail: self.cancel_on_fail, delay: self.delay, answered: 0 })
+        Ok(ScriptedSource { fail: self.fail_on.get(n).copied().flatten(), cancel, cancel_after: self.cancel_after, cancel_on_fail: self.cancel_on_fail, delay: self.delay, answered: 0, observe: self.observe.clone() })
     }
     fn stop(&self) -> Result<(), String> {
         self.log.lock().unwrap().push("stop");
@@ -221,6 +229,20 @@ fn an_engine_failure_that_comes_with_a_cancel_is_not_restarted() {
     let report = translate(&job_on(&db, &id, &Scope::All, Arc::new(AtomicBool::new(false)), &now), &engine, &Idle::default(), Duration::from_secs(60)).unwrap();
     assert_eq!((report.end(), report.restarts), (&RunEnd::EngineFailed { section_index: 0, ordinal: 2 }, 0), "a cancelled job is not restarted");
     assert_eq!(engine.log(), vec!["start", "stop"]);
+}
+
+#[test]
+fn a_job_holds_its_model_in_use_while_it_runs() {
+    let db = scratch("sup-in-use");
+    let id = make(&db, &MODEL_A);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = seen.clone();
+    let observe: Observer = Arc::new(move || record.lock().unwrap().push(super::manage::held(MODEL_A.id)));
+    let engine = Arc::new(Scripted { observe: Some(observe), ..Arc::try_unwrap(Scripted::new(vec![None])).ok().unwrap() });
+    let now = || 1_000;
+    translate(&job_on(&db, &id, &Scope::All, Arc::new(AtomicBool::new(false)), &now), &engine, &Idle::default(), Duration::from_secs(60)).unwrap();
+    let seen = seen.lock().unwrap();
+    assert!(!seen.is_empty() && seen.iter().all(|held| *held), "every request was answered with the model held: {seen:?}");
 }
 
 #[test]

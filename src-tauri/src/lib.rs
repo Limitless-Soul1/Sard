@@ -236,6 +236,7 @@ macro_rules! sard_invoke_handler {
             window_chrome::set_window_ground,
             // TRANSLATION: making an edition writes only its rows; nothing is downloaded, started or translated.
             translation::creation::translation_create_edition,
+            translation::overview::translation_models,
             $($diag_cmd),*
         ])
     };
@@ -707,6 +708,10 @@ fn dev_data_dir_override() -> Option<std::path::PathBuf> {
             });
             app.manage(tts::TtsEngine::default()); // holds the warm Edge socket + cached voice list
             app.manage(presence::PresenceManager::start()); // DISC/RPC: the worker thread (idle until used)
+            // TRANSLATION: its files live in the local (non-roaming) app-data directory, or beside a development run's
+            // moved data. Resolved, never created here; a failure leaves only the translation section without a store.
+            let translation_dir = match dev_data_dir_override() { Some(dir) => Some(dir), None => app.path().app_local_data_dir().ok() };
+            app.manage(translation::overview::Root(translation_dir.map(|d| translation::store::default_root(&d))));
 
             // A COLD START THAT WAS HANDED A FILE. Queued, not acted on: the window does not exist yet
             // and the frontend is not listening, so it waits until something asks for it.

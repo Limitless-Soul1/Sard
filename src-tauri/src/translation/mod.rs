@@ -20,6 +20,8 @@
 //!   each result written whole with its status, the configuration it was made with, and its removal. It
 //!   never touches the book or anything else the reader has built on it. An edition is bound to the
 //!   translation code that made it by a fingerprint of that code, taken when Sard is built (`fingerprint`).
+//!   The runner (`edition_run`) translates an edition's pending paragraphs through the pipeline and stores
+//!   each result as it comes.
 //!
 //! Nothing here is reachable from the interface yet. There is no command, so nothing can be
 //! downloaded, installed or started until the screens that ask the user — and show each file's licence
@@ -42,6 +44,7 @@
 
 pub mod catalog;
 pub mod download;
+pub mod edition_run;
 pub mod editions;
 pub mod engine;
 pub mod fingerprint;
@@ -54,6 +57,8 @@ pub mod store;
 
 #[cfg(test)]
 mod download_server_tests;
+#[cfg(test)]
+mod edition_run_tests;
 #[cfg(test)]
 mod editions_tests;
 #[cfg(test)]

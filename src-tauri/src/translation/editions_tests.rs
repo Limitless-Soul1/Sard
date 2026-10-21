@@ -93,7 +93,7 @@ fn config() -> EditionConfig {
         target_lang: "ar".into(),
         target_dir: "rtl".into(),
         engine: engine(),
-        extraction_id: "leafblocks-1/pyws-3.12.0-ucd15/segmenter-en-1".into(),
+        extraction_id: SUPPORTED_EXTRACTION_ID.into(),
         webview_version: "155.0.4283.62".into(),
     }
 }
@@ -327,7 +327,9 @@ fn the_identity_covers_every_translation_affecting_input_and_setting() {
         ("launch_flags", Box::new(|c, _| c.engine.launch_flags.push("--cache-ram".into()))),
         ("pipeline_id", Box::new(|c, _| c.engine.pipeline_id = "G2/2".into())),
         ("profile_k", Box::new(|c, _| c.engine.profile_k = 0.933)),
-        ("extraction_id", Box::new(|c, _| c.extraction_id = "leafblocks-2".into())),
+        // The extraction id is covered too, but only this build's can be made: a changed one is a stored
+        // edition from another extraction, and `stored_inputs_settings_and_hashes_are_verified_before_every_session`
+        // shows the identity holds it.
         ("webview_version", Box::new(|c, _| c.webview_version = "156.0.0.1".into())),
         ("a paragraph's text", Box::new(|_, m| m[0].paragraphs[1].text = "She left.".into())),
         ("a sentence boundary", Box::new(|_, m| m[0].paragraphs[0].sentences = vec!["It was a dark night. The rain fell.".into()])),
@@ -359,7 +361,27 @@ fn the_canonical_input_and_identity_hashes_are_pinned() {
     let id = create_with_implementation(db.c(), "bookA", &config(), "1.4.1 TEST", &manifest(), 100, &"a".repeat(64)).unwrap();
     let ed = get(db.c(), &id).unwrap().unwrap();
     assert_eq!(ed.manifest_sha256, "66c7f856ec7cd4721af728d15db53474ddbe1bd68bfb07867717ef7c7b370e22");
-    assert_eq!(ed.identity_sha256, "de93fb9a37ad6802b63f42de36e20d85cbe771aa7f70bc817a4e215f132e4365");
+    assert_eq!(ed.identity_sha256, "e5616ee9335b02a2ed7649f0f4356c11ece9c2b396d0dbaf508506a77294529e");
+}
+
+/// An edition is made only from the extraction this build makes — the one the source-extraction module names.
+#[test]
+fn an_edition_is_made_only_from_this_builds_extraction() {
+    let ts = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/features/translation/source/extract.ts")).unwrap();
+    let named = ts.split("export const EXTRACTION_ID = \"").nth(1).and_then(|r| r.split('"').next()).expect("EXTRACTION_ID in extract.ts");
+    assert_eq!(SUPPORTED_EXTRACTION_ID, named, "the store and the extraction module name the same extraction");
+
+    let db = scratch("extraction");
+    add_book(db.c(), "bookA");
+    for other in ["leafblocks-1/pyws-3.12.0-ucd15/segmenter-en-1", "leafblocks-1/pyws-3.12.0-ucd15/segmenter-en-1/atoms-2", " leafblocks-1/pyws-3.12.0-ucd15/segmenter-en-1/atoms-1"] {
+        let mut c = config();
+        c.extraction_id = other.into();
+        assert!(matches!(create(db.c(), "bookA", &c, "1.4.1 TEST", &manifest(), 1), Err(EditionError::Config(_))), "{other:?} must be refused");
+    }
+    for t in TRANSLATION_TABLES {
+        assert_eq!(count(db.c(), t), 0, "nothing was written to {t}");
+    }
+    assert!(create(db.c(), "bookA", &config(), "1.4.1 TEST", &manifest(), 1).is_ok());
 }
 
 #[test]
@@ -574,6 +596,7 @@ fn stored_inputs_settings_and_hashes_are_verified_before_every_session() {
         ("the model", "UPDATE translation_editions SET model_id = 'model-a' WHERE id = ?1".into()),
         ("the constant", "UPDATE translation_editions SET profile_k = 0.95 WHERE id = ?1".into()),
         ("the webview version", "UPDATE translation_editions SET webview_version = '156.0.0.0' WHERE id = ?1".into()),
+        ("the extraction", "UPDATE translation_editions SET extraction_id = 'leafblocks-1/pyws-3.12.0-ucd15/segmenter-en-1' WHERE id = ?1".into()),
         ("the execution", "UPDATE translation_editions SET execution_detail = '{\"device\":\"Vulkan1\"}' WHERE id = ?1".into()),
         ("the implementation", format!("UPDATE translation_editions SET implementation_sha256 = '{}' WHERE id = ?1", "e".repeat(64))),
         ("the identity hash", format!("UPDATE translation_editions SET identity_sha256 = '{}' WHERE id = ?1", "0".repeat(64))),

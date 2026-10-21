@@ -43,6 +43,10 @@ use super::store::{hex, random_hex};
 pub const OUTCOME_SCHEMA: i64 = 1;
 /// The version of the identity's canonical form.
 pub const IDENTITY_SCHEMA: i64 = 1;
+/// The extraction this build makes (`EXTRACTION_ID` of the source-extraction module; a test holds the two equal).
+/// An edition is made only from it. An edition made by another extraction stays resumable: its inputs are frozen
+/// and checked, and how they were once taken does not change what they are.
+pub const SUPPORTED_EXTRACTION_ID: &str = "leafblocks-1/pyws-3.12.0-ucd15/segmenter-en-1/atoms-1";
 /// The most a stored pipeline result may take, in bytes; the table refuses more, whatever writes it. The
 /// result is stored at the first of three levels that fits:
 /// 1. **whole** — every candidate's raw output (the final one only as the final text), chunk sources and
@@ -422,6 +426,9 @@ pub enum FailureKind {
 pub enum EndReason {
     /// Every pending paragraph has its result.
     Complete,
+    /// The run ended before every pending paragraph had its result, and not because the engine failed: its
+    /// caller cancelled it, it finished the sections it was given, or it could not go on. The failure rows of
+    /// the session say which paragraphs failed, and why.
     Cancelled,
     /// The engine failed, and the run stopped.
     Engine,
@@ -443,6 +450,9 @@ fn validate_config(c: &EditionConfig) -> Result<(), EditionError> {
         if v.trim().is_empty() {
             return Err(EditionError::Config(format!("{name} is empty")));
         }
+    }
+    if c.extraction_id != SUPPORTED_EXTRACTION_ID {
+        return Err(EditionError::Config(format!("extraction_id {} is not the extraction this build makes", c.extraction_id)));
     }
     if c.target_dir != "rtl" && c.target_dir != "ltr" {
         return Err(EditionError::Config(format!("target_dir {} is neither rtl nor ltr", c.target_dir)));
@@ -692,6 +702,13 @@ pub fn get(conn: &Connection, edition_id: &str) -> Result<Option<Edition>, Editi
     };
     let counts = counts(conn, &id)?;
     Ok(Some(Edition { id, book_id, config, implementation_sha256, app_build, manifest_sha256, identity_sha256, mixing_approved, state: EditionState::parse(&state)?, counts, created_at, updated_at }))
+}
+
+/// The indexes of an edition's sections, in reading order.
+pub fn section_indexes(conn: &Connection, edition_id: &str) -> Result<Vec<u32>, EditionError> {
+    let mut st = conn.prepare("SELECT section_index FROM translation_sections WHERE edition_id = ?1 ORDER BY section_index")?;
+    let ids = st.query_map([edition_id], |r| r.get(0))?.collect::<rusqlite::Result<Vec<u32>>>()?;
+    Ok(ids)
 }
 
 /// The ids of a book's editions, oldest first.

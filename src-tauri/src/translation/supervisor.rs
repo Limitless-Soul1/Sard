@@ -169,6 +169,8 @@ where
     if !any {
         return Err(JobError::NothingPending);
     }
+    // The model is in use for as long as the job runs: it cannot be removed or re-verified under it.
+    let _in_use = super::manage::hold(job.model.id);
 
     idle.hold();
     let mut runs: Vec<RunReport> = Vec::new();

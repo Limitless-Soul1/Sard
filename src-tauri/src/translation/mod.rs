@@ -8,6 +8,9 @@
 //! * **The engine:** installing it from its verified archive (`install`), and starting, checking and
 //!   stopping its process (`engine`). One slot (`slot`) keeps the two apart. The supervisor (`supervisor`)
 //!   starts the engine for a translation, restarts it once if it fails, and stops it when it is not needed.
+//! * **Managing the models** (`manage`): the check before a download, the fetch of a model with the runtime and
+//!   the engine, verification and removal — with the licence acceptance a model's terms require recorded first.
+//!   None of it is reachable from the interface yet.
 //! * **The hardware check** (`hardware`): reading the computer's memory, disk space and graphics adapters,
 //!   and deciding whether a model runs on the GPU, on the CPU, or not at all. It reads; it never loads a
 //!   model or starts the engine.
@@ -25,7 +28,8 @@
 //!   each result as it comes. An edition is made (`creation`) from the extraction the reader's page made,
 //!   recorded with the WebView2 runtime that ran it (`runtime_identity`).
 //!
-//! One command reaches this from the interface: making an edition, which writes only the edition's rows.
+//! Two commands reach this from the interface: making an edition, which writes only the edition's rows; and the
+//! models section's overview (`overview`), which reads the store and the computer and starts nothing.
 //! Nothing can be downloaded, installed or started from the interface until the screens that ask the user
 //! — and show each file's licence before it is fetched — exist. A model is never bundled with Sard and
 //! never downloaded without the user choosing it.
@@ -56,6 +60,8 @@ pub mod hardware;
 pub mod pipeline;
 pub mod runtime_identity;
 pub mod install;
+pub mod manage;
+pub mod overview;
 pub mod slot;
 pub mod store;
 pub mod supervisor;
@@ -78,6 +84,10 @@ mod fingerprint_tests;
 mod hardware_tests;
 #[cfg(test)]
 mod install_tests;
+#[cfg(test)]
+mod manage_tests;
+#[cfg(test)]
+mod overview_tests;
 #[cfg(test)]
 mod supervisor_tests;
 #[cfg(test)]

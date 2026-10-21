@@ -1,3 +1,8 @@
+// The translation implementation's fingerprint (see the module for what it covers and how). The same file is
+// compiled into Sard, which is how a test checks the build against the sources.
+#[path = "src/translation/fingerprint.rs"]
+mod fingerprint;
+
 fn main() {
     // RAWY-144: embed the Windows exe icon reliably on rebuild. tauri-build embeds the app icon
     // (icons/icon.ico) into the executable's resource table, but it does NOT declare that file as a
@@ -22,6 +27,15 @@ fn main() {
     let build_id = std::env::var("SARD_BUILD_ID")
         .unwrap_or_else(|_| "UNSET — built directly, not through the Sard build scripts".to_string());
     println!("cargo:rustc-env=SARD_BUILD_ID={build_id}");
+
+    // THE TRANSLATION IMPLEMENTATION, carried into the binary so that an edition made by one build is never
+    // resumed by a build whose translation code differs. Computed from the files themselves, so nobody has to
+    // remember to change an identifier; declaring each file makes Cargo compute it again when one changes.
+    for f in fingerprint::FILES {
+        println!("cargo:rerun-if-changed=src/{f}");
+    }
+    let implementation = fingerprint::of_files(std::path::Path::new("src")).expect("the translation implementation's files cannot be read");
+    println!("cargo:rustc-env=SARD_TRANSLATION_IMPLEMENTATION={implementation}");
 
     tauri_build::build()
 }

@@ -260,6 +260,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "reading_style_drop_legacy_colours",
         include_str!("migrations_sql/20260924210000_reading_style_drop_legacy_colours.sql"),
     ),
+    (
+        20_261_020_154_154,
+        "translation_editions",
+        include_str!("migrations_sql/20261020154154_translation_editions.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

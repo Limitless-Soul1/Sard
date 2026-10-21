@@ -90,9 +90,37 @@ pub enum LicenceStatus {
 pub enum LicenceError {
     /// This licence asks for no acceptance; nothing is recorded.
     NotRequired,
+    /// This build carries no text of the terms, so there is nothing the user could have read; nothing is recorded.
+    TermsUnavailable,
     /// The revision the user was shown is not the current one; nothing is recorded.
     NotTheCurrentTerms { shown: String, current: &'static str },
     Store(String),
+}
+
+/// Terms as Sard shows them: every document, exactly as bundled, and the revision that names that exact text.
+#[derive(Debug)]
+pub struct Terms {
+    pub revision: &'static str,
+    pub documents: &'static [TermsDocument],
+}
+
+#[derive(Debug)]
+pub struct TermsDocument {
+    pub title: &'static str,
+    /// Where the text was published.
+    pub source: &'static str,
+    pub text: &'static str,
+}
+
+/// The terms a user is shown before a file under `licence` is downloaded, exactly as this build carries them.
+///
+/// `None` for every licence today. The Gemma Terms and the Gemma Prohibited Use Policy are not bundled: whether and how
+/// they apply, and how they are shown, await the legal review (D3). Without a text nothing can be accepted, so a model
+/// under those terms cannot be fetched — the gate stays closed in the backend, whatever the interface sends.
+pub fn terms(licence: Licence) -> Option<&'static Terms> {
+    match licence {
+        Licence::GemmaTerms | Licence::Apache2 | Licence::LlamaCppRuntime => None,
+    }
 }
 
 /// Whether `licence`'s current terms are accepted.
@@ -112,9 +140,19 @@ pub fn licence_status(conn: &Connection, licence: Licence) -> rusqlite::Result<L
     Ok(if accepted.is_empty() { LicenceStatus::Missing { revision } } else { LicenceStatus::Stale { revision, accepted } })
 }
 
-/// Record that the user accepted `licence`'s terms, of the revision they were `shown`, at `now`. Only the current
-/// revision can be accepted. Accepting it again keeps the first time.
+/// Record that the user accepted `licence`'s terms, of the revision they were `shown`, at `now`. Only terms this build
+/// carries, and only their current revision, can be accepted. Accepting it again keeps the first time.
 pub fn accept_terms(conn: &Connection, licence: Licence, shown: &str, now: i64) -> Result<(), LicenceError> {
+    terms_revision(licence).ok_or(LicenceError::NotRequired)?;
+    if terms(licence).is_none() {
+        return Err(LicenceError::TermsUnavailable);
+    }
+    record_acceptance(conn, licence, shown, now)
+}
+
+/// The record itself, once the terms are known to be shown. Tests use it directly to stand for a build that carries
+/// the terms; the application reaches it only through `accept_terms`.
+pub(crate) fn record_acceptance(conn: &Connection, licence: Licence, shown: &str, now: i64) -> Result<(), LicenceError> {
     let current = terms_revision(licence).ok_or(LicenceError::NotRequired)?;
     if shown != current {
         return Err(LicenceError::NotTheCurrentTerms { shown: shown.to_string(), current });
@@ -253,6 +291,18 @@ pub fn hold(id: &str) -> UseGuard {
 /// Whether something holds the model `id`.
 pub fn held(id: &str) -> bool {
     IN_USE.lock().unwrap_or_else(|p| p.into_inner()).contains_key(id)
+}
+
+/// Whether the model `id` is in use now, and by what: the reading the interface shows. Removal and verification
+/// decide again for themselves, under the engine slot.
+pub fn in_use(id: &str) -> Option<InUseBy> {
+    if held(id) {
+        Some(InUseBy::Translation)
+    } else if slot::holder() == Some(Holder::Engine) {
+        Some(InUseBy::Engine)
+    } else {
+        None
+    }
 }
 
 static OPERATIONS: Mutex<Vec<String>> = Mutex::new(Vec::new());

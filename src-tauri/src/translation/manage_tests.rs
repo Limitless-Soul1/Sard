@@ -102,8 +102,10 @@ impl World {
         self.fetch_with(model, mode, &AtomicBool::new(false), &roomy)
     }
 
+    /// Stand for a build that carries the Gemma terms, and a user who accepted them. (This build carries none, so
+    /// `accept_terms` itself refuses — `this_build_refuses_every_acceptance_so_model_a_stays_closed`.)
     fn accept_gemma(&self) {
-        accept_terms(&self.db.lock().unwrap(), Licence::GemmaTerms, GEMMA_TERMS_REVISION, 1_000).unwrap();
+        record_acceptance(&self.db.lock().unwrap(), Licence::GemmaTerms, GEMMA_TERMS_REVISION, 1_000).unwrap();
     }
 
     fn requests(&self) -> (u32, u32) {
@@ -166,7 +168,7 @@ fn an_acceptance_that_is_not_of_the_current_terms_or_not_the_backends_records_no
     {
         let conn = w.db.lock().unwrap();
         assert_eq!(
-            accept_terms(&conn, Licence::GemmaTerms, "gemma-terms/something-else", 1_000),
+            record_acceptance(&conn, Licence::GemmaTerms, "gemma-terms/something-else", 1_000),
             Err(LicenceError::NotTheCurrentTerms { shown: "gemma-terms/something-else".into(), current: GEMMA_TERMS_REVISION }),
         );
         assert_eq!(accept_terms(&conn, Licence::Apache2, GEMMA_TERMS_REVISION, 1_000), Err(LicenceError::NotRequired));
@@ -177,6 +179,22 @@ fn an_acceptance_that_is_not_of_the_current_terms_or_not_the_backends_records_no
         assert_eq!(licence_status(&conn, Licence::GemmaTerms).unwrap(), LicenceStatus::Missing { revision: GEMMA_TERMS_REVISION });
     }
     assert!(matches!(w.fetch(a, Mode::Start).0, Err(ActionError::LicenceNotAccepted { .. })));
+    w.untouched(a);
+}
+
+#[test]
+fn this_build_refuses_every_acceptance_so_model_a_stays_closed() {
+    let w = world("lic-closed");
+    let a = w.model(&MODEL_A);
+    assert!(terms(Licence::GemmaTerms).is_none(), "no Gemma terms text is bundled");
+    {
+        let conn = w.db.lock().unwrap();
+        // Even the very revision the backend checks is refused: there is no text the user could have read.
+        assert_eq!(accept_terms(&conn, Licence::GemmaTerms, GEMMA_TERMS_REVISION, 1_000), Err(LicenceError::TermsUnavailable));
+        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM translation_licence_acceptances", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 0);
+    }
+    assert!(matches!(w.fetch(a, Mode::Start).0, Err(ActionError::LicenceNotAccepted { status: LicenceStatus::Missing { .. }, .. })));
     w.untouched(a);
 }
 

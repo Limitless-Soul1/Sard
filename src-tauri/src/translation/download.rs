@@ -133,6 +133,17 @@ impl Policy {
         }
     }
 
+    /// For a development build's test catalog only: plain HTTP to 127.0.0.1 and NOTHING else, with the production
+    /// policy's waits and space check. It does not exist in a release build.
+    #[cfg(debug_assertions)]
+    pub(crate) fn loopback_for_development() -> Policy {
+        Policy {
+            allowed_hosts: vec!["127.0.0.1".to_string()],
+            allow_plain_http_loopback: true,
+            ..Policy::production()
+        }
+    }
+
     /// For tests only: plain HTTP to 127.0.0.1 on any port, small chunks, short waits.
     #[cfg(test)]
     pub(crate) fn loopback_for_tests() -> Policy {

@@ -43,6 +43,12 @@ pub(crate) fn release_for_tests() {
     *SLOT.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
+/// Who holds the slot now, if anyone: a reading only, which may be stale by the time it is used. A caller that must
+/// keep the answer true takes the slot with `claim` instead.
+pub fn holder() -> Option<Holder> {
+    *SLOT.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// Take the slot for `holder`, or report who has it.
 pub fn claim(holder: Holder) -> Result<SlotGuard, Holder> {
     let mut slot = SLOT.lock().unwrap_or_else(|p| p.into_inner());

@@ -4735,6 +4735,46 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .gs-fcard-title { font: 600 0.875rem var(--ui-font); color: var(--text); }
 .gs-fcard-sub { font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); margin-top: 2px; }
 
+/* TRANSLATION MODELS — the Settings section. The Fonts card, its tinted action (.gs-update-btn), the updater's bar
+   (.upd-bar), the refused-cover sentence (.edit-cover-error) and the two-step delete (.edit-del) are reused as they
+   are; this block only lays them out. Logical properties throughout, so the section mirrors with the interface. */
+.tr-hint { margin: 6px 0 16px; font: 400 0.75rem/1.5 var(--ui-font); color: var(--muted); max-width: 62ch; }
+.tr-cards { display: flex; flex-direction: column; gap: 14px; }
+/* `flex: none`: the Fonts card grows in a ROW (flex-basis 300px is its width); stacked in a column, the same basis
+   became a 300px minimum HEIGHT and left an empty band under short cards. */
+.tr-card { gap: 10px; flex: none; }
+.tr-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.tr-card-id { min-width: 0; }
+.tr-card-head .gs-update-btn { flex: none; }
+.tr-body { margin: 0; font: 400 0.78125rem/1.6 var(--ui-font); color: var(--muted); max-width: 62ch; overflow-wrap: anywhere; }
+.tr-facts { display: flex; flex-wrap: wrap; gap: 4px 16px; font: 500 0.71875rem var(--ui-font); color: var(--muted); }
+.tr-facts .tnum, .tr-state.tnum { font-variant-numeric: tabular-nums; color: var(--text); }
+.tr-licence { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font: 500 0.71875rem var(--ui-font); color: var(--text); }
+.tr-licence-lbl { color: var(--muted); }
+.tr-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font: 500 0.75rem var(--ui-font); color: var(--muted); }
+.tr-state { color: var(--text); }
+.tr-badge {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px;
+  font: 500 0.625rem var(--ui-font); color: var(--muted); background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.tr-badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.tr-spin { width: 14px; height: 14px; border-width: 2px; }
+.tr-busy { display: flex; flex-direction: column; gap: 6px; }
+.tr-bar.upd-bar { margin: 2px 0 0; }
+.tr-bar-meta.upd-bar-meta { margin-bottom: 0; }
+.tr-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tr-actions .edit-del-warn { flex: 1 1 12rem; }
+.tr-push-end { margin-inline-start: auto; }
+.tr-reason { margin: 0; font: 400 0.6875rem/1.45 var(--ui-font); color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg)); }
+.tr-failure { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.tr-failure .edit-cover-error { margin: 0; align-self: stretch; }
+.tr-detail {
+  margin: 0; align-self: stretch; max-height: 28vh; overflow: auto; white-space: pre-wrap; text-align: start;
+  font: 400 0.75rem/1.55 ui-monospace, Consolas, monospace; background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-radius: 8px; padding: 8px 10px; color: var(--text);
+}
+.tr-note { margin: 16px 0 0; font: 400 0.6875rem/1.5 var(--ui-font); color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg)); }
+
 /* picker row: current face's name IN ITS OWN FACE + sub + "Change ›"; the real <select> is laid
    transparently on top (opacity 0), so the styled row shows while the native menu still drives it. */
 .gs-fpick-stack { display: flex; flex-direction: column; gap: 8px; }

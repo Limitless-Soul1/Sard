@@ -26,6 +26,7 @@ import { BookmarkShape } from "../reader/BookmarkShape";
 import { READ_MARKERS, useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256
 import { usePresence } from "../../lib/presence"; // DISC/RPC: the Discord on/off switch
 import { LegalDocuments } from "../legal/LegalDocuments";
+import { TranslationSection } from "../translation/settings/TranslationSection";
 import {
   ARABIC_FONTS,
   LATIN_DEFAULTS,
@@ -39,7 +40,7 @@ import { useDialog } from "../../components/useDialog";
 
 const STYLE_KEY = "reading_style";
 
-type Section = "appearance" | "profiles" | "fonts" | "bookmark" | "language" | "presence" | "about";
+type Section = "appearance" | "profiles" | "fonts" | "bookmark" | "language" | "translation" | "presence" | "about";
 // The row marks were text characters chosen for what existed, not for what the sections hold: the
 // bookmark row was a triangle, the language row was the command symbol, and six of the eight were
 // being drawn by Cambria Math with the "about" mark falling through to MS PGothic. Each is now an
@@ -56,6 +57,9 @@ const NAV: { key: Section; label: TKey; icon?: IconName; letter?: string }[] = [
   { key: "fonts", label: "gs.nav.fonts", letter: "A" },
   { key: "bookmark", label: "gs.nav.bookmark", icon: "bookmark" },
   { key: "language", label: "gs.nav.language", icon: "language" },
+  // TRANSLATION: the models section, after Language. Its mark is an existing one — the exchange arrows (⇄) the
+  // library's Replacements row draws — not a new icon; the globe is the Language row's, right above.
+  { key: "translation", label: "gs.nav.translation", icon: "navReplacements" },
   { key: "presence", label: "gs.nav.presence", icon: "activity" },
   { key: "about", label: "gs.nav.about", icon: "about" },
 ];
@@ -118,6 +122,7 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
             {section === "fonts" && <FontsSection />}
             {section === "bookmark" && <BookmarkSection />}
             {section === "language" && <LanguageSection />}
+            {section === "translation" && <TranslationSection />}
             {section === "presence" && <PresenceSection />}
             {section === "about" && <AboutSection />}
           </div>

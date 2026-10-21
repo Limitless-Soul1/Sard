@@ -194,6 +194,8 @@ pub(crate) struct Faults {
     pub crash_after_files: Option<usize>,
     /// After the old engine has been moved aside, before the new one has taken its place.
     pub crash_between_moves: bool,
+    /// Moving the new engine into place fails — an error, not a crash: the old engine must be put back.
+    pub fail_second_move: bool,
     pub crash_before_record: bool,
 }
 
@@ -249,6 +251,7 @@ pub(crate) fn install_with(store: &Store, spec: &EngineSpec, cancel: &AtomicBool
     }
 
     // Swap: unrecord the old engine, move it aside, move the new one in, and only then record it.
+    let old_record = fs::read(record_path(store, spec)).ok();
     remove_name(&record_path(store, spec))?;
     let dir = engine_dir(store, spec);
     let mut old = None;
@@ -262,7 +265,20 @@ pub(crate) fn install_with(store: &Store, spec: &EngineSpec, cancel: &AtomicBool
     if faults.crash_between_moves {
         return Err(InstallError::Io("simulated crash between the two moves".into()));
     }
-    fs::rename(&staging, &dir).map_err(io_err)?;
+    let moved = if faults.fail_second_move { Err(io::Error::other("simulated failure moving the new engine into place")) } else { fs::rename(&staging, &dir) };
+    if let Err(e) = moved {
+        // An error, not a crash: put the old engine back as it was — its directory, then its record — and leave
+        // nothing staged. If even that fails, what is set aside is cleared by the next installation.
+        if let Some(aside) = &old {
+            if fs::rename(aside, &dir).is_ok() {
+                if let Some(bytes) = &old_record {
+                    let _ = write_record_bytes(store, spec, bytes);
+                }
+            }
+        }
+        let _ = remove_tree(store, &staging);
+        return Err(io_err(e));
+    }
     if faults.crash_before_record {
         return Err(InstallError::Io("simulated crash before the record".into()));
     }
@@ -349,14 +365,23 @@ fn write_record(store: &Store, spec: &EngineSpec) -> Result<(), InstallError> {
             .unwrap_or(0),
     };
     let bytes = serde_json::to_vec_pretty(&record).map_err(|e| InstallError::Io(e.to_string()))?;
+    write_record_bytes(store, spec, &bytes)
+}
+
+/// The record's temporary name, used only while a record is being written.
+fn record_tmp_path(store: &Store, spec: &EngineSpec) -> PathBuf {
+    record_path(store, spec).with_extension("json.tmp")
+}
+
+fn write_record_bytes(store: &Store, spec: &EngineSpec, bytes: &[u8]) -> Result<(), InstallError> {
     let path = record_path(store, spec);
-    let tmp = path.with_extension("json.tmp");
+    let tmp = record_tmp_path(store, spec);
     // Never through a link. Whatever already has the temporary name is removed as a NAME (a link is not
     // followed), the file is created new (which fails rather than open anything that reappears), and the
     // rename replaces the record's own name, not what a link there might point to.
     remove_name(&tmp)?;
     let mut file = OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(io_err)?;
-    file.write_all(&bytes).map_err(io_err)?;
+    file.write_all(bytes).map_err(io_err)?;
     file.sync_all().map_err(io_err)?;
     drop(file);
     fs::rename(&tmp, &path).map_err(io_err)
@@ -531,6 +556,8 @@ pub fn remove(store: &Store, spec: &EngineSpec) -> Result<u64, InstallError> {
     }
     guard_exact(store, &base)?;
     remove_name(&record_path(store, spec))?;
+    // A record whose writing was cut short leaves its temporary name; it goes with the engine.
+    remove_name(&record_tmp_path(store, spec))?;
     let dir = engine_dir(store, spec);
     if fs::symlink_metadata(&dir).is_err() {
         return Ok(0);

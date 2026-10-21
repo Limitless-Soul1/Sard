@@ -22,12 +22,13 @@
 //!   never touches the book or anything else the reader has built on it. An edition is bound to the
 //!   translation code that made it by a fingerprint of that code, taken when Sard is built (`fingerprint`).
 //!   The runner (`edition_run`) translates an edition's pending paragraphs through the pipeline and stores
-//!   each result as it comes.
+//!   each result as it comes. An edition is made (`creation`) from the extraction the reader's page made,
+//!   recorded with the WebView2 runtime that ran it (`runtime_identity`).
 //!
-//! Nothing here is reachable from the interface yet. There is no command, so nothing can be
-//! downloaded, installed or started until the screens that ask the user — and show each file's licence
-//! before it is fetched — exist. A model is never bundled with Sard and never downloaded without the
-//! user choosing it.
+//! One command reaches this from the interface: making an edition, which writes only the edition's rows.
+//! Nothing can be downloaded, installed or started from the interface until the screens that ask the user
+//! — and show each file's licence before it is fetched — exist. A model is never bundled with Sard and
+//! never downloaded without the user choosing it.
 //!
 //! The guarantees the rest of the feature builds on:
 //!
@@ -44,6 +45,7 @@
 //!   with a key made for that session, and the operating system ends it when Sard ends.
 
 pub mod catalog;
+pub mod creation;
 pub mod download;
 pub mod edition_run;
 pub mod editions;
@@ -52,11 +54,14 @@ pub mod fingerprint;
 pub mod execution;
 pub mod hardware;
 pub mod pipeline;
+pub mod runtime_identity;
 pub mod install;
 pub mod slot;
 pub mod store;
 pub mod supervisor;
 
+#[cfg(test)]
+mod creation_tests;
 #[cfg(test)]
 mod download_server_tests;
 #[cfg(test)]

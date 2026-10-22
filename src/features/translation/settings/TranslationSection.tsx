@@ -178,6 +178,7 @@ export function TranslationSection() {
           const v = cardView(m, job, failures[m.id], {
             otherRunning: [...running].some((id) => id !== m.id),
             fetching: overview.fetching.includes(m.id),
+            preparing: overview.preparing.includes(m.id),
             supported: overview.supported,
           });
           const busyWith = working[m.id];

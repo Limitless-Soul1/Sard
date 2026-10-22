@@ -12,6 +12,7 @@ use super::hardware::{classify, HardwareError, HardwareReport, Memory};
 use super::install_tests::TempDir;
 use super::manage::{self, LicenceStatus};
 use super::overview::*;
+use super::prepare;
 use super::slot::{self, serial_for_tests, Holder};
 use super::store::Store;
 
@@ -36,7 +37,7 @@ fn nothing_accepted(l: Licence) -> Result<LicenceStatus, String> {
 
 /// The overview for the built-in catalog, with nothing accepted.
 fn ov(root: &std::path::Path, probe: fn(&std::path::Path) -> Result<HardwareReport, HardwareError>) -> std::io::Result<Overview> {
-    overview(root, &active::builtin(), &nothing_accepted, probe)
+    overview(root, &active::builtin(), &nothing_accepted, &[], probe)
 }
 
 /// Everything a model needs on an empty store: the model, the runtime archive and the installed engine, in full.
@@ -133,6 +134,23 @@ fn the_wire_format_is_what_the_interface_reads() {
     assert_eq!(v["runtimeSize"], json!(RUNTIME_WINDOWS_X64.size));
     assert_eq!(v["testCatalog"], json!(false));
     assert_eq!(v["supported"], json!(cfg!(all(windows, target_arch = "x86_64"))));
+    assert_eq!(a["ready"], json!(false));
+    assert_eq!(v["preparing"], json!([]));
+}
+
+#[test]
+fn a_recorded_preparation_alone_does_not_make_a_model_ready() {
+    // The record names model B's and the engine's exact bytes, but neither is installed here: not ready.
+    let tmp = TempDir::new("overview_ready");
+    let record = prepare::Record {
+        model: MODEL_B.id.into(),
+        model_sha256: MODEL_B.sha256.into(),
+        engine_sha256: ENGINE_WINDOWS_X64.archive.sha256.into(),
+        device: "Vulkan0".into(),
+        prepared_at: 1,
+    };
+    let o = overview(&tmp.0.join("translation"), &active::builtin(), &nothing_accepted, &[record], roomy).unwrap();
+    assert!(o.models.iter().all(|m| !m.ready), "{:?}", o.models.iter().map(|m| m.ready).collect::<Vec<_>>());
 }
 
 #[test]

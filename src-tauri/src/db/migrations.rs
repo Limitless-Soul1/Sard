@@ -270,6 +270,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "translation_licence_acceptances",
         include_str!("migrations_sql/20261021143000_translation_licence_acceptances.sql"),
     ),
+    (
+        20_261_021_230_000,
+        "translation_prepared",
+        include_str!("migrations_sql/20261021230000_translation_prepared.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

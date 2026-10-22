@@ -35,6 +35,8 @@ export interface ModelView {
   licenceStatus: LicenceStatusView;
   termsAvailable: boolean;
   state: StateView;
+  /** Prepared with its current bytes and the current engine, both installed: "Ready". Never for a model only downloaded. */
+  ready: boolean;
   diskStillNeeded: number;
   notEnoughDisk: boolean;
   inUse: InUseView | null;
@@ -52,6 +54,8 @@ export interface Overview {
   testCatalog: boolean;
   /** The models a fetch is running for now. */
   fetching: string[];
+  /** Of those, the models being prepared now. */
+  preparing: string[];
 }
 
 export type DownloadCause =
@@ -82,9 +86,10 @@ export type ActionErrorView =
   | { kind: "cancelled" }
   | { kind: "store"; detail: string }
   | { kind: "unavailable"; detail: string }
-  | { kind: "running"; model: string };
+  | { kind: "running"; model: string }
+  | { kind: "prepare"; memory: boolean; engineBusy: boolean; detail: string };
 
-export type StepView = "checking" | "downloading" | "verifying" | "installing";
+export type StepView = "checking" | "downloading" | "verifying" | "installing" | "preparing";
 
 export type EventView =
   | { kind: "step"; model: string; artifact: string; runtime: boolean; step: StepView }

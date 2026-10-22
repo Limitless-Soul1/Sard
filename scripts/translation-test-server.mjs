@@ -7,8 +7,9 @@
 // 127.0.0.1, and the download policy that comes with it refuses every other host. A release build never reads the
 // variable at all.
 //
-// The fake engine is never run — nothing in Sard can start the engine from the interface — and the fake models are
-// random bytes. Nothing here is a real model.
+// The fake engine is never run: with a test catalog, the preparation that follows a download uses a stand-in that starts
+// nothing (src-tauri/src/translation/active.rs; SARD_TRANSLATION_TEST_PREPARE=memory or =test makes it fail). The fake
+// models are random bytes. Nothing here is a real model.
 //
 //   node scripts/translation-test-server.mjs [--dir <folder>] [--port <n>] [--rate <KiB per second>] [--drop-at <byte>]
 //                                            [--model-mib <n>]

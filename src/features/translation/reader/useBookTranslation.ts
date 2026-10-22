@@ -14,7 +14,7 @@ import type { FoliateController } from "../../../reader-engine/FoliateController
 import type { TranslationLayer } from "../../../reader-engine/translationLayer";
 import { extractBook, type SourceSection } from "../source/extract";
 import { onEditionEvent, readerEdition, readerSection, readerStatus, readerTranslate, type ParagraphView, type ReaderErrorView, type ReaderStatus } from "./api";
-import { applyToDocument, clearDocument, type Labels } from "./apply";
+import { applyToDocument, clearDocument, showsAlready, type Labels } from "./apply";
 
 export type Mode = "original" | "translation";
 
@@ -46,7 +46,7 @@ export function asReaderError(e: unknown): ReaderErrorView {
 }
 
 /** The translation view of one edition: each section as it loads, from what is stored now. */
-class Layer implements TranslationLayer {
+export class Layer implements TranslationLayer {
   private views = new Map<number, ParagraphView[]>();
   private docs = new Map<number, Document>();
   private dead = false;
@@ -91,6 +91,9 @@ class Layer implements TranslationLayer {
       return;
     }
     try {
+      // A section shown again from what was known already shows this, unless something was stored for it since:
+      // applying it again would take every mark off and lay the whole section out once more, for nothing.
+      if (showsAlready(doc, views, this.labels)) return;
       applyToDocument(doc, views, this.labels);
     } catch {
       /* never breaks the page */

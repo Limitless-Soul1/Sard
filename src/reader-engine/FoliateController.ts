@@ -31,6 +31,7 @@ import {
   type RevealLabels,
 } from "./injectedCss";
 import { navIntent } from "./navIntent";
+import type { TranslationLayer } from "./translationLayer";
 import { wheelBoundary, type WheelAction } from "./wheelBoundary";
 // RAWY-229: pure, and therefore shared. The hosted transport applies the same rule in the
 // application, because `bookmarkVisible` is read from a React render body that cannot await.
@@ -2033,6 +2034,8 @@ export class FoliateController {
   private annotations = new Map<string, string>();
   /** RAWY deposits (phase 3): notified once a section's rendered document exists. */
   private sectionRenderedCb: ((index: number) => void) | undefined = undefined;
+  /** The translation view, while it is shown; null shows the original. */
+  private translationLayer: TranslationLayer | null = null;
   // RAWY-259: each highlight’s OWN ink density, keyed by the same CFI as `annotations`. Absent = follow
   // the theme default (every highlight made before the feature), so the map stays empty until a reader
   // actually sets a density and nothing about the untouched case changes.
@@ -2499,6 +2502,13 @@ export class FoliateController {
       this.applyReplacements(doc, index);
       if (this.repPlans.get(index)?.count) markNumbers(doc);
       this.applyReferences(doc, index);
+      // The translation view, when it is shown — after the reader's own passes, which shape the page it finds
+      // the paragraphs in. It changes no text node (see its module), so nothing above is disturbed.
+      try {
+        this.translationLayer?.apply(doc, index);
+      } catch {
+        /* the translation view must never break a section's render */
+      }
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
       // frame (the content iframe runs no scripts, RAWY-64) via cross-frame DOM access, like the
       // handlers below. Per-instance + reset-on-navigation is automatic: each section is a fresh
@@ -2772,6 +2782,8 @@ export class FoliateController {
     if (this.style) {
       const css = buildReadingCss(this.style, this.theme, this.flags, this.dir, this.revealLabels);
       this.view?.renderer?.setStyles?.(css);
+      // The translation view measures each paragraph's size when it is shown: a new size needs it shown again.
+      if (this.translationLayer) this.showTranslation(this.translationLayer, null);
       // DIAGNOSTIC BUILD ONLY — stages 9 and 10. "Changing the theme has no effect" is one of the
       // reported symptoms, so the report must be able to show whether the theme actually reached the
       // document: which sheet was written, how long it was, and the colours inside it.
@@ -3867,6 +3879,40 @@ export class FoliateController {
   /** Register a listener called after a section has rendered, so a located mark can be anchored in it. */
   onSectionRendered(cb: ((index: number) => void) | null): void {
     this.sectionRenderedCb = cb ?? undefined;
+  }
+
+  /**
+   * Show the translation view — or, with null, the original — on the sections loaded now and on every section that
+   * loads from now on, then lay the page out again. The paginator keeps its anchor through the layout, and the
+   * anchor is a range in the book's own text, which the view never changes: the reader stays where they were.
+   */
+  setTranslationLayer(layer: TranslationLayer | null): void {
+    const previous = this.translationLayer;
+    this.translationLayer = layer;
+    this.showTranslation(layer, previous);
+    try {
+      this.view?.renderer?.render?.();
+    } catch {
+      /* layout only */
+    }
+  }
+
+  private showTranslation(layer: TranslationLayer | null, previous: TranslationLayer | null): void {
+    const contents = (this.view?.renderer?.getContents?.() ?? []) as { index: number; doc?: Document }[];
+    for (const c of contents) {
+      if (!c?.doc) continue;
+      try {
+        if (layer) layer.apply(c.doc, c.index);
+        else previous?.clear(c.doc);
+      } catch {
+        /* the translation view must never break a section */
+      }
+    }
+  }
+
+  /** The book's sections as foliate gives them — what a translation is extracted from. Null before a book opens. */
+  bookSections(): unknown[] | null {
+    return this.view?.book?.sections ?? null;
   }
 
   /**

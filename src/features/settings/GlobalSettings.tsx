@@ -69,9 +69,21 @@ const LANGS = [
   { code: "ar", label: "العربية" },
 ] as const;
 
-export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function GlobalSettings({
+  open,
+  onClose,
+  initialSection = "appearance",
+  translationNotice,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** The section it opens on: the reader opens Translation when no model is ready. */
+  initialSection?: Section;
+  /** A line at the top of the Translation section, saying why it was opened. */
+  translationNotice?: TKey;
+}) {
   const { t, dir } = useI18n();
-  const [section, setSection] = useState<Section>("appearance");
+  const [section, setSection] = useState<Section>(initialSection);
   // IT ALREADY CLAIMED TO BE A MODAL DIALOG. Measured, it took no focus, trapped no Tab, carried no
   // name and ignored Escape — while its scrim blocked the pointer, so a keyboard could reach the
   // library it had covered. Nothing here changes what Settings looks like or does; it makes the
@@ -122,7 +134,7 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
             {section === "fonts" && <FontsSection />}
             {section === "bookmark" && <BookmarkSection />}
             {section === "language" && <LanguageSection />}
-            {section === "translation" && <TranslationSection />}
+            {section === "translation" && <TranslationSection notice={translationNotice} />}
             {section === "presence" && <PresenceSection />}
             {section === "about" && <AboutSection />}
           </div>

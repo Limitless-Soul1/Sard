@@ -84,6 +84,9 @@ import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
 import { useReferences } from "./referencesStore"; // RAWY-260: phrase-bound references, per book
 import { useReplacements } from "./replacementsStore"; // phrase-bound reading-time substitutions, per book
+import { GlobalSettings } from "../settings/GlobalSettings";
+import { TranslateControl, TranslationNotice } from "../translation/reader/TranslateControl";
+import { useBookTranslation } from "../translation/reader/useBookTranslation";
 import { useBookmarks } from "./bookmarksStore";
 import { useBookmarkStyle } from "../../lib/bookmarkStyle"; // the dye a new place is marked in
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
@@ -2142,6 +2145,9 @@ export function Reader({
   // the reader offers a manual reading-DIRECTION override for Arabic PDFs; changing it persists the
   // choice (books.dir via metadata_override) and re-opens the PDF at the current page.
   const isPdf = (initial.format ?? "").toLowerCase() === "pdf";
+  // The book's translation: the switch, the Translate action, and what is said when it cannot be done.
+  const getCtrl = useCallback(() => ctrlRef.current, []);
+  const translation = useBookTranslation(initial.id, getCtrl, !isPdf);
   // RAWY-86: PDF appearance INVERT (approximate night mode — a CSS invert filter, NOT real themes;
   // it flips images too), persisted per book. Plus copy-selection. Feedback rides a small transient
   // message. RAWY-141: the reading-direction override + in-PDF find were removed (see SettingsPanel).
@@ -3665,7 +3671,20 @@ export function Reader({
         pdfCanListen={pdfCanListen}
         pdfPageCount={pdfPageCount}
         onScrub={onPdfScrub}
+        translation={
+          isPdf ? null : (
+            <TranslateControl
+              status={translation.status}
+              mode={translation.mode}
+              starting={translation.starting}
+              onMode={translation.setMode}
+              onTranslate={() => void translation.translate()}
+            />
+          )
+        }
       />
+      <TranslationNotice notice={translation.notice} onDismiss={translation.dismissNotice} />
+      <GlobalSettings open={translation.needsModel} onClose={translation.closeNeedsModel} initialSection="translation" translationNotice="translation.reader.noModel" />
 
       <SettingsPanel
         open={settingsOpen}

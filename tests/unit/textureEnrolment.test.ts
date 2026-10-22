@@ -84,6 +84,7 @@ describe("interface texture · every chrome surface is enrolled or excused", () 
     ".edit-dialog": "a modal dialog, over its own scrim",
     ".pc-basket-tray": "a transient tray",
     ".ref-popup": "a reference popover over the page — the page is outside texture's reach by design",
+    ".tr-reader-notice": "a transient message about a book's translation, shown until it is dismissed",
     // The window's own frame (components/WindowChrome.tsx) is persistent chrome, and it is excused on
     // purpose: nothing behind the window's frame may ever show through it — a wallpaper seen through
     // the frame read as a floating strip of glass, not as the window's edge.

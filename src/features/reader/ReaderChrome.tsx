@@ -47,6 +47,8 @@ interface Props {
   // progress bar is scrubbable to jump anywhere. EPUB is untouched (these are only wired for a PDF).
   pdfPageCount?: number;
   onScrub?: (fraction: number) => void;
+  /** The translation control (Translate, and the original / translation switch), EPUB only. */
+  translation?: React.ReactNode;
 }
 
 // A small "stack of cards" glyph for the Quotes button. RAWY-66: 18→20 with the enlarged icon box.
@@ -89,6 +91,7 @@ export function ReaderChrome({
   pdfCanListen,
   pdfPageCount,
   onScrub,
+  translation,
 }: Props) {
   const { t, lang } = useI18n();
 
@@ -232,6 +235,7 @@ export function ReaderChrome({
               </span>
             </button>
           )}
+          {translation}
           {/* RAWY-105 / RAWY-293: Listen. For a PDF this appears once the text layer proves usable —
               a scan yields nothing to speak, so offering the control there would be a dead button. */}
           {(!isPdf || pdfCanListen) && (

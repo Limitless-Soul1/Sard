@@ -318,6 +318,14 @@ pub(crate) fn run_job<E: prepare::Engine>(
     if fetched.is_err() {
         return;
     }
+    // Every preparation starts from "not ready": an earlier record (of these same bytes, before a removal and a new
+    // download) does not stand for this attempt. Only this attempt passing makes the model ready again.
+    let forgotten = prepare::forget(&ctx.db.lock().unwrap_or_else(|p| p.into_inner()), model);
+    if let Err(e) = forgotten {
+        let state = ctx.store.state(artifact).unwrap_or_else(|e| super::store::State::Damaged { reason: e.to_string() });
+        emit(EventView::Failed { model: model.into(), artifact: model.into(), runtime: false, state: (&state).into(), error: ActionErrorView::Store { detail: e.to_string() } });
+        return;
+    }
     emit(EventView::Step { model: model.into(), artifact: model.into(), runtime: false, step: StepView::Preparing });
     preparing(true);
     let pctx = prepare::Context { db: ctx.db, store: ctx.store, spec: ctx.spec, now };

@@ -40,7 +40,8 @@
 //!
 //! No command of its own. A fetch that ends with the model downloaded and verified goes on to prepare it, in the same
 //! job and under the same cancel (`model_commands`); "Try again" on a downloaded model that is not ready is that same
-//! fetch, which finds every file in place and prepares.
+//! fetch, which finds every file in place and prepares. Each such preparation starts from "not ready": the job removes
+//! the model's record first, so only that attempt passing makes it ready again.
 //!
 //! ## Not here
 //!
@@ -383,6 +384,7 @@ fn record(conn: &Connection, model: &Artifact, spec: &EngineSpec, device: &str, 
     .map(|_| ())
 }
 
-fn forget(conn: &Connection, model: &str) -> rusqlite::Result<()> {
+/// Remove `model`'s record: it is not ready until a preparation passes again.
+pub fn forget(conn: &Connection, model: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM translation_prepared WHERE model = ?1", [model]).map(|_| ())
 }

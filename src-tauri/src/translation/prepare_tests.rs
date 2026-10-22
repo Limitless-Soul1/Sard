@@ -14,6 +14,7 @@ use rusqlite::Connection;
 use super::active::test::{Behaviour, StandIn};
 use super::catalog::{Artifact, EngineSpec, Kind, Licence, MODEL_A, MODEL_B};
 use super::download::{Mode, Policy};
+use super::download_server_tests::TestServer;
 use super::edition_run_tests::{gpu, running};
 use super::engine::{self, EngineError, EngineInfo};
 use super::execution::{NotStarted, Path};
@@ -601,6 +602,28 @@ fn a_cancel_while_preparing_ends_the_job_as_cancelled_not_failed() {
     let (events, _) = job(&b, m, &engine, &cancel);
     assert!(matches!(events.last(), Some(EventView::Failed { error: ActionErrorView::Cancelled, .. })), "{:?}", events.last());
     assert_eq!(engine.log(), vec!["start", "stop"]);
+}
+
+#[test]
+fn a_ready_model_removed_and_downloaded_again_stays_downloaded_when_its_preparation_is_cancelled() {
+    let _serial = serial_for_tests();
+    let (b, m) = prepared_once("job-again");
+    // The same model, served by a local test server: the identical file, downloaded again.
+    let server = TestServer::start(b.data.clone());
+    let sources: &'static [super::catalog::Source] = Box::leak(vec![super::catalog::Source { url: leak(server.url("/file")) }].into_boxed_slice());
+    let served: &'static Artifact = Box::leak(Box::new(Artifact { sources, ..*m }));
+    manage::remove(&b.store, served).unwrap();
+    assert_eq!(b.store.state(served).unwrap(), State::NotDownloaded);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = cancel.clone();
+    let engine = Scripted { observe: Some(Arc::new(move || flag.store(true, Ordering::SeqCst))), ..Scripted::new() };
+    let (events, _) = job(&b, served, &engine, &cancel);
+    assert!(server.stats.lock().unwrap().requests > 0, "the file was downloaded again");
+    assert!(kinds(&events).contains(&"step:Preparing".to_string()), "{:?}", kinds(&events));
+    assert!(matches!(events.last(), Some(EventView::Failed { error: ActionErrorView::Cancelled, .. })), "{:?}", events.last());
+    // Downloaded, never Ready: the earlier preparation does not stand for this attempt.
+    assert_eq!(b.store.state(served).unwrap(), State::Installed);
+    assert_eq!(b.ready(served), None);
 }
 
 #[test]

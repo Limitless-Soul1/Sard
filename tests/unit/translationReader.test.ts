@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { ar } from "../../src/i18n/locales/ar";
 import { en } from "../../src/i18n/locales/en";
-import { marksFor, match, type Labels, type Rendered } from "../../src/features/translation/reader/apply";
+import { marksFor, match, sameAsShown, type Carried, type Labels, type Rendered } from "../../src/features/translation/reader/apply";
 import { asReaderError, noticeFor } from "../../src/features/translation/reader/useBookTranslation";
 
 const labels: Labels = { review: "R", reviewHint: "RH", notTranslated: "NT", keptOriginal: "KO" };
@@ -48,6 +48,41 @@ describe("what a paragraph shows", () => {
 
   it("is simply the original, with nothing said, while it waits to be translated", () => {
     expect(marksFor({ kind: "pending" }, labels)).toBeNull();
+  });
+});
+
+describe("a page that already shows what it would be given", () => {
+  const tr = (text: string, review = false) => marksFor({ kind: "translation", text, review }, labels);
+  const carry = (c: Partial<Carried> = {}): Carried => ({ marked: false, translation: null, note: null, title: null, sized: false, ...c });
+  const shown = (text: string, review = false): Carried =>
+    carry({ marked: true, translation: text, note: review ? "R" : null, title: review ? "RH" : null, sized: true });
+
+  it("changes nothing when every paragraph carries exactly its marks, review and notes included", () => {
+    const want = [tr("أ"), tr("ب", true), marksFor({ kind: "not_translated" }, labels), marksFor({ kind: "kept_original" }, labels), null];
+    const carried = [shown("أ"), shown("ب", true), carry({ marked: true, note: "NT" }), carry({ marked: true, note: "KO" }), carry()];
+    expect(sameAsShown(want, carried, 4)).toBe(true);
+  });
+
+  it("is shown again when a translation has arrived for a paragraph shown in the original", () => {
+    expect(sameAsShown([tr("أ"), tr("ب")], [shown("أ"), carry()], 1)).toBe(false);
+  });
+
+  it("is shown again when a translation, its review mark or its note has changed", () => {
+    expect(sameAsShown([tr("ج")], [shown("أ")], 1)).toBe(false);
+    expect(sameAsShown([tr("أ", true)], [shown("أ")], 1)).toBe(false);
+    expect(sameAsShown([tr("أ")], [shown("أ", true)], 1)).toBe(false);
+    expect(sameAsShown([marksFor({ kind: "not_translated" }, labels)], [shown("أ")], 1)).toBe(false);
+  });
+
+  it("is shown again when a marked paragraph should carry nothing, or a mark stands where no paragraph is placed now", () => {
+    expect(sameAsShown([null], [shown("أ")], 1)).toBe(false);
+    // A replacement changed a paragraph's text: it is placed nowhere now, but its element still carries the mark.
+    expect(sameAsShown([tr("أ")], [shown("أ")], 2)).toBe(false);
+  });
+
+  it("is shown again when a translated paragraph does not carry its measured size", () => {
+    expect(sameAsShown([tr("أ")], [carry({ marked: true, translation: "أ" })], 1)).toBe(false);
+    expect(sameAsShown([tr("أ")], [], 0)).toBe(false);
   });
 });
 

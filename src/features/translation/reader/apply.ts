@@ -16,7 +16,8 @@
 // exact collapsed text agree there; otherwise the next leaf, in order, with exactly its tag and text. A paragraph
 // found nowhere is left alone — shown in its original, with no mark — never guessed.
 //
-// The decisions (`match`, `marksFor`) are pure and unit-tested. The page work is checked in a real WebView2.
+// The decisions (`match`, `marksFor`, `sameAsShown`) are pure and unit-tested. The page work is checked in a real
+// WebView2.
 
 import { collapse, isLeaf, LEAF_SELECTOR, pathOf } from "../source/extract";
 import type { ParagraphView, ShowView } from "./api";
@@ -190,4 +191,65 @@ export function applyToDocument(doc: Document, paragraphs: ParagraphView[], labe
     n++;
   }
   return n;
+}
+
+/** What a paragraph's element carries now, read back from the page. */
+export interface Carried {
+  /** It carries this view's marks at all. */
+  marked: boolean;
+  translation: string | null;
+  note: string | null;
+  /** The title this view put on it; null when its title, if it has one, is the book's own. */
+  title: string | null;
+  /** The size and line height measured when it was marked are on it. */
+  sized: boolean;
+}
+
+/** Whether a page already shows `want` — each placed paragraph's marks, in order (null: none) — when those
+ *  paragraphs' elements carry `carried` and `markedOnPage` elements carry a mark in all: applying `want` again
+ *  would change nothing. */
+export function sameAsShown(want: (Marks | null)[], carried: Carried[], markedOnPage: number): boolean {
+  if (want.length !== carried.length) return false;
+  let marked = 0;
+  for (let i = 0; i < want.length; i++) {
+    const w = want[i];
+    const c = carried[i];
+    // A paragraph that should carry nothing but does is one mark more on the page than counted here.
+    if (!w) continue;
+    if (!c.marked) return false;
+    marked++;
+    // As applyToDocument writes them: an empty note or title is not written at all.
+    if (c.translation !== w.translation || c.note !== (w.note || null) || c.title !== (w.title || null)) return false;
+    if (w.translation !== null && !c.sized) return false;
+  }
+  return marked === markedOnPage;
+}
+
+/**
+ * Whether `doc` already shows `paragraphs` exactly as `applyToDocument` would show them now — read from the page,
+ * nothing changed. The paragraphs are found as `applyToDocument` finds them: the marks add no element and no text,
+ * so the leaves are the same with or without them, and a text the reader changed since (a replacement) places them
+ * differently. The sizes are not compared: they are measured on the element before it is hidden, and a new size
+ * reaches the view by the engine showing it again (`apply`), never by a new reading of the edition.
+ */
+export function showsAlready(doc: Document, paragraphs: ParagraphView[], labels: Labels): boolean {
+  if (!doc.getElementById(STYLE_ID)) return false;
+  const leaves = renderedLeaves(doc);
+  const at = match(paragraphs, leaves.map((l) => l.leaf));
+  const want: (Marks | null)[] = [];
+  const carried: Carried[] = [];
+  for (const p of paragraphs) {
+    const i = at.get(p.ordinal);
+    if (i === undefined) continue;
+    const el = leaves[i].el as HTMLElement;
+    want.push(marksFor(p.show, labels));
+    carried.push({
+      marked: el.classList.contains(MARKED),
+      translation: el.getAttribute(TR),
+      note: el.getAttribute(NOTE),
+      title: el.hasAttribute(OUR_TITLE) ? el.getAttribute("title") : null,
+      sized: !!el.style.getPropertyValue("--sard-tr-size") && !!el.style.getPropertyValue("--sard-tr-lh"),
+    });
+  }
+  return sameAsShown(want, carried, doc.querySelectorAll(`.${MARKED}`).length);
 }

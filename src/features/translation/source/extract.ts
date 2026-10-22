@@ -24,8 +24,9 @@
 // that, once, when the edition is made, and keeps a paragraph that breaks it with the reason, never to be
 // sent. It does not say which WebView2 ran it: the caller records that as the edition's `webview_version`,
 // and must take it from `tauri::webview_version()`, the one authoritative source — never from the page,
-// whose user agent is reduced and whose client hints are not that source. It changes no document, and
-// nothing calls it yet.
+// whose user agent is reduced and whose client hints are not that source. It changes no document. The
+// reader calls it when a book is translated, and finds the paragraphs again on the page by the same leaf rule
+// (`isLeaf`, `pathOf`).
 //
 // NOT VALIDATED on real books (no measured book contains them): a WebView2 other than the one above, whose
 // segmenter data may differ — which is why an edition stores its inputs rather than taking them again;
@@ -198,7 +199,7 @@ function atomsOf(el: Element): Atoms {
 
 /** The element path from `root` down to `el`. One `index` serves a whole section: it records every child's
  *  position the first time its parent is met, so a section is walked once, however long. */
-function pathOf(el: Element, root: Element, index: Map<Element, number>): number[] {
+export function pathOf(el: Element, root: Element, index: Map<Element, number>): number[] {
   const out: number[] = [];
   for (let n: Element | null = el; n && n !== root; n = n.parentElement) {
     const parent = n.parentElement;
@@ -212,7 +213,8 @@ function pathOf(el: Element, root: Element, index: Map<Element, number>): number
   return out;
 }
 
-const isLeaf = (el: Element): boolean => !el.querySelector(LEAF_SELECTOR) && !!(el.textContent ?? "").trim();
+/** The leaf rule: a block container holding text and no nested one. */
+export const isLeaf = (el: Element): boolean => !el.querySelector(LEAF_SELECTOR) && !!(el.textContent ?? "").trim();
 
 /** One section's input from its parsed document. A document without a body has no leaves. */
 export function extractSection(index: number, section: Pick<SourceSection, "id" | "linear">, doc: Document): SectionInput {

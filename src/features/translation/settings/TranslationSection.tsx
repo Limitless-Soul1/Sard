@@ -59,7 +59,8 @@ const openPage = (href: string) => {
   })();
 };
 
-export function TranslationSection() {
+/** `notice`: a line under the title, saying why the section was opened (the reader, when no model is ready). */
+export function TranslationSection({ notice }: { notice?: TKey } = {}) {
   const { t, lang } = useI18n();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -166,6 +167,7 @@ export function TranslationSection() {
   return (
     <>
       <div className="gs-h1">{t("translation.models.title")}</div>
+      {notice && <p className="tr-hint tr-hint-lead">{t(notice)}</p>}
       <p className="tr-hint">{t("translation.privacy.local")}</p>
       {!overview.supported && <p className="tr-reason">{t("translation.unsupportedPlatform")}</p>}
       {overview.testCatalog && <p className="tr-reason">{t("translation.dev.testCatalog")}</p>}

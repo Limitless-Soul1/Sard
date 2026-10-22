@@ -116,6 +116,13 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   // string, and a plain rect — so the hosted transport can forward it like any other event.
   onFootnote: "callback",
 
+  // ---- translation: Windows only, where the engine is called directly ---------------------------
+  // The translation view runs functions on the section documents as they load, and the extraction reads foliate's
+  // own section objects (each with its `createDocument()`). Neither can cross a port. Translation exists only where
+  // the reader engine is called directly (Windows x64), so the hosted transport never needs them.
+  setTranslationLayer: "dom-bound",
+  bookSections: "dom-bound",
+
   // ---- the host asks the application and needs the answer NOW -----------------------------------
   // The engine calls these mid-gesture and branches on what comes back, so an asynchronous reply is
   // not merely slower, it arrives after the decision has been made. Both are resolved the same way

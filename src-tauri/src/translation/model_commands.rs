@@ -234,8 +234,8 @@ struct Running {
 
 static RUNNING: Mutex<BTreeMap<String, Running>> = Mutex::new(BTreeMap::new());
 
-/// The engine manager of the models section: the one a preparation starts its engine with.
-fn engines() -> &'static EngineManager {
+/// The engine manager of translation: the one a preparation, and a book's translation, start their engine with.
+pub(crate) fn engines() -> &'static EngineManager {
     static ENGINES: OnceLock<EngineManager> = OnceLock::new();
     ENGINES.get_or_init(|| EngineManager::new(EngineConfig::default()))
 }

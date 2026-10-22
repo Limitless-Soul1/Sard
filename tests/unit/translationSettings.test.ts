@@ -62,8 +62,8 @@ describe("the cards", () => {
     expect(v.primary).toMatchObject({ action: "download", label: "err.act.retry", disabled: null });
     expect(v.verify).toEqual({ disabled: null });
     expect(v.remove).toEqual({ disabled: null });
-    // "Ready" is only the prepared state's word.
-    expect(Object.keys(en).filter((k) => k.startsWith("translation.") && /\bready\b/i.test((en as Record<string, string>)[k]))).toEqual(["translation.state.ready"]);
+    // "Ready" is only the prepared state's word — and the reader's line that no model is ready yet.
+    expect(Object.keys(en).filter((k) => k.startsWith("translation.") && /\bready\b/i.test((en as Record<string, string>)[k]))).toEqual(["translation.state.ready", "translation.reader.noModel"]);
   });
 
   it("says Ready only for a model the backend says is prepared, and offers nothing to start", () => {
@@ -250,7 +250,7 @@ describe("the copy", () => {
   });
 
   it("ends every in-progress label with an ellipsis, in both languages", () => {
-    for (const k of ["translation.state.checking", "translation.state.downloading", "translation.state.engine", "translation.state.verifying", "translation.state.preparing", "translation.state.removing"]) {
+    for (const k of ["translation.state.checking", "translation.state.downloading", "translation.state.engine", "translation.state.verifying", "translation.state.preparing", "translation.state.removing", "translation.reader.translating"]) {
       expect(english[k].endsWith("…"), k).toBe(true);
       expect(arabic[k].endsWith("…"), k).toBe(true);
     }

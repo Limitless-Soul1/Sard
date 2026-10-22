@@ -4774,6 +4774,45 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   border-radius: 8px; padding: 8px 10px; color: var(--text);
 }
 .tr-note { margin: 16px 0 0; font: 400 0.6875rem/1.5 var(--ui-font); color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg)); }
+.tr-hint-lead { color: var(--text); font-weight: 500; margin-bottom: 4px; }
+/* The reader's translation control: the original / translation switch, as tall as the toolbar's tiles, with the
+   tiles' label row under it for "Translating…". */
+.rc-tr { display: flex; align-items: flex-start; gap: var(--sp-2); }
+.rc-tr-col { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); }
+.rc-tr-switch {
+  display: inline-flex; height: 44px; border-radius: var(--r-md); overflow: hidden;
+  border: 1px solid var(--chrome-border); background: var(--rc-surface);
+}
+.rc-tr-switch button {
+  border: 0; background: transparent; cursor: pointer; padding: 0 12px;
+  font: 500 var(--fs-tiny) var(--ui-font); color: var(--text);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.rc-tr-switch button + button { border-inline-start: 1px solid var(--chrome-border); }
+.rc-tr-switch button:hover { background: color-mix(in srgb, var(--accent) 14%, var(--rc-surface)); }
+.rc-tr-switch button.on { background: var(--accent); color: var(--paper-bg); }
+.rc-tr-status { max-width: none; min-height: 1em; }
+.rc-tr-alone { align-self: center; }
+/* What the reader says when a translation cannot be done: once, quietly, at the foot of the page. */
+.tr-reader-notice {
+  position: absolute; inset-inline: 0; bottom: 64px; margin-inline: auto; width: max-content; max-width: min(640px, 92%);
+  z-index: var(--z-chrome);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px;
+  border-radius: var(--r-md); border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg); color: var(--text);
+  font: 400 0.8125rem/1.45 var(--ui-font);
+  box-shadow: 0 4px 18px color-mix(in srgb, var(--text) 12%, transparent);
+}
+.tr-reader-notice-text { flex: 1 1 18rem; }
+.tr-reader-notice-act, .tr-reader-notice-x {
+  border: 0; background: transparent; cursor: pointer; color: var(--muted);
+  font: 500 0.75rem var(--ui-font); padding: 2px 4px;
+}
+.tr-reader-notice-act:hover, .tr-reader-notice-x:hover { color: var(--text); }
+.tr-reader-notice-detail {
+  flex: 1 1 100%; margin: 0; max-height: 8rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font: 400 0.6875rem/1.4 var(--mono-font, ui-monospace, monospace); color: var(--muted);
+}
 
 /* picker row: current face's name IN ITS OWN FACE + sub + "Change ›"; the real <select> is laid
    transparently on top (opacity 0), so the styled row shows while the native menu still drives it. */

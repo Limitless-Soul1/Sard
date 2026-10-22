@@ -34,7 +34,8 @@
 //! Settings — its overview (`overview`) and its actions (`model_commands`): fetch, cancel, verify, remove, and a
 //! licence's terms and their acceptance. A model is never bundled with Sard and never downloaded without the user
 //! choosing it, and a model whose terms must be accepted is fetched only after they are, in the revision shown.
-//! Nothing can START the engine from the interface yet.
+//! The engine starts from the interface in two places only, each by the user's own action: a download that goes on to
+//! prepare the model, and the reader translating a book with a ready model (`reader`).
 //!
 //! The guarantees the rest of the feature builds on:
 //!
@@ -67,6 +68,7 @@ pub mod manage;
 pub mod model_commands;
 pub mod overview;
 pub mod prepare;
+pub mod reader;
 pub mod slot;
 pub mod store;
 pub mod supervisor;
@@ -97,6 +99,8 @@ mod manage_tests;
 mod overview_tests;
 #[cfg(test)]
 mod prepare_tests;
+#[cfg(test)]
+mod reader_tests;
 #[cfg(test)]
 mod supervisor_tests;
 #[cfg(test)]

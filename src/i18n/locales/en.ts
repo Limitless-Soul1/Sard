@@ -2268,6 +2268,16 @@ export const en = {
   "translation.fail.busy": "These files are busy. Try again in a moment.",
   "translation.fail.load": "The translation models couldn't be listed.",
   "translation.fail.unknown": "That couldn't be completed.",
+  "translation.reader.translate": "Translate",
+  "translation.reader.original": "Original",
+  "translation.reader.translation": "Translation",
+  "translation.reader.translating": "Translating…",
+  "translation.reader.noModel": "No translation model is ready yet. Download one below to translate this book.",
+  "translation.reader.review": "Needs review",
+  "translation.reader.reviewHint": "A check flagged a possible problem here. Compare it with the original.",
+  "translation.reader.notTranslated": "Not translated — shown in the original.",
+  "translation.reader.keptOriginal": "Not translated: it contains links, notes, images or line breaks.",
+  "translation.reader.runtimeChanged": "WebView2 was updated while Sard was open, so this book can't be translated right now. Restart Sard, then choose Translate again.",
 } as const;
 
 export type TKey = keyof typeof en;

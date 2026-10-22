@@ -243,6 +243,10 @@ macro_rules! sard_invoke_handler {
             translation::model_commands::translation_model_remove,
             translation::model_commands::translation_licence_terms,
             translation::model_commands::translation_accept_terms,
+            translation::reader::translation_reader_status,
+            translation::reader::translation_reader_edition,
+            translation::reader::translation_reader_translate,
+            translation::reader::translation_reader_section,
             $($diag_cmd),*
         ])
     };

@@ -8,33 +8,39 @@ Wired in: src-tauri/Cargo.toml [patch.crates-io] — the dependency declaration 
 Copied:   Cargo.toml, LICENSE, README.md, src/ — byte-identical to the published crate except the two changes
           below. Nothing else from the package is needed to build it.
 
+Sard does not use this crate's own synthesis request. It builds the request itself — the route, the
+Sec-MS-GEC token and the headers — in src-tauri/src/tts/edge_route.rs and edge_token.rs, and opens it
+through MODIFICATION 1. Everything else this crate does is used as published: the TLS connection, the
+synthesis protocol (speech.config + ssml messages, the turn.start / response / audio.metadata / turn.end
+replies) and the voice list.
 
-=== MODIFICATION 1: THE SYNTHESIS HOST ==============================================================
 
-src/constants.rs, WSS_URL only:
+=== MODIFICATION 1: A CONNECTION MADE WITH THE CALLER'S REQUEST =====================================
 
-  before  wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=<key>&ConnectionId=
-  after   wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1?Ocp-Apim-Subscription-Key=<key>&ConnectionId=
+src/tts/mod.rs: the body of `websocket_connect` becomes `websocket_connect_request(request)`, which takes
+the upgrade request as an argument instead of building it; `websocket_connect` now calls it with
+`build_websocket_request()`, so the crate's own entry points behave exactly as published.
+src/tts/stream/blocking.rs: one added function beside `msedge_tts_split` —
 
-The key is the same value. Everything `build_websocket_request` appends (the ConnectionId, Sec-MS-GEC,
-Sec-MS-GEC-Version), every header, and the synthesis protocol (speech.config + ssml messages, the
-turn.start / response / audio.metadata / turn.end replies) are untouched. VOICE_LIST_URL is untouched.
+  pub fn msedge_tts_split_request(request) -> Result<(Sender<TcpStream>, Receiver<TcpStream>)>
 
-WHY. From 2026-10-10 the original host refuses a large share of WebSocket handshakes with HTTP 403 —
-other clients reported the same from that date, total in some regions and intermittent in others — while
-Microsoft Edge itself connects to the host above. Measured from a Windows desktop on 2026-10-12 with this
-crate's own request: the original host refused 16 of 40 handshakes made back to back, in streaks; the new
-host accepted 45 of 45 valid handshakes and completed every synthesis tried, Arabic voices, 1,284-character
-text and word-boundary metadata included.
+the same split client over a connection made with the given request.
 
-WHY THE VOICE LIST STAYS. Measured the same day: the original voice-list URL answered 8 of 8 requests
-(322 voices, 32 Arabic). The new host's voice list refuses a request without Sec-MS-GEC, which this crate's
-voice-list call does not send. There is no evidence that it needs to move, so it does not.
+WHY. The crate hard-codes the host, the token scheme and the headers of the request, and the service has
+changed what it accepts twice in two weeks:
 
-KNOWN LIMIT. The new host requires the v1 Sec-MS-GEC token this crate generates and refuses a
-"2-..." Sec-MS-GEC-Version; Edge's own builds have been reported using a newer scheme. If Microsoft stops
-accepting v1 tokens, this host will fail like the original one did, and the fix is a token change, not
-a host change.
+  * from 2026-10-10 the original host refuses the version-1 token this crate generates (HTTP 403). Sard
+    1.4.1 answered that by moving to the other host, which still accepted it;
+  * from 2026-10-23 that other host answers a WebSocket request carrying neither Accept nor
+    Accept-Encoding — which this crate's request does not carry — with a plain HTTP 200 instead of
+    upgrading it. Read-aloud stopped completely. Measured 2026-10-24 with Sard 1.4.1's own client: 0 of 5
+    connections, every one answered 200; the same request with Accept-Encoding added: upgraded.
+
+With the request in Sard's hands, a change of host, token or header is a change to Sard's own code, and
+Sard can keep more than one route (see edge_route.rs for the routes, how a refused one is stepped around,
+and the measurements behind each). A later release of this crate (0.4.1) also generates the version-2
+token, but it moves back to a single hard-coded host; this copy stays at 0.4.0 and takes the request
+instead.
 
 
 === MODIFICATION 2: KEEP-ALIVE FRAMES ===============================================================
@@ -46,17 +52,31 @@ src/tts/mod.rs, `Payload::process`: one match arm, before the catch-all —
 WHY. The catch-all turns every frame other than text, binary and close into
 `UnexpectedMessage("unexpected message: ")`, which fails the synthesis being read. The original host was
 never seen sending such frames (no such failure among the production requests recorded before 2026-10-10);
-the new one does. Measured 2026-10-12 on one held connection: an unsolicited, empty Pong
+the other one does. Measured 2026-10-12 on one held connection: an unsolicited, empty Pong
 about every 120 s (at 120.5 s and 240.5 s), and in the application the same error 2.3 minutes into a
 listening session — one failed synthesis and one reconnect per two minutes of continuous reading.
 A keep-alive frame carries no synthesis data, and tungstenite answers a Ping by itself, so both now yield
 no payload. The turn's state is untouched and every other frame keeps its handling.
 
 
+=== NO LONGER MODIFIED ==============================================================================
+
+src/constants.rs is the published file again. It carried Sard's first change (the synthesis host, from
+2026-10-12); the host is now chosen by Sard's own request, so the crate's constant is no longer read for
+synthesis and was restored. VOICE_LIST_URL, which the voice list still uses, was never changed.
+
+src/tts/mod.rs, `build_websocket_request`, carries no header change. PR #66 (Basil Alrashedi) found the
+2026-10-23 cause independently — the msedge host answers a handshake without Accept-Encoding with a plain
+HTTP 200 — and fixed it first, by adding Accept-Encoding and Accept-Language to this crate's own request.
+That request is no longer used for synthesis: Sard's request (src-tauri/src/tts/edge_route.rs) sends the
+same two headers, so the lines are carried there instead of being kept here as a second, unused copy.
+
+
 === RE-VENDORING / REMOVING ========================================================================
 
-Remove this directory and the [patch.crates-io] entry once an upstream msedge-tts release connects to a
-working host and handles keep-alive frames. To re-vendor: copy the four items above from the new published
-crate, re-apply the changes still needed, update this file, and check the copy against the published crate
-file by file — the only expected differences are the ones recorded here. tests/unit/ttsEndpoint.test.ts pins
-both URLs, the keep-alive arm, and every other byte of the copy against the published crate.
+Remove this directory and the [patch.crates-io] entry once an upstream msedge-tts release can connect with
+a request the caller builds and handles keep-alive frames. To re-vendor: copy the four items above from
+the new published crate, re-apply the changes still needed, update this file, and check the copy against
+the published crate file by file — the only expected differences are the ones recorded here.
+tests/unit/ttsEndpoint.test.ts pins both changes, that synthesis goes through Sard's own request, and every
+other byte of the copy against the published crate.

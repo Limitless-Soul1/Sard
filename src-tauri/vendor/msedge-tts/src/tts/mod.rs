@@ -218,13 +218,21 @@ type RustlsStream<T> = rustls::StreamOwned<rustls::ClientConnection, T>;
 
 #[cfg(feature = "blocking")]
 fn websocket_connect() -> Result<tungstenite::WebSocket<RustlsStream<std::net::TcpStream>>> {
+    websocket_connect_request(build_websocket_request()?)
+}
+
+// SARD LOCAL MODIFICATION — see ../../VENDOR.txt. The connection itself, made with a request the caller
+// built (its host, query and headers); `websocket_connect` above is this with the crate's own request.
+#[cfg(feature = "blocking")]
+fn websocket_connect_request(
+    request: tungstenite::handshake::client::Request,
+) -> Result<tungstenite::WebSocket<RustlsStream<std::net::TcpStream>>> {
     use rustls::pki_types::ServerName;
     use rustls::{ClientConfig, ClientConnection, StreamOwned};
     use rustls_platform_verifier::ConfigVerifierExt;
     use std::sync::Arc;
     use tungstenite::{ClientHandshake, Error, HandshakeError, error::*};
 
-    let request = build_websocket_request()?;
     let host = request
         .uri()
         .host()

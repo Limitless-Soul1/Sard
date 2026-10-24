@@ -3406,7 +3406,7 @@ dependencies = [
 
 [[package]]
 name = "sard"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "discord-rich-presence",
  "image",
@@ -3426,6 +3426,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tungstenite",
  "ureq",
+ "uuid 1.23.4",
  "webview2-com",
  "windows",
  "windows-core 0.61.2",

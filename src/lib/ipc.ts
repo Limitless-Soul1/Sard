@@ -53,6 +53,10 @@ export const ttsStop = (): Promise<void> => invoke<void>("tts_stop");
 export const ttsCancelSynth = (): Promise<boolean> => invoke<boolean>("tts_cancel_synth");
 /** Whether the synthesis in flight has produced audio yet — see RULE 2a in `ttsScheduler.ts`. */
 export const ttsSynthStreaming = (): Promise<boolean> => invoke<boolean>("tts_synth_streaming");
+/** One route the synthesis connection tried, as it answered (session diagnostics; no URL, token or body). */
+export interface RouteTry { seq: number; at: number; route: string; outcome: string; status: number | null; ms: number; waitedOn: boolean }
+/** The routes tried after sequence number `since` — read by the read-aloud telemetry while nothing sounds. */
+export const ttsRouteLog = (since: number): Promise<RouteTry[]> => invoke<RouteTry[]>("tts_route_log", { since });
 /** The window's own system menu, at physical screen coordinates — see `WindowChrome.tsx`. */
 export const showWindowMenu = (x: number, y: number): Promise<number> => invoke<number>("show_window_menu", { x, y });
 /** Native fullscreen. Entering returns whether the window was maximized, which the exit hands back

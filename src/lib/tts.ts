@@ -292,6 +292,8 @@ interface TtsState {
   // already in `buffering` while it awaits the sentence; this turns that silence into visible progress, which
   // is the condition under which a longer wait is acceptable at all.
   retryAttempt: number;
+  /** How many attempts the round in progress holds: TTS_MAX_RETRIES, one more once a rate limit is waited out. */
+  retryOf: number;
   start: (o: StartOpts) => Promise<void>;
   toggle: () => void;
   dismissEnd: () => void; // RAWY-190: hide the stale chapter-end "next chapter" offer (keeps the player)
@@ -880,6 +882,9 @@ const isCancelledSynth = (e: unknown): boolean => String(e).includes("edge synth
 /** A warm socket the service closed while idle: 10054 within milliseconds, before any audio. Measured on
  *  every run after an idle stretch; worth one immediate reconnect that is not counted as a failure. */
 const isFastReset = (e: unknown, ms: number): boolean => ms < 150 && /10054|ConnectionReset/.test(String(e));
+/** The service refused the call with a rate limit: the engine's status marker reads 429 (the last route's
+ *  answer, when it tried two). Read from the same marker as `isPermanentFailure`, never from stray digits. */
+export const isRateLimited = (e: unknown): boolean => HTTP_STATUS.exec(String(e))?.[2] === "429";
 let pendingDecodeInfo: { bytes: number; head: string } | null = null;
 
 // RAWY-231: the scheduler's dispatch — invoke (bounded so a stalled socket frees the single-flight slot) →
@@ -970,9 +975,10 @@ async function synthDispatch(i: number, ctx: DispatchContext): Promise<Synthesiz
   if (ttsDebugOn && ctx.role !== "current" && ctx.role !== "lead" && ctx.role !== "look-ahead") {
     logStall(`dispatch:${ctx.role}#${ctx.attempt}${ctx.budgetMs !== undefined ? `:${ctx.budgetMs}ms` : ""}`, i);
   }
-  // D68: the indicator shows only the recovery round the listener is waiting through (attempts 2 and 3);
-  // background attempts on sentences still ahead are silent, as nothing audible depends on them.
-  if (ctx.role === "recovery" && ctx.attempt > 1) useTts.setState({ retryAttempt: ctx.attempt });
+  // D68: the indicator shows only the recovery round the listener is waiting through (attempts 2 and 3, and
+  // the delayed one a rate limit earns); background attempts on sentences still ahead are silent, as nothing
+  // audible depends on them.
+  if (ctx.role === "recovery" && ctx.attempt > 1) useTts.setState({ retryAttempt: ctx.attempt, retryOf: ctx.maxAttempts ?? TTS_MAX_RETRIES });
   // RESILIENCE TELEMETRY (observation only). The attempt is timed and recorded AFTER it has settled, on
   // both paths, so the value and the error travel exactly as they did before: nothing here is awaited by
   // the scheduler, nothing here can change a retry, a budget or a lead. `noteDispatch` allocates one
@@ -1012,6 +1018,7 @@ const scheduler = new SynthScheduler<Synthesized>(synthDispatch, {
   isPermanent: isPermanentFailure,
   isCancelled: isCancelledSynth,
   isFastReset,
+  isRateLimited, // RULE 2b: a round waits a rate limit out; speculative work holds back after one
   // Cooperative cancellation: the engine returns the call in flight as cancelled and drops the connection
   // at its next message. Asked only when a session ends or the sentence the listener waits on needs the
   // engine another sentence is holding.
@@ -1966,6 +1973,7 @@ export const useTts = create<TtsState>((set, get) => ({
   lastFailure: null,
   debug: ttsDebugOn,
   retryAttempt: 0,
+  retryOf: TTS_MAX_RETRIES,
 
   // RAWY-257 (Phase 1) / RAWY-255: the in-app setter the D62 diagnostic never had. Writes localStorage (the
   // source of truth, survives a reload), the module mirror (so the hot paths don't re-read it per event), and

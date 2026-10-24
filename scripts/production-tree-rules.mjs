@@ -52,6 +52,32 @@ export const DEVELOPMENT_ONLY = [
   // This rule is deliberately older than the code it guards — it exists before any generator has been
   // run, because the cheapest moment to refuse a generated tree is before one exists.
   { re: /^src-tauri\/gen\//, why: "a generated mobile platform project — build scaffolding carrying local machine paths and release signing configuration, not the product" },
+
+  // ---- MOBILE SOURCE THAT IS WRITTEN, NOT GENERATED --------------------------------------------
+  //
+  // The rule above stops the GENERATED projects. It stops nothing that a person writes, and that gap
+  // was measured rather than guessed: a tree carrying `features-mobile/`, a mobile stylesheet, a
+  // mobile Rust module, mobile Tauri configs and native plugin sources produced a 627-file production
+  // tree — and BOTH gates passed it. Gradle and Swift files were declared "fit to publish".
+  //
+  // Sard ships one product: a Windows desktop application. Mobile is an unmerged line of work, and
+  // none of it belongs in the tree `main` publishes — not because it is secret, but because `main` is
+  // the thing that is built, and a file that cannot be built for Windows has no business in it.
+  //
+  // Each pattern names a location rather than a file, so the exclusion holds as the work grows. They
+  // are inert today: no path in the current tree matches any of them, which is the property the
+  // boundary tests pin — this rule must protect the desktop line WITHOUT changing what it ships.
+  //
+  // NOT excluded, deliberately: `src-tauri/capabilities/mobile.json`. It already ships, it has shipped
+  // since 1.3.0, and Tauri reads the capabilities directory at build time. Removing it would change
+  // the Windows build to fix a cosmetic concern, which is the opposite of what this rule is for.
+  { re: /^src\/features-mobile\//, why: "the mobile front end — a separate product surface, not part of the desktop application" },
+  { re: /^src\/styles\/mobile\.css$/, why: "the mobile stylesheet — styles for a surface the desktop build does not have" },
+  { re: /^src\/mobile\//, why: "mobile-only frontend code — not part of the desktop application" },
+  { re: /^src-tauri\/src\/mobile\//, why: "mobile-only Rust — compiled for Android and iOS, never for the desktop target" },
+  { re: /^src-tauri\/tauri\.(android|ios)\.conf\.json$/, why: "a mobile platform's build identity — the desktop build never reads it" },
+  { re: /^plugins\//, why: "native mobile plugin sources (Kotlin, Swift, Gradle) — platform code the desktop build cannot compile" },
+  { re: /^tsconfig\.mobile\.json$/, why: "the mobile front end's TypeScript configuration — development-only, like the test config" },
   // Only the release workflow ships (PRODUCTION_ALWAYS below pins it, because CI runs it from `main`).
   // Every other workflow validates `develop`: it runs the unit suite, the harness rules and the gate
   // scripts, none of which the published tree carries, so on `main` it would be a workflow that could

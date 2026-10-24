@@ -1476,24 +1476,48 @@ mod live_edge {
         eprintln!("the engine recovered after the storm ({n} bytes)");
     }
 
+    /// MEASURED 2026-10-24: in a run right after the route cases, nothing was in flight to cancel 2.5 s after the
+    /// socket opened — the call had already ended, and how was not recorded. A call that ends with an error before
+    /// the cancel is a transient of the live service and is retried as `synth_ok` retries one (three tries); a call
+    /// that completes before the cancel fails the case, because then nothing was left to cancel. Either way the
+    /// call's actual outcome is printed.
     #[test]
     #[ignore]
     fn a_cancel_after_audio_started_drops_the_socket_at_the_next_message() {
-        wait_quiet();
-        let e = std::sync::Arc::new(TtsEngine::default());
-        let e2 = e.clone();
-        let long = nonce(&"Audio is already flowing when the listener moves on. ".repeat(40));
-        let h = std::thread::spawn(move || synth(&e2, &long, None));
-        let t0 = Instant::now();
-        while established() == 0 && t0.elapsed() < Duration::from_secs(10) {
-            std::thread::sleep(Duration::from_millis(50));
+        let mut last = String::new();
+        for attempt in 1..=3 {
+            wait_quiet();
+            let e = std::sync::Arc::new(TtsEngine::default());
+            let e2 = e.clone();
+            let long = nonce(&"Audio is already flowing when the listener moves on. ".repeat(40));
+            let h = std::thread::spawn(move || synth(&e2, &long, None));
+            let t0 = Instant::now();
+            while established() == 0 && !h.is_finished() && t0.elapsed() < Duration::from_secs(10) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if !h.is_finished() {
+                assert_eq!(established(), 1, "exactly this call's socket is open");
+                std::thread::sleep(Duration::from_millis(2_500));
+            }
+            if cancel_current(&e) {
+                let r = h.join().unwrap();
+                assert_eq!(r, Err("edge synth cancelled".to_string()), "the cancelled call's outcome");
+                if attempt > 1 {
+                    eprintln!("cancelled on attempt {attempt} (service transient before it: {last})");
+                }
+                eprintln!("socket closed {:?} after the cancel", wait_quiet());
+                return;
+            }
+            match h.join().unwrap() {
+                Ok(n) => panic!("the call completed ({n} bytes) before the cancel — nothing was left to cancel"),
+                Err(err) => {
+                    eprintln!("attempt {attempt}: the call ended before the cancel: {err}");
+                    last = err;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(700));
         }
-        assert_eq!(established(), 1, "exactly this call's socket is open");
-        std::thread::sleep(Duration::from_millis(2_500));
-        assert!(cancel_current(&e));
-        let r = h.join().unwrap();
-        assert_eq!(r.unwrap_err(), "edge synth cancelled");
-        eprintln!("socket closed {:?} after the cancel", wait_quiet());
+        panic!("three calls in a row ended with an error before the cancel ({last}) — service unavailable, not a code failure");
     }
 
     #[test]

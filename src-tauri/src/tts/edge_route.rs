@@ -25,6 +25,13 @@
 //!     scheduler retries exactly as it always has. A route is left for transient reasons only when they are
 //!     sustained: `TRANSIENT_STREAK` in a row spanning at least `TRANSIENT_SPAN`. It is then skipped for
 //!     `TRANSIENT_COOLDOWN`, and the next attempt starts on the other route.
+//!   * A RATE LIMIT never penalizes a route: it earns no strike, so whatever it sets off is the base cooldown,
+//!     never a doubled one, and a 429 on a route's trial does not skip it again. One case moves on after a 429:
+//!     an attempt the listener is WAITING ON — a call of the scheduler's recovery round, the only calls that carry
+//!     a budget — whose first route has now answered 429 `RATE_LIMIT_FALLBACK_AFTER` times in a row tries the
+//!     next route once, inside the same attempt and its budget, unless that route has failed in the last
+//!     `FALLBACK_HOLD`; a limit the routes share therefore costs one extra request a minute at most, and never one
+//!     more to the route that is limiting. Nothing else about the attempt, the round or Retry changes.
 //!   * A skipped route is TRIED AGAIN by the first connection made after its cooldown — a connection the reader
 //!     needs anyway, never an extra request. If it connects, its record is cleared and it is first again. If it
 //!     fails in any way, the attempt moves on (except after a rate limit) and the route is skipped for twice as
@@ -41,7 +48,9 @@
 //! one failure, the longest of seven — and every run ended with a success on the same route, 0.9–8.9 s after
 //! its last failure. All but one run spanned at most 18.7 s; that one (81 s) began with DNS failures, the
 //! listener's own network, which no other route could have fixed. Leaving a route after two transient failures
-//! would have switched routes 23 times for nothing; three spanning 30 s would have switched once.
+//! would have switched routes 23 times for nothing; three spanning 30 s would have switched once. Three of the
+//! sessions' "Edge unavailable" pauses were a whole recovery round answered 429 (the sentence's first try and
+//! both recovery tries), with the route working again seconds later — what the rate-limit fallback is for.
 //!
 //! WHAT IT CANNOT DO. It cannot keep read-aloud working when the service refuses every route it knows. A route
 //! that upgrades and then fails the synthesis is not counted against it here. A fallback that works leaves no
@@ -220,15 +229,24 @@ pub(super) const TRANSIENT_SPAN: Duration = Duration::from_secs(30);
 pub(super) const TRANSIENT_COOLDOWN: Duration = Duration::from_secs(120);
 /// Each failed try after a cooldown doubles the next one, up to this.
 pub(super) const MAX_COOLDOWN: Duration = Duration::from_secs(3_600);
+/// An attempt the listener waits on tries the next route after this many 429s in a row from its first route —
+/// in a fresh recovery round, its final try.
+pub(super) const RATE_LIMIT_FALLBACK_AFTER: u32 = 3;
+/// ... unless the next route has itself failed this recently.
+pub(super) const FALLBACK_HOLD: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, Default)]
 struct RouteState {
     cooling_until: Option<Instant>,
-    /// Cooldowns since this route last connected. Above zero, each try of the route is a trial.
+    /// Cooldowns since this route last connected, rate limits excepted. Above zero, each try is a trial.
     strikes: u32,
     /// Transient failures in a row, and when the first of them happened.
     transient: u32,
     transient_since: Option<Instant>,
+    /// 429s in a row; any other answer ends the run.
+    rate_limited: u32,
+    /// When this route last failed, in any way.
+    last_failure: Option<Instant>,
 }
 
 /// What the routes have done lately — the only state this module keeps, for the life of the process.
@@ -260,9 +278,12 @@ impl RouteBook {
     /// Record a failure; true when it puts the route into cooldown.
     pub(super) fn failed(&mut self, route: Route, failure: Failure, now: Instant) -> bool {
         let state = &mut self.routes[route.index()];
+        let rate_limit = failure == Failure::RateLimited;
+        state.last_failure = Some(now);
+        state.rate_limited = if rate_limit { state.rate_limited + 1 } else { 0 };
         let base = if failure.is_refusal() {
             REFUSED_COOLDOWN
-        } else if state.strikes > 0 {
+        } else if state.strikes > 0 && !rate_limit {
             // A route already skipped once, failing again on its trial: the evidence is not new.
             TRANSIENT_COOLDOWN
         } else {
@@ -273,12 +294,24 @@ impl RouteBook {
             }
             TRANSIENT_COOLDOWN
         };
-        state.strikes = state.strikes.saturating_add(1);
         state.transient = 0;
         state.transient_since = None;
-        let doubling = 1u32 << (state.strikes - 1).min(16);
+        // A rate limit alone earns no strike: what it sets off is the base cooldown, never a doubled one.
+        let doubling = if rate_limit {
+            1
+        } else {
+            state.strikes = state.strikes.saturating_add(1);
+            1u32 << (state.strikes - 1).min(16)
+        };
         state.cooling_until = Some(now + base.saturating_mul(doubling).min(MAX_COOLDOWN));
         true
+    }
+
+    /// Whether an attempt the listener waits on, its first route having just answered 429, may try `next`: the
+    /// first route's 429s have run `RATE_LIMIT_FALLBACK_AFTER` in a row, and `next` has not failed lately.
+    fn rate_limit_fallback(&self, first: Route, next: Route, now: Instant) -> bool {
+        self.routes[first.index()].rate_limited >= RATE_LIMIT_FALLBACK_AFTER
+            && self.routes[next.index()].last_failure.map_or(true, |t| now.saturating_duration_since(t) >= FALLBACK_HOLD)
     }
 
     /// End a route's cooldown now, as its passing would, without forgetting its strikes.
@@ -337,18 +370,20 @@ pub(super) fn timed_out(book: &Mutex<RouteBook>, route: Route) {
     lock_recover(book).failed(route, Failure::TimedOut, Instant::now());
 }
 
-/// One connection attempt across the routes, by the rules at the top of this file. `try_route` makes the
-/// connection on one route; the book is never locked while it runs.
+/// One connection attempt across the routes, by the rules at the top of this file. `waited_on` says the listener
+/// is waiting on it (a recovery-round call). `try_route` makes the connection on one route; the book is never
+/// locked while it runs.
 pub(super) fn connect_via<C>(
     book: &Mutex<RouteBook>,
     attempt: &Attempt,
     now: impl Fn() -> Instant,
+    waited_on: bool,
     mut try_route: impl FnMut(Route) -> Result<C, AttemptError>,
 ) -> Result<C, String> {
     let plan = lock_recover(book).plan(now());
     let mut tried = Vec::with_capacity(plan.len());
     let mut status = None;
-    for route in plan {
+    for (i, &route) in plan.iter().enumerate() {
         if !attempt.begin(route) {
             break;
         }
@@ -364,12 +399,20 @@ pub(super) fn connect_via<C>(
             }
             Err(e) => e,
         };
-        let cooling = lock_recover(book).failed(route, e.failure, now());
+        let moves_on = {
+            let mut book = lock_recover(book);
+            let cooling = book.failed(route, e.failure, now());
+            if e.failure == Failure::RateLimited {
+                // A rate limit's pressure may be shared, so it moves on only in the one case the rules allow.
+                waited_on && i == 0 && plan.get(1).is_some_and(|&next| book.rate_limit_fallback(route, next, now()))
+            } else {
+                // Otherwise only from a route this failure has shown to be the problem.
+                cooling
+            }
+        };
         tried.push(format!("{} {} ({})", route.name(), e.failure.name(), e.detail));
         status = e.status;
-        // Move on only from a route this failure has shown to be the problem, and never after a rate limit,
-        // whose pressure the next route may share.
-        if !cooling || e.failure == Failure::RateLimited {
+        if !moves_on {
             break;
         }
     }
@@ -384,8 +427,8 @@ pub(super) fn connect_via<C>(
 }
 
 /// Open the split synthesis client on the first route that accepts it.
-pub(super) fn connect(book: &Mutex<RouteBook>, attempt: &Attempt) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
-    connect_via(book, attempt, Instant::now, |route| {
+pub(super) fn connect(book: &Mutex<RouteBook>, attempt: &Attempt, waited_on: bool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
+    connect_via(book, attempt, Instant::now, waited_on, |route| {
         let unix_secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let connection_id = uuid::Uuid::new_v4().simple().to_string();
         let request = request_for(route, unix_secs, &connection_id).map_err(|e| attempt_error(&e.into()))?;
@@ -513,7 +556,7 @@ mod tests {
     fn the_reports_the_frontend_pipeline_tests_play_are_produced_exactly() {
         let report = |answers: Vec<msedge_tts::error::Error>| {
             let mut answers = answers.into_iter();
-            let r: Result<(), String> = connect_via(&Mutex::new(RouteBook::default()), &Attempt::default(), Instant::now, |_| Err(attempt_error(&answers.next().unwrap())));
+            let r: Result<(), String> = connect_via(&Mutex::new(RouteBook::default()), &Attempt::default(), Instant::now, false, |_| Err(attempt_error(&answers.next().unwrap())));
             r.unwrap_err()
         };
         let a = |s: u16| answered(s, None);
@@ -527,6 +570,15 @@ mod tests {
         assert_eq!(report(vec![io(std::io::ErrorKind::Other, Some(11001))]), "edge connect: msedge failed (io Uncategorized os 11001)");
         #[cfg(windows)]
         assert_eq!(report(vec![io(std::io::ErrorKind::ConnectionReset, Some(10054))]), "edge connect: msedge failed (io ConnectionReset os 10054)");
+        // A recovery round's final try after two 429s, both routes limited.
+        let book = Mutex::new(RouteBook::default());
+        let waited = |waited_on: bool| -> String {
+            let r: Result<(), String> = connect_via(&book, &Attempt::default(), Instant::now, waited_on, |_| Err(attempt_error(&a(429))));
+            r.unwrap_err()
+        };
+        waited(false);
+        waited(true);
+        assert_eq!(waited(true), "edge connect: http 429; msedge rate-limited (http 429), bing rate-limited (http 429)");
     }
 
     // ---- choosing a route: scripted outcomes on a virtual clock ----
@@ -564,8 +616,17 @@ mod tests {
 
     /// One attempt at the clock's current time; returns the routes contacted and the result.
     fn attempt_at(book: &Mutex<RouteBook>, clock: &Clock, outcome: impl Fn(Route) -> Outcome) -> (Vec<Route>, Result<(), String>) {
+        attempt_with(book, clock, false, outcome)
+    }
+
+    /// The same for an attempt the listener is waiting on: a call of the scheduler's recovery round.
+    fn waited_at(book: &Mutex<RouteBook>, clock: &Clock, outcome: impl Fn(Route) -> Outcome) -> (Vec<Route>, Result<(), String>) {
+        attempt_with(book, clock, true, outcome)
+    }
+
+    fn attempt_with(book: &Mutex<RouteBook>, clock: &Clock, waited_on: bool, outcome: impl Fn(Route) -> Outcome) -> (Vec<Route>, Result<(), String>) {
         let tried = RefCell::new(Vec::new());
-        let result = connect_via(book, &Attempt::default(), || clock.now(), |route| {
+        let result = connect_via(book, &Attempt::default(), || clock.now(), waited_on, |route| {
             tried.borrow_mut().push(route);
             outcome(route).map_err(error_for)
         });
@@ -815,16 +876,145 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_trial_moves_on_except_after_a_rate_limit() {
-        for (trial, moves_on) in [(Failure::Network, true), (Failure::ServerError, true), (Failure::RateLimited, false)] {
+    fn a_failed_trial_moves_on_and_skips_the_route_again_but_a_rate_limit_does_neither() {
+        for (trial, penalized) in [(Failure::Network, true), (Failure::ServerError, true), (Failure::RateLimited, false)] {
             let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
             let _ = attempt_at(&book, &clock, |r| if r == FIRST { Err(Failure::Incompatible) } else { Ok(()) });
             lock_recover(&book).expire(FIRST);
             let (tried, _) = attempt_at(&book, &clock, |r| if r == FIRST { Err(trial) } else { Ok(()) });
-            assert_eq!(tried.len() == 2, moves_on, "{trial:?}: {tried:?}");
-            // Either way the route is skipped again, for longer.
-            assert_eq!(lock_recover(&book).plan(clock.now()), vec![SECOND], "{trial:?}");
+            assert_eq!(tried.len() == 2, penalized, "{trial:?}: {tried:?}");
+            let plan = lock_recover(&book).plan(clock.now());
+            assert_eq!(plan, if penalized { vec![SECOND] } else { vec![FIRST, SECOND] }, "{trial:?}");
         }
+    }
+
+    // ---- the rate-limit fallback of an attempt the listener is waiting on ----
+
+    /// The recorded shape of a round answered 429: the sentence's first try (not waited on), then the round's
+    /// two recovery tries (waited on).
+    fn round(book: &Mutex<RouteBook>, clock: &Clock, outcome: impl Fn(Route) -> Outcome + Copy) -> Vec<(Vec<Route>, Result<(), String>)> {
+        let mut out = vec![attempt_at(book, clock, outcome)];
+        for gap in [0.25, 0.75] {
+            clock.advance(gap + 0.6);
+            out.push(waited_at(book, clock, outcome));
+        }
+        out
+    }
+
+    #[test]
+    fn a_429_burst_that_ends_on_the_preferred_route_never_contacts_the_other() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let n = Cell::new(0);
+        // The recorded 2026-10-24 opening: two 429s, then the route answers again.
+        let outcome = |r: Route| {
+            assert_eq!(r, FIRST, "the other route was contacted");
+            n.set(n.get() + 1);
+            if n.get() <= 2 { Err(Failure::RateLimited) } else { Ok(()) }
+        };
+        let tries = round(&book, &clock, outcome);
+        assert_eq!(tries.iter().map(|t| t.0.clone()).collect::<Vec<_>>(), vec![vec![FIRST]; 3]);
+        assert!(tries[2].1.is_ok());
+        assert_eq!(lock_recover(&book).routes[FIRST.index()].rate_limited, 0, "a connection ends the run");
+    }
+
+    #[test]
+    fn a_round_answered_429_tries_the_other_route_on_its_final_attempt_only() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let tries = round(&book, &clock, |r| if r == FIRST { Err(Failure::RateLimited) } else { Ok(()) });
+        assert_eq!(tries[0].0, vec![FIRST], "the sentence's first try is not waited on");
+        assert_eq!(tries[1].0, vec![FIRST], "two 429s are not yet a run");
+        assert_eq!(tries[2], (vec![FIRST, SECOND], Ok(())), "the third, waited on, tries the other route once");
+        // The preferred route is not penalized: still first, never skipped, no strike.
+        assert_eq!(lock_recover(&book).plan(clock.now()), vec![FIRST, SECOND]);
+        assert_eq!(lock_recover(&book).routes[FIRST.index()].strikes, 0);
+        clock.advance(2.0);
+        assert_eq!(attempt_at(&book, &clock, |_| Ok(())), (vec![FIRST], Ok(())));
+    }
+
+    #[test]
+    fn a_background_attempt_never_falls_back_on_a_rate_limit() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        for _ in 0..6 {
+            assert_eq!(attempt_at(&book, &clock, |r| if r == FIRST { Err(Failure::RateLimited) } else { Ok(()) }).0, vec![FIRST]);
+            clock.advance(1.0);
+        }
+    }
+
+    #[test]
+    fn when_both_routes_answer_429_the_extra_request_is_one_a_minute_at_most() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let both_limited = |_: Route| Err(Failure::RateLimited);
+        let tries = round(&book, &clock, both_limited);
+        assert_eq!(tries[2].0, vec![FIRST, SECOND]);
+        assert_eq!(
+            tries[2].1.clone().unwrap_err(),
+            format!("edge connect: http 429; {} rate-limited (http 429), {} rate-limited (http 429)", FIRST.name(), SECOND.name())
+        );
+        // Ten minutes of rounds every 15 s while the limit is shared: at most one handshake more a minute than
+        // the rounds make anyway, and never two handshakes to one route in an attempt.
+        let start = clock.now();
+        let mut extra = 0;
+        while clock.now() < start + Duration::from_secs(600) {
+            clock.advance(15.0);
+            for (tried, result) in round(&book, &clock, both_limited) {
+                assert!(result.is_err());
+                assert!(!tried.is_empty() && tried.len() <= 2 && (tried.len() == 1 || tried[0] != tried[1]), "{tried:?}");
+                extra += tried.len() - 1;
+            }
+        }
+        assert!(extra <= 11, "{extra} extra handshakes in ten minutes");
+        // A rate limit alone never penalized either route beyond the base cooldown.
+        for r in ROUTES {
+            let s = lock_recover(&book).routes[r.index()];
+            assert_eq!(s.strikes, 0);
+            assert!(s.cooling_until.map_or(true, |t| t.saturating_duration_since(clock.now()) <= TRANSIENT_COOLDOWN));
+        }
+    }
+
+    #[test]
+    fn mixed_rate_limits_timeouts_and_refusals() {
+        // A timeout between 429s ends their run: no fallback on the next waited-on 429.
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let _ = attempt_at(&book, &clock, |_| Err(Failure::RateLimited));
+        timed_out(&book, FIRST);
+        let _ = waited_at(&book, &clock, |_| Err(Failure::RateLimited));
+        assert_eq!(waited_at(&book, &clock, |r| if r == FIRST { Err(Failure::RateLimited) } else { Ok(()) }).0, vec![FIRST]);
+        // A refusal after 429s moves on at once, whether or not the attempt is waited on, and skips the route.
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let _ = attempt_at(&book, &clock, |_| Err(Failure::RateLimited));
+        let _ = attempt_at(&book, &clock, |_| Err(Failure::RateLimited));
+        assert_eq!(attempt_at(&book, &clock, |r| if r == FIRST { Err(Failure::Incompatible) } else { Ok(()) }), (vec![FIRST, SECOND], Ok(())));
+        assert_eq!(lock_recover(&book).plan(clock.now()), vec![SECOND]);
+        // The other route timed out a moment ago: the fallback waits out FALLBACK_HOLD.
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        lock_recover(&book).failed(SECOND, Failure::TimedOut, clock.now());
+        for _ in 0..2 {
+            let _ = attempt_at(&book, &clock, |_| Err(Failure::RateLimited));
+        }
+        assert_eq!(waited_at(&book, &clock, |r| if r == FIRST { Err(Failure::RateLimited) } else { Ok(()) }).0, vec![FIRST]);
+        clock.advance(60.0);
+        assert_eq!(waited_at(&book, &clock, |r| if r == FIRST { Err(Failure::RateLimited) } else { Ok(()) }), (vec![FIRST, SECOND], Ok(())));
+    }
+
+    #[test]
+    fn a_rate_limit_alone_never_keeps_the_preferred_route_away_for_long() {
+        // Ten minutes of background retries, every one answered 429 by the preferred route.
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let start = clock.now();
+        let mut first_contacts = Vec::new();
+        let mut n = 0;
+        while clock.now() < start + Duration::from_secs(600) {
+            let (tried, _) = attempt_at(&book, &clock, |r| if r == FIRST { Err(Failure::RateLimited) } else { Ok(()) });
+            if tried[0] == FIRST {
+                first_contacts.push(clock.now().duration_since(start).as_secs_f64());
+            }
+            clock.advance(backoff(n.min(4)));
+            n += 1;
+        }
+        // Sustained 429s may skip it for the base two minutes, never more, and it is first again right after.
+        let longest_gap = first_contacts.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
+        assert!(longest_gap <= 120.0 + 30.0, "the preferred route was kept away {longest_gap} s");
+        assert_eq!(lock_recover(&book).routes[FIRST.index()].strikes, 0);
     }
 
     #[test]
@@ -833,7 +1023,7 @@ mod tests {
         let attempt = Attempt::default();
         let mut tried = Vec::new();
         let mut ended = None;
-        let result: Result<(), String> = connect_via(&book, &attempt, || clock.now(), |route| {
+        let result: Result<(), String> = connect_via(&book, &attempt, || clock.now(), false, |route| {
             tried.push(route);
             ended = attempt.end(); // the caller's budget runs out while this handshake is running
             Err(error_for(Failure::Incompatible))
@@ -976,7 +1166,7 @@ mod live {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let book = Mutex::new(RouteBook::default());
         let mut tried = Vec::new();
-        let client = connect_via(&book, &Attempt::default(), Instant::now, |route| {
+        let client = connect_via(&book, &Attempt::default(), Instant::now, false, |route| {
             tried.push(route);
             open(route, if route == ROUTES[0] { now_secs() - 3_600 } else { now_secs() })
         })
@@ -988,7 +1178,7 @@ mod live {
 
         // The first route is cooling: the next attempt goes straight to the second.
         let mut tried = Vec::new();
-        connect_via(&book, &Attempt::default(), Instant::now, |route| {
+        connect_via(&book, &Attempt::default(), Instant::now, false, |route| {
             tried.push(route);
             open(route, now_secs())
         })
@@ -998,7 +1188,7 @@ mod live {
         // The first route's cooldown is over: its trial, with a valid request, connects and clears its record.
         lock_recover(&book).expire(ROUTES[0]);
         let mut tried = Vec::new();
-        let client = connect_via(&book, &Attempt::default(), Instant::now, |route| {
+        let client = connect_via(&book, &Attempt::default(), Instant::now, false, |route| {
             tried.push(route);
             open(route, now_secs())
         })
@@ -1019,7 +1209,7 @@ mod live {
         assert_eq!(ROUTES[0], Route::MsEdge, "the header-less request is refused by msedge, not by bing");
         let book = Mutex::new(RouteBook::default());
         let mut answers = Vec::new();
-        let client = connect_via(&book, &Attempt::default(), Instant::now, |route| {
+        let client = connect_via(&book, &Attempt::default(), Instant::now, false, |route| {
             let id = uuid::Uuid::new_v4().simple().to_string();
             let mut request = request_for(route, now_secs(), &id).unwrap();
             if route == Route::MsEdge {
@@ -1050,7 +1240,7 @@ mod live {
             let mut connected = false;
             for attempt in 1..=3 {
                 let t = Instant::now();
-                match connect(&book, &Attempt::default()) {
+                match connect(&book, &Attempt::default(), false) {
                     Ok(_) => {
                         println!("connect {i}: ok in {} ms (try {attempt})", t.elapsed().as_millis());
                         connected = true;

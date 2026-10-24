@@ -447,9 +447,10 @@ fn http_status(e: &msedge_tts::error::Error) -> Option<u16> {
 /// socket is dropped with the result nobody receives.
 ///
 /// The worker opens the connection on the first route that accepts it (`edge_route::connect`, at most one
-/// handshake per route), all inside the same budget.
-fn connect_bounded(routes: Arc<Mutex<edge_route::RouteBook>>, budget: Duration, cancel: &AtomicBool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
-    connect_bounded_with(routes, budget, cancel, edge_route::connect)
+/// handshake per route), all inside the same budget. `waited_on` — the call carries a listener's budget — is
+/// the one thing the routes are told about the caller (see the rate-limit rule in `edge_route`).
+fn connect_bounded(routes: Arc<Mutex<edge_route::RouteBook>>, budget: Duration, cancel: &AtomicBool, waited_on: bool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
+    connect_bounded_with(routes, budget, cancel, move |book, attempt| edge_route::connect(book, attempt, waited_on))
 }
 
 /// `connect_bounded` with the connection supplied, so its bounds can be tested without a network. The result
@@ -814,7 +815,7 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Opt
             .ok_or_else(|| format!("unknown edge voice: {id}"))?;
         let mut config = SpeechConfig::from(voice);
         config.audio_format = "audio-24khz-48kbitrate-mono-mp3".to_string(); // force MP3 for WebAudio
-        let (tx, rx) = connect_bounded(engines.edge_routes.clone(), remaining(deadline, "connect")?, &cancel)?;
+        let (tx, rx) = connect_bounded(engines.edge_routes.clone(), remaining(deadline, "connect")?, &cancel, budget_ms.is_some())?;
         *guard = Some(EdgeRunning { voice_id: id.clone(), config, tx, rx, last_used: Instant::now() });
     }
     // RAWY-FINAL: `let Some(..) else` rather than `.unwrap()`. The `need_new` branch above makes this
@@ -1215,7 +1216,7 @@ mod tests {
     /// A connection whose handshakes each take `ms` and then answer `failure` (or connect, for `None`).
     fn slow_connect(ms: u64, failure: Option<Failure>, handshakes: Arc<AtomicUsize>) -> impl FnOnce(&Mutex<RouteBook>, &edge_route::Attempt) -> Result<(), String> + Send + 'static {
         move |book, attempt| {
-            edge_route::connect_via(book, attempt, Instant::now, |_| {
+            edge_route::connect_via(book, attempt, Instant::now, false, |_| {
                 handshakes.fetch_add(1, Ordering::SeqCst);
                 std::thread::sleep(Duration::from_millis(ms));
                 match failure {
@@ -1255,6 +1256,37 @@ mod tests {
         let r = super::connect_bounded_with(routes.clone(), Duration::from_secs(5), &cancel, slow_connect(900, None, Arc::new(AtomicUsize::new(0))));
         assert_eq!(r.unwrap_err(), "edge synth cancelled", "the same error the caller has always returned");
         assert_eq!(routes.lock().unwrap().transient_failures(ROUTES[0]), 0);
+    }
+
+    /// The rate-limit fallback of a recovery-round try stays inside that try's budget: when the other route is
+    /// slow, the call still returns at its budget with the error it has always returned, the late handshake is
+    /// charged to the route it was on, and nothing further is tried.
+    #[test]
+    fn a_rate_limit_fallback_stays_inside_the_attempts_budget() {
+        let routes = Arc::new(Mutex::new(RouteBook::default()));
+        for _ in 0..2 {
+            routes.lock().unwrap().failed(ROUTES[0], Failure::RateLimited, Instant::now());
+        }
+        let handshakes = Arc::new(AtomicUsize::new(0));
+        let h = handshakes.clone();
+        let t0 = Instant::now();
+        let r = super::connect_bounded_with(routes.clone(), Duration::from_millis(400), &AtomicBool::new(false), move |book, attempt| {
+            edge_route::connect_via(book, attempt, Instant::now, true, |route| {
+                h.fetch_add(1, Ordering::SeqCst);
+                if route == ROUTES[0] {
+                    std::thread::sleep(Duration::from_millis(20));
+                    Err(AttemptError { failure: Failure::RateLimited, status: Some(429), detail: "http 429".into() })
+                } else {
+                    std::thread::sleep(Duration::from_millis(900));
+                    Ok(())
+                }
+            })
+        });
+        assert_eq!(r.unwrap_err(), "edge connect timed out");
+        assert!(t0.elapsed() < Duration::from_millis(900), "returned inside its budget: {:?}", t0.elapsed());
+        std::thread::sleep(Duration::from_millis(1_200));
+        assert_eq!(handshakes.load(Ordering::SeqCst), 2, "the 429, then one try of the other route — nothing more");
+        assert_eq!(routes.lock().unwrap().transient_failures(ROUTES[1]), 1, "the late handshake counts against its own route");
     }
 
     #[test]

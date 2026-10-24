@@ -32,6 +32,12 @@ describe("the connection the Edge client makes", () => {
     }
   });
 
+  it("the connection is told the listener is waiting exactly when the call carries a budget", () => {
+    // The rate-limit fallback of `edge_route` applies only to recovery-round calls, the only calls that carry
+    // `budgetMs`; the engine passes that fact, and nothing else about the caller, to the connection.
+    expect(source("tts.rs")).toMatch(/connect_bounded\(engines\.edge_routes\.clone\(\), remaining\(deadline, "connect"\)\?, &cancel, budget_ms\.is_some\(\)\)\?/);
+  });
+
   it("the request presents the identity of the published client", () => {
     const route = source("tts/edge_route.rs");
     expect(constantIn(route, "USER_AGENT")).toBe(constant("USER_AGENT"));

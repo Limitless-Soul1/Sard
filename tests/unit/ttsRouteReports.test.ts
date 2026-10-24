@@ -316,7 +316,74 @@ describe("when no route can give audio, the existing Retry flow is unchanged", (
   });
 });
 
-// ---- 3. failures on the way never disturb order, count or words --------------------------------------------
+// ---- 3. a recovery round answered 429 ------------------------------------------------------------------------
+//
+// The engine may now try the other route once inside the round's final call (`edge_route`: three 429s in a row
+// from the first route, on a call that carries the listener's budget). That happens INSIDE one `tts_synthesize`
+// call, so all the frontend can ever see is that call's single result: audio, or one error. These tests hold the
+// round to exactly what it was — three calls, its budget, the same pause — whichever result that call brings.
+
+const LIMITED = "edge connect: http 429; msedge rate-limited (http 429)";
+const BOTH_LIMITED = "edge connect: http 429; msedge rate-limited (http 429), bing rate-limited (http 429)";
+
+describe("a recovery round answered 429 keeps its calls, its budget and its pause", () => {
+  it("the round's final call brings audio (the route recovered, or the other route answered): no pause, no extra call", async () => {
+    h.script = (text, nth) => (text === S[0] && nth <= 2 ? { ok: false, err: LIMITED, ms: 30 } : { ok: true });
+    const t0 = performance.now();
+    await listen();
+    expect(await until(() => played.length > 0)).toBe(true);
+    expect(performance.now() - t0).toBeLessThanOrEqual(12_000); // inside the round's budget
+    expect(requestsFor(0)).toBe(3); // the round's own three calls, not one more
+    expect(await until(() => st().status === "chapter-end")).toBe(true);
+    expect(pauses()).toBe(0);
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expectWordsMatchSentences();
+  });
+
+  it("both routes limited on the final call: the same three calls and the same pause as before, worded either way", async () => {
+    const round = (first: string, last: string) => (text: string, nth: number): Answer =>
+      text === S[0] && nth <= 3 ? { ok: false, err: nth === 3 ? last : first, ms: 30 } : { ok: true };
+    const a = await session(round(before(429), before(429)));
+    const b = await session(round(LIMITED, BOTH_LIMITED));
+    expect(b).toEqual(a);
+  });
+
+  it("a round mixing 429, a timeout and a refusal plays out exactly as it did", async () => {
+    const mixed = (limited: string, refused: string) => (text: string, nth: number): Answer => {
+      if (text !== S[0] || nth > 3) return { ok: true };
+      return { ok: false, err: [limited, "edge connect timed out", refused][nth - 1], ms: 30 };
+    };
+    const a = await session(mixed(before(429), before(403)));
+    const b = await session(mixed(LIMITED, EVERY_ROUTE_REFUSED));
+    expect(b).toEqual(a);
+  });
+
+  it("every route limited: the pause holds while the service recovers, and Retry plays on from the same sentence", async () => {
+    let limited = true;
+    h.script = (text, nth) => (text === S[2] && limited ? { ok: false, err: nth % 3 === 0 ? BOTH_LIMITED : LIMITED, ms: 30 } : { ok: true });
+    await listen();
+    // From the moment playback waits on the sentence, the round makes at most its three calls.
+    expect(await until(() => st().index === 2 && st().status !== "playing")).toBe(true);
+    const beforeRound = requestsFor(2);
+    expect(await until(() => st().status === "edge-error")).toBe(true);
+    expect(requestsFor(2) - beforeRound).toBeLessThanOrEqual(3);
+    expect(played).toEqual([0, 1]);
+
+    limited = false;
+    await run(120_000);
+    expect(st().status).toBe("edge-error"); // recovered in the background, but the player waits for the listener
+    expect(played).toEqual([0, 1]);
+
+    st().resumeEdge();
+    expect(await until(() => st().status === "chapter-end")).toBe(true);
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(pauses()).toBe(1);
+    expectWordsMatchSentences();
+    expect(ttsStats().maxConcurrent).toBeLessThanOrEqual(1);
+  });
+});
+
+// ---- 4. failures on the way never disturb order, count or words --------------------------------------------
 
 describe("route failures ahead of playback never skip, repeat or misplace a sentence", () => {
   it("one sentence refused on every route, another on a route that is down: both repaired before playback reaches them", async () => {

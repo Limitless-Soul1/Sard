@@ -122,7 +122,7 @@ vi.mock("../../src/lib/ipc", () => ({
   ttsSynthStreaming: async () => false,
 }));
 
-import { isPermanentFailure, ttsStats, useTts } from "../../src/lib/tts";
+import { isPermanentFailure, isRateLimited, ttsStats, useTts } from "../../src/lib/tts";
 
 // ---- the two wordings of each failure ------------------------------------------------------------------------
 
@@ -167,8 +167,8 @@ let shown: { index: number; word: string }[] = [];
 let unsubscribe: (() => void) | null = null;
 const pauses = () => statuses.filter((s) => s === "edge-error").length;
 
-async function listen() {
-  void st().start({ sentences: S, lang: "en", startIndex: 0, chapterLabel: "Chapter" });
+async function listen(startIndex = 0) {
+  void st().start({ sentences: S, lang: "en", startIndex, chapterLabel: "Chapter" });
   await run(0);
 }
 async function until(pred: () => boolean, limit = 60_000) {
@@ -244,6 +244,7 @@ describe("each failure behaves exactly as it did, whichever way the engine words
   for (const [condition, wordedBefore, wordedNow] of WORDINGS) {
     it(`${condition}: classified the same`, () => {
       expect(isPermanentFailure(wordedNow)).toBe(isPermanentFailure(wordedBefore));
+      expect(isRateLimited(wordedNow)).toBe(isRateLimited(wordedBefore));
     });
 
     it(`${condition}: at the sentence being waited for, for one whole round`, async () => {
@@ -320,13 +321,74 @@ describe("when no route can give audio, the existing Retry flow is unchanged", (
 //
 // The engine may now try the other route once inside the round's final call (`edge_route`: three 429s in a row
 // from the first route, on a call that carries the listener's budget). That happens INSIDE one `tts_synthesize`
-// call, so all the frontend can ever see is that call's single result: audio, or one error. These tests hold the
-// round to exactly what it was — three calls, its budget, the same pause — whichever result that call brings.
+// call, so all the frontend can ever see is that call's single result: audio, or one error. When that call brings
+// audio, the round is exactly what it was — three calls. When it is rate-limited too, the round waits the limit out
+// for ONE delayed call (the scheduler's RULE 2b), inside the same 12 s budget, and only then shows the same pause.
 
 const LIMITED = "edge connect: http 429; msedge rate-limited (http 429)";
 const BOTH_LIMITED = "edge connect: http 429; msedge rate-limited (http 429), bing rate-limited (http 429)";
 
-describe("a recovery round answered 429 keeps its calls, its budget and its pause", () => {
+describe("only a 429 reads as a rate limit", () => {
+  it("of every condition the engine reports, both wordings of the rate limit and nothing else", () => {
+    for (const [condition, wordedBefore, wordedNow] of WORDINGS) {
+      const expected = condition === "rate limited (429)";
+      expect(isRateLimited(wordedBefore), condition).toBe(expected);
+      expect(isRateLimited(wordedNow), condition).toBe(expected);
+    }
+    expect(isRateLimited(BOTH_LIMITED)).toBe(true);
+    // The marker is the last route's status: a 429 that moved on to a refusal is not a rate limit.
+    expect(isRateLimited("edge connect: http 403; msedge rate-limited (http 429), bing rejected (http 403)")).toBe(false);
+    expect(isRateLimited("edge synth stalled: no audio for 6000 ms (Content-Length: 429)")).toBe(false);
+  });
+});
+
+describe("a recovery round answered 429 keeps its budget, plays as soon as it can, and pauses only once it cannot", () => {
+  it("a single 429 as listening starts: the fast retry plays it — no pause, no delay, no extra call", async () => {
+    h.script = (text, nth) => (text === S[0] && nth === 1 ? { ok: false, err: LIMITED, ms: 650 } : { ok: true });
+    const t0 = performance.now();
+    await listen();
+    expect(await until(() => played.length > 0)).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    expect(requestsFor(0)).toBe(2);
+    expect(await until(() => st().status === "chapter-end")).toBe(true);
+    expect(pauses()).toBe(0);
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expectWordsMatchSentences();
+  });
+
+  it("three 429s as listening starts: the delayed call plays it inside the budget, counted 4 of 4, with nothing skipped or repeated", async () => {
+    const seen: string[] = [];
+    h.script = (text, nth) => {
+      if (text !== S[0]) return { ok: true };
+      if (nth > 1) seen.push(`${st().retryAttempt}/${st().retryOf}`);
+      return nth <= 3 ? { ok: false, err: nth === 3 ? BOTH_LIMITED : LIMITED, ms: 650 } : { ok: true };
+    };
+    const t0 = performance.now();
+    await listen();
+    expect(await until(() => played.length > 0)).toBe(true);
+    const waited = performance.now() - t0;
+    expect(waited).toBeGreaterThan(4_500);
+    expect(waited).toBeLessThan(12_000);
+    expect(seen).toEqual(["2/3", "3/3", "4/4"]); // the indicator never shows more attempts than the round holds
+    expect(await until(() => st().status === "chapter-end")).toBe(true);
+    expect(pauses()).toBe(0);
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(S.map((_, i) => requestsFor(i))).toEqual([4, 1, 1, 1, 1, 1]);
+    expectWordsMatchSentences();
+    expect(ttsStats().maxConcurrent).toBeLessThanOrEqual(1);
+  });
+
+  it("listening from the middle of the chapter, a sentence rate-limited three times: 3, 4, 5 play in order, each once", async () => {
+    h.script = (text, nth) => (text === S[4] && nth <= 3 ? { ok: false, err: LIMITED, ms: 650 } : { ok: true });
+    await listen(3);
+    expect(await until(() => st().status === "chapter-end")).toBe(true);
+    expect(played).toEqual([3, 4, 5]);
+    expect(pauses()).toBe(0);
+    expect([requestsFor(0), requestsFor(1), requestsFor(2)]).toEqual([0, 0, 0]);
+    expect([requestsFor(3), requestsFor(5)]).toEqual([1, 1]);
+    expect(h.calls.filter((c) => c.text === S[4] && c.settled === "ok").length).toBe(1);
+    expectWordsMatchSentences();
+  });
   it("the round's final call brings audio (the route recovered, or the other route answered): no pause, no extra call", async () => {
     h.script = (text, nth) => (text === S[0] && nth <= 2 ? { ok: false, err: LIMITED, ms: 30 } : { ok: true });
     const t0 = performance.now();
@@ -340,12 +402,14 @@ describe("a recovery round answered 429 keeps its calls, its budget and its paus
     expectWordsMatchSentences();
   });
 
-  it("both routes limited on the final call: the same three calls and the same pause as before, worded either way", async () => {
+  it("both routes limited on the final call: worded either way, the round plays out the same — its delayed call plays the sentence", async () => {
     const round = (first: string, last: string) => (text: string, nth: number): Answer =>
       text === S[0] && nth <= 3 ? { ok: false, err: nth === 3 ? last : first, ms: 30 } : { ok: true };
     const a = await session(round(before(429), before(429)));
     const b = await session(round(LIMITED, BOTH_LIMITED));
     expect(b).toEqual(a);
+    expect(b.requests[0]).toBe(4);
+    expect(b.statuses).not.toContain("edge-error");
   });
 
   it("a round mixing 429, a timeout and a refusal plays out exactly as it did", async () => {
@@ -362,11 +426,12 @@ describe("a recovery round answered 429 keeps its calls, its budget and its paus
     let limited = true;
     h.script = (text, nth) => (text === S[2] && limited ? { ok: false, err: nth % 3 === 0 ? BOTH_LIMITED : LIMITED, ms: 30 } : { ok: true });
     await listen();
-    // From the moment playback waits on the sentence, the round makes at most its three calls.
+    // From the moment playback waits on the sentence, the round makes at most its three fast calls and the one
+    // delayed call a rate limit earns.
     expect(await until(() => st().index === 2 && st().status !== "playing")).toBe(true);
     const beforeRound = requestsFor(2);
     expect(await until(() => st().status === "edge-error")).toBe(true);
-    expect(requestsFor(2) - beforeRound).toBeLessThanOrEqual(3);
+    expect(requestsFor(2) - beforeRound).toBeLessThanOrEqual(4);
     expect(played).toEqual([0, 1]);
 
     limited = false;

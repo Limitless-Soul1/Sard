@@ -9,28 +9,44 @@
 //!
 //! Measured 2026-10-24 with this module's request: both hosts upgrade it, with the version-2 token
 //! (`edge_token`), and both synthesize Arabic and English with word timings. So there are two routes, tried in
-//! a fixed order (`ROUTES`), and a small record of which one has just failed and how — enough to step around a
-//! route the service refuses, without hammering it, and to come back to it by itself.
+//! a fixed order (`ROUTES`), and a small record of how each has failed lately — enough to step around a route
+//! the service refuses, to stay on one that is merely having a bad moment, and to come back by itself.
 //!
-//! THE RULES.
+//! THE RULES. A route is left only on evidence that the route, not the moment or the network, is the problem.
 //!
-//!   * A route the service ANSWERED without upgrading (any HTTP status except 408, 429 and 5xx) is refused:
-//!     this way of connecting is not accepted right now. The next route is tried in the same connection
-//!     attempt, and the refused one is skipped for `REFUSED_COOLDOWN`.
-//!   * Anything else — a timeout, a rate limit, a server error, or no answer at all (DNS, TCP, TLS) — may be
-//!     the moment or the network rather than the route, so ONE such failure changes nothing: it is reported
-//!     and the scheduler retries as before. `TRANSIENT_STREAK` of them in a row on the same route skip it for
-//!     `TRANSIENT_COOLDOWN`.
-//!   * A cooldown orders the routes; it never refuses to connect. When every route is cooling, the one whose
-//!     cooldown ends first is tried, alone — so a service that refuses every route costs one handshake per
-//!     attempt, as before, and the first route that works again is found by the next attempt.
-//!   * A connection on a route clears its record. Nothing is persisted: each launch starts from the order.
-//!   * At most one handshake per route per attempt, so an attempt makes at most `ROUTES.len()` of them.
+//!   * REFUSED or REJECTED: the service answered without upgrading — any HTTP status except 408, 429 and 5xx.
+//!     401 and 403 reject the request's credentials (the token or the key: the 2026-10-10 change); every other
+//!     status says this request is not a WebSocket there (the 2026-10-23 HTTP 200). The same request cannot get
+//!     a different answer, so the other route is tried in the same attempt and this one is skipped for
+//!     `REFUSED_COOLDOWN`.
+//!   * Everything else is TRANSIENT: a rate limit (429), a server error (408, 5xx), no answer at all (DNS, TCP,
+//!     TLS), or a handshake still running when its caller stopped waiting. It ENDS the attempt — no second
+//!     request in the same attempt, so a shared rate limit or a dead network is never pressed harder — and the
+//!     scheduler retries exactly as it always has. A route is left for transient reasons only when they are
+//!     sustained: `TRANSIENT_STREAK` in a row spanning at least `TRANSIENT_SPAN`. It is then skipped for
+//!     `TRANSIENT_COOLDOWN`, and the next attempt starts on the other route.
+//!   * A skipped route is TRIED AGAIN by the first connection made after its cooldown — a connection the reader
+//!     needs anyway, never an extra request. If it connects, its record is cleared and it is first again. If it
+//!     fails in any way, the attempt moves on (except after a rate limit) and the route is skipped for twice as
+//!     long as last time, up to `MAX_COOLDOWN`. A route that stays broken costs one handshake per cooldown — at
+//!     most one an hour once it has been broken for a while — and two routes cannot take turns failing.
+//!   * When every route is being skipped, the attempt tries them in order, each at most once, so whichever
+//!     comes back first is found by the next attempt; how many attempts there are is the scheduler's to bound,
+//!     as before.
+//!   * At most one handshake per route per attempt. A connection clears its route's record. Nothing persists:
+//!     each launch starts from the order.
 //!
-//! WHAT IT CANNOT DO. It cannot keep read-aloud working when the service refuses every route it knows, and a
-//! route that upgrades but then fails the synthesis is not counted against it here. A connection attempt that
-//! is still running when its caller's budget ends is reported as a timeout by the caller; the route learns its
-//! outcome only if the attempt finishes.
+//! WHY THESE NUMBERS. One installation's recorded read-aloud sessions on the msedge host, 2026-10-12 to 10-23:
+//! 21,170 requests, 97 failed, 82 of them HTTP 429 at connect. The connection failures came in 57 runs — 34 of
+//! one failure, the longest of seven — and every run ended with a success on the same route, 0.9–8.9 s after
+//! its last failure. All but one run spanned at most 18.7 s; that one (81 s) began with DNS failures, the
+//! listener's own network, which no other route could have fixed. Leaving a route after two transient failures
+//! would have switched routes 23 times for nothing; three spanning 30 s would have switched once.
+//!
+//! WHAT IT CANNOT DO. It cannot keep read-aloud working when the service refuses every route it knows. A route
+//! that upgrades and then fails the synthesis is not counted against it here. A fallback that works leaves no
+//! trace in the app's records — only a failed attempt is reported. It does not correct the computer's clock,
+//! which the token depends on.
 //!
 //! WHAT IS REPORTED. A failed attempt reads `edge connect: http <status>; <route> <outcome> (<detail>), …`,
 //! where the status is that of the last route tried, so `isPermanentFailure` in src/lib/tts.ts reads it
@@ -118,20 +134,38 @@ pub(super) fn request_for(route: Route, unix_secs: u64, connection_id: &str) -> 
     Ok(request)
 }
 
-/// How one route's connection attempt failed, as far as choosing a route is concerned.
+/// How one route's connection attempt failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Failure {
-    /// The service answered without upgrading: this way of connecting is not accepted right now.
-    Refused,
-    /// A timeout, a rate limit, a server error or no answer: it may be the moment or the network.
-    Transient,
+    /// Answered without upgrading, with a status that is about neither credentials, load nor the server: this
+    /// request is not a WebSocket there (2xx, 3xx, most 4xx). The 2026-10-23 HTTP 200 is one.
+    Incompatible,
+    /// 401 or 403: the request's credentials — the token or the key — were refused. The 2026-10-10 change.
+    Rejected,
+    /// 429.
+    RateLimited,
+    /// 408 or 5xx.
+    ServerError,
+    /// No HTTP answer: DNS, TCP, TLS, or a handshake the connection broke off.
+    Network,
+    /// The caller's budget ran out while the handshake was still running.
+    TimedOut,
 }
 
 impl Failure {
+    /// The service answered and said no: the same request again cannot get a different answer.
+    fn is_refusal(self) -> bool {
+        matches!(self, Failure::Incompatible | Failure::Rejected)
+    }
+
     fn name(self) -> &'static str {
         match self {
-            Failure::Refused => "refused",
-            Failure::Transient => "failed",
+            Failure::Incompatible => "refused",
+            Failure::Rejected => "rejected",
+            Failure::RateLimited => "rate-limited",
+            Failure::ServerError => "server-error",
+            Failure::Network => "failed",
+            Failure::TimedOut => "timed-out",
         }
     }
 }
@@ -149,38 +183,52 @@ pub(super) struct AttemptError {
 /// Classify a connection error and reduce it to what may be recorded.
 pub(super) fn attempt_error(e: &msedge_tts::error::Error) -> AttemptError {
     use msedge_tts::error::Error;
-    let transient = |detail: String| AttemptError { failure: Failure::Transient, status: None, detail };
+    let network = |detail: String| AttemptError { failure: Failure::Network, status: None, detail };
     let Error::TungsteniteError(e) = e else {
-        return transient("error".into());
+        return network("error".into());
     };
     match e {
         tungstenite::Error::Http(response) => {
             let status = response.status().as_u16();
-            let failure = if status == 408 || status == 429 || status >= 500 { Failure::Transient } else { Failure::Refused };
+            let failure = match status {
+                401 | 403 => Failure::Rejected,
+                429 => Failure::RateLimited,
+                408 | 500..=599 => Failure::ServerError,
+                _ => Failure::Incompatible,
+            };
             AttemptError { failure, status: Some(status), detail: format!("http {status}") }
         }
         // The kind and the OS code, which `isFastReset` in src/lib/tts.ts reads (`ConnectionReset`, 10054).
-        tungstenite::Error::Io(io) => transient(match io.raw_os_error() {
+        tungstenite::Error::Io(io) => network(match io.raw_os_error() {
             Some(code) => format!("io {:?} os {code}", io.kind()),
             None => format!("io {:?}", io.kind()),
         }),
-        tungstenite::Error::Tls(_) => transient("tls".into()),
-        tungstenite::Error::Protocol(p) => transient(format!("protocol {p:?}").chars().take(60).collect()),
-        _ => transient("websocket".into()),
+        tungstenite::Error::Tls(_) => network("tls".into()),
+        tungstenite::Error::Protocol(p) => network(format!("protocol {p:?}").chars().take(60).collect()),
+        _ => network("websocket".into()),
     }
 }
 
-/// A refused route is skipped for this long. The service's method changes are measured in days, so this only
-/// bounds how often a refused route is asked again; ten minutes keeps that to a handful of handshakes an hour.
+/// A refused or rejected route is first skipped for this long. The service's method changes are measured in
+/// days, so this only bounds how often a refused route is asked again.
 pub(super) const REFUSED_COOLDOWN: Duration = Duration::from_secs(600);
-/// This many transient failures in a row on one route, and it is skipped for `TRANSIENT_COOLDOWN`.
-pub(super) const TRANSIENT_STREAK: u32 = 2;
+/// Transient failures leave a route only when there are at least this many in a row ...
+pub(super) const TRANSIENT_STREAK: u32 = 3;
+/// ... spanning at least this long — longer than any burst that repaired itself (see the top of this file).
+pub(super) const TRANSIENT_SPAN: Duration = Duration::from_secs(30);
+/// A route left for transient reasons is first skipped for this long.
 pub(super) const TRANSIENT_COOLDOWN: Duration = Duration::from_secs(120);
+/// Each failed try after a cooldown doubles the next one, up to this.
+pub(super) const MAX_COOLDOWN: Duration = Duration::from_secs(3_600);
 
 #[derive(Clone, Copy, Debug, Default)]
 struct RouteState {
     cooling_until: Option<Instant>,
-    transient_streak: u32,
+    /// Cooldowns since this route last connected. Above zero, each try of the route is a trial.
+    strikes: u32,
+    /// Transient failures in a row, and when the first of them happened.
+    transient: u32,
+    transient_since: Option<Instant>,
 }
 
 /// What the routes have done lately — the only state this module keeps, for the life of the process.
@@ -194,58 +242,139 @@ impl RouteBook {
         self.routes[route.index()].cooling_until.is_some_and(|until| now < until)
     }
 
-    /// The routes one connection attempt may try, in order: those not cooling; or, when every route is
-    /// cooling, the one whose cooldown ends first, alone.
+    /// The routes one connection attempt may try, in order: those not being skipped; or, when every route is,
+    /// all of them.
     pub(super) fn plan(&self, now: Instant) -> Vec<Route> {
         let ready: Vec<Route> = ROUTES.into_iter().filter(|r| !self.cooling(*r, now)).collect();
-        if !ready.is_empty() {
-            return ready;
+        if ready.is_empty() {
+            ROUTES.to_vec()
+        } else {
+            ready
         }
-        ROUTES.into_iter().min_by_key(|r| self.routes[r.index()].cooling_until).into_iter().collect()
     }
 
     pub(super) fn succeeded(&mut self, route: Route) {
         self.routes[route.index()] = RouteState::default();
     }
 
-    /// Record a failure; true when it puts the route into cooldown, which is when the attempt moves on.
+    /// Record a failure; true when it puts the route into cooldown.
     pub(super) fn failed(&mut self, route: Route, failure: Failure, now: Instant) -> bool {
         let state = &mut self.routes[route.index()];
-        let cooldown = match failure {
-            Failure::Refused => REFUSED_COOLDOWN,
-            Failure::Transient => {
-                state.transient_streak = state.transient_streak.saturating_add(1);
-                if state.transient_streak < TRANSIENT_STREAK {
-                    return false;
-                }
-                TRANSIENT_COOLDOWN
+        let base = if failure.is_refusal() {
+            REFUSED_COOLDOWN
+        } else if state.strikes > 0 {
+            // A route already skipped once, failing again on its trial: the evidence is not new.
+            TRANSIENT_COOLDOWN
+        } else {
+            state.transient += 1;
+            let since = *state.transient_since.get_or_insert(now);
+            if state.transient < TRANSIENT_STREAK || now.saturating_duration_since(since) < TRANSIENT_SPAN {
+                return false;
             }
+            TRANSIENT_COOLDOWN
         };
-        state.cooling_until = Some(now + cooldown);
+        state.strikes = state.strikes.saturating_add(1);
+        state.transient = 0;
+        state.transient_since = None;
+        let doubling = 1u32 << (state.strikes - 1).min(16);
+        state.cooling_until = Some(now + base.saturating_mul(doubling).min(MAX_COOLDOWN));
         true
+    }
+
+    /// End a route's cooldown now, as its passing would, without forgetting its strikes.
+    #[cfg(test)]
+    fn expire(&mut self, route: Route) {
+        self.routes[route.index()].cooling_until = None;
+    }
+
+    /// The route's current run of transient failures.
+    #[cfg(test)]
+    pub(super) fn transient_failures(&self, route: Route) -> u32 {
+        self.routes[route.index()].transient
     }
 }
 
-/// One connection attempt across the routes, by the rules at the top of this file. `attempt` makes the
+/// One connection attempt as its caller sees it: the route whose handshake is running, and whether the caller
+/// has stopped waiting. A handshake the caller gave up on is the caller's to record; the worker then records
+/// nothing and tries no other route.
+#[derive(Debug, Default)]
+pub(super) struct Attempt(Mutex<AttemptState>);
+
+#[derive(Debug, Default)]
+struct AttemptState {
+    in_flight: Option<Route>,
+    over: bool,
+}
+
+impl Attempt {
+    /// A handshake on `route` is about to start; false when the caller has already stopped waiting.
+    fn begin(&self, route: Route) -> bool {
+        let mut state = lock_recover(&self.0);
+        if state.over {
+            return false;
+        }
+        state.in_flight = Some(route);
+        true
+    }
+
+    /// The handshake has returned; false when the caller stopped waiting while it ran.
+    fn finish(&self) -> bool {
+        let mut state = lock_recover(&self.0);
+        state.in_flight = None;
+        !state.over
+    }
+
+    /// The caller stops waiting. Returns the route whose handshake was still running, if one was.
+    pub(super) fn end(&self) -> Option<Route> {
+        let mut state = lock_recover(&self.0);
+        state.over = true;
+        state.in_flight.take()
+    }
+}
+
+/// The caller stopped waiting for `route`'s handshake because its budget ran out.
+pub(super) fn timed_out(book: &Mutex<RouteBook>, route: Route) {
+    lock_recover(book).failed(route, Failure::TimedOut, Instant::now());
+}
+
+/// One connection attempt across the routes, by the rules at the top of this file. `try_route` makes the
 /// connection on one route; the book is never locked while it runs.
-pub(super) fn connect_via<C>(book: &Mutex<RouteBook>, mut attempt: impl FnMut(Route) -> Result<C, AttemptError>) -> Result<C, String> {
-    let plan = lock_recover(book).plan(Instant::now());
+pub(super) fn connect_via<C>(
+    book: &Mutex<RouteBook>,
+    attempt: &Attempt,
+    now: impl Fn() -> Instant,
+    mut try_route: impl FnMut(Route) -> Result<C, AttemptError>,
+) -> Result<C, String> {
+    let plan = lock_recover(book).plan(now());
     let mut tried = Vec::with_capacity(plan.len());
     let mut status = None;
     for route in plan {
-        let e = match attempt(route) {
+        if !attempt.begin(route) {
+            break;
+        }
+        let result = try_route(route);
+        if !attempt.finish() {
+            // The caller gave up during this handshake and has recorded it; whatever came back goes unused.
+            return Err(format!("edge connect: {} abandoned", route.name()));
+        }
+        let e = match result {
             Ok(client) => {
                 lock_recover(book).succeeded(route);
                 return Ok(client);
             }
             Err(e) => e,
         };
-        let moved_on = lock_recover(book).failed(route, e.failure, Instant::now());
+        let cooling = lock_recover(book).failed(route, e.failure, now());
         tried.push(format!("{} {} ({})", route.name(), e.failure.name(), e.detail));
         status = e.status;
-        if !moved_on {
+        // Move on only from a route this failure has shown to be the problem, and never after a rate limit,
+        // whose pressure the next route may share.
+        if !cooling || e.failure == Failure::RateLimited {
             break;
         }
+    }
+    if tried.is_empty() {
+        return Err("edge connect: abandoned".into());
     }
     let tried = tried.join(", ");
     Err(match status {
@@ -255,8 +384,8 @@ pub(super) fn connect_via<C>(book: &Mutex<RouteBook>, mut attempt: impl FnMut(Ro
 }
 
 /// Open the split synthesis client on the first route that accepts it.
-pub(super) fn connect(book: &Mutex<RouteBook>) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
-    connect_via(book, |route| {
+pub(super) fn connect(book: &Mutex<RouteBook>, attempt: &Attempt) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
+    connect_via(book, attempt, Instant::now, |route| {
         let unix_secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let connection_id = uuid::Uuid::new_v4().simple().to_string();
         let request = request_for(route, unix_secs, &connection_id).map_err(|e| attempt_error(&e.into()))?;
@@ -267,7 +396,7 @@ pub(super) fn connect(book: &Mutex<RouteBook>) -> Result<(Sender<TcpStream>, Rec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     // ---- the request ----
 
@@ -300,11 +429,11 @@ mod tests {
 
     // ---- what a failure means ----
 
-    fn answered(status: u16) -> msedge_tts::error::Error {
+    fn answered(status: u16, body: Option<Vec<u8>>) -> msedge_tts::error::Error {
         let response = tungstenite::http::Response::builder()
             .status(status)
             .header("set-cookie", "MUID=private-value")
-            .body(Some(b"<html>body</html>".to_vec()))
+            .body(body)
             .unwrap();
         msedge_tts::error::Error::TungsteniteError(tungstenite::Error::Http(Box::new(response)))
     }
@@ -318,158 +447,424 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_without_an_upgrade_is_a_refusal() {
-        // 200 is the 2026-10-23 answer; 403 the 2026-10-10 one.
-        for status in [200, 204, 301, 400, 401, 403, 404, 410, 426] {
-            let e = attempt_error(&answered(status));
-            assert_eq!((e.failure, e.status), (Failure::Refused, Some(status)), "{status}");
+    fn a_handshake_answered_with_200_and_an_empty_body_is_incompatible() {
+        // Exactly the 2026-10-23 answer: a plain 200, no upgrade, nothing in the body.
+        for body in [None, Some(Vec::new())] {
+            let e = attempt_error(&answered(200, body));
+            assert_eq!((e.failure, e.status), (Failure::Incompatible, Some(200)));
         }
     }
 
     #[test]
-    fn a_rate_limit_a_server_error_or_no_answer_is_transient() {
-        for status in [408, 429, 500, 502, 503, 504] {
-            let e = attempt_error(&answered(status));
-            assert_eq!((e.failure, e.status), (Failure::Transient, Some(status)), "{status}");
+    fn each_kind_of_answer_has_its_own_class() {
+        for (status, class) in [
+            (101, Failure::Incompatible), // an upgrade tungstenite could not accept arrives as Http too
+            (204, Failure::Incompatible),
+            (301, Failure::Incompatible),
+            (400, Failure::Incompatible),
+            (404, Failure::Incompatible),
+            (410, Failure::Incompatible),
+            (426, Failure::Incompatible),
+            (401, Failure::Rejected),
+            (403, Failure::Rejected),
+            (429, Failure::RateLimited),
+            (408, Failure::ServerError),
+            (500, Failure::ServerError),
+            (502, Failure::ServerError),
+            (503, Failure::ServerError),
+            (504, Failure::ServerError),
+        ] {
+            let e = attempt_error(&answered(status, None));
+            assert_eq!((e.failure, e.status), (class, Some(status)), "{status}");
         }
-        let e = attempt_error(&io(std::io::ErrorKind::Other, None));
-        assert_eq!((e.failure, e.status), (Failure::Transient, None));
-        let e = attempt_error(&msedge_tts::error::Error::UnexpectedMessage("x".into()));
-        assert_eq!((e.failure, e.status), (Failure::Transient, None));
+    }
+
+    #[test]
+    fn credential_rejections_are_told_apart_from_network_failures() {
+        let rejected = attempt_error(&answered(403, None));
+        let dns = attempt_error(&io(std::io::ErrorKind::Other, Some(11001)));
+        assert_eq!((rejected.failure, rejected.failure.name()), (Failure::Rejected, "rejected"));
+        assert_eq!((dns.failure, dns.failure.name(), dns.status), (Failure::Network, "failed", None));
+        assert!(rejected.failure.is_refusal() && !dns.failure.is_refusal());
+        let other = attempt_error(&msedge_tts::error::Error::UnexpectedMessage("x".into()));
+        assert_eq!((other.failure, other.status), (Failure::Network, None));
     }
 
     #[test]
     fn the_detail_is_a_status_or_an_error_kind_and_nothing_from_the_response() {
-        let e = attempt_error(&answered(403));
+        let e = attempt_error(&answered(403, Some(b"<html>body</html>".to_vec())));
         assert_eq!(e.detail, "http 403");
-        // A reset keeps the two strings the scheduler's fast-reset rule looks for.
+        // A reset keeps what the scheduler's fast-reset rule looks for (`ConnectionReset` or 10054).
+        let e = attempt_error(&msedge_tts::error::Error::TungsteniteError(tungstenite::Error::Io(std::io::ErrorKind::ConnectionReset.into())));
+        assert_eq!(e.detail, "io ConnectionReset");
+    }
+
+    /// Windows reports a reset as OS error 10054, which is what the engine meets there: both strings survive.
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_reset_keeps_its_kind_and_its_code() {
         let e = attempt_error(&io(std::io::ErrorKind::ConnectionReset, Some(10054)));
-        assert!(e.detail.contains("ConnectionReset") && e.detail.contains("10054"), "{}", e.detail);
+        assert_eq!(e.detail, "io ConnectionReset os 10054");
     }
 
-    // ---- choosing a route ----
+    /// The reports tests/unit/ttsRouteReports.test.ts plays through the real frontend pipeline, produced here
+    /// by the real classification and attempt logic — so the two cannot drift apart.
+    #[test]
+    fn the_reports_the_frontend_pipeline_tests_play_are_produced_exactly() {
+        let report = |answers: Vec<msedge_tts::error::Error>| {
+            let mut answers = answers.into_iter();
+            let r: Result<(), String> = connect_via(&Mutex::new(RouteBook::default()), &Attempt::default(), Instant::now, |_| Err(attempt_error(&answers.next().unwrap())));
+            r.unwrap_err()
+        };
+        let a = |s: u16| answered(s, None);
+        assert_eq!(report(vec![a(200), a(200)]), "edge connect: http 200; msedge refused (http 200), bing refused (http 200)");
+        assert_eq!(report(vec![a(403), a(403)]), "edge connect: http 403; msedge rejected (http 403), bing rejected (http 403)");
+        assert_eq!(report(vec![a(200), a(403)]), "edge connect: http 403; msedge refused (http 200), bing rejected (http 403)");
+        assert_eq!(report(vec![a(401), a(401)]), "edge connect: http 401; msedge rejected (http 401), bing rejected (http 401)");
+        assert_eq!(report(vec![a(404), a(404)]), "edge connect: http 404; msedge refused (http 404), bing refused (http 404)");
+        assert_eq!(report(vec![a(429)]), "edge connect: http 429; msedge rate-limited (http 429)");
+        assert_eq!(report(vec![a(503)]), "edge connect: http 503; msedge server-error (http 503)");
+        assert_eq!(report(vec![io(std::io::ErrorKind::Other, Some(11001))]), "edge connect: msedge failed (io Uncategorized os 11001)");
+        #[cfg(windows)]
+        assert_eq!(report(vec![io(std::io::ErrorKind::ConnectionReset, Some(10054))]), "edge connect: msedge failed (io ConnectionReset os 10054)");
+    }
 
-    fn refused(status: u16) -> AttemptError {
-        AttemptError { failure: Failure::Refused, status: Some(status), detail: format!("http {status}") }
-    }
-    fn transient(status: Option<u16>) -> AttemptError {
-        AttemptError { failure: Failure::Transient, status, detail: status.map_or("io TimedOut".into(), |s| format!("http {s}")) }
-    }
+    // ---- choosing a route: scripted outcomes on a virtual clock ----
 
     const FIRST: Route = ROUTES[0];
     const SECOND: Route = ROUTES[1];
 
-    /// Run one connection attempt with scripted outcomes per route; returns the routes tried and the result.
-    fn attempt_with(book: &Mutex<RouteBook>, outcome: impl Fn(Route) -> Result<(), AttemptError>) -> (Vec<Route>, Result<(), String>) {
+    struct Clock(Cell<Instant>);
+    impl Clock {
+        fn new() -> Self {
+            Clock(Cell::new(Instant::now()))
+        }
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+        fn advance(&self, secs: f64) {
+            self.0.set(self.0.get() + Duration::from_secs_f64(secs));
+        }
+    }
+
+    /// What one route answers in a scripted attempt: `Ok(())` connects.
+    type Outcome = Result<(), Failure>;
+
+    fn error_for(failure: Failure) -> AttemptError {
+        let (status, detail) = match failure {
+            Failure::Incompatible => (Some(200), "http 200".to_string()),
+            Failure::Rejected => (Some(403), "http 403".to_string()),
+            Failure::RateLimited => (Some(429), "http 429".to_string()),
+            Failure::ServerError => (Some(503), "http 503".to_string()),
+            Failure::Network => (None, "io TimedOut os 10060".to_string()),
+            Failure::TimedOut => (None, "timed out".to_string()),
+        };
+        AttemptError { failure, status, detail }
+    }
+
+    /// One attempt at the clock's current time; returns the routes contacted and the result.
+    fn attempt_at(book: &Mutex<RouteBook>, clock: &Clock, outcome: impl Fn(Route) -> Outcome) -> (Vec<Route>, Result<(), String>) {
         let tried = RefCell::new(Vec::new());
-        let result = connect_via(book, |route| {
+        let result = connect_via(book, &Attempt::default(), || clock.now(), |route| {
             tried.borrow_mut().push(route);
-            outcome(route)
+            outcome(route).map_err(error_for)
         });
         (tried.into_inner(), result)
     }
 
+    /// The scheduler's background backoff, as RULE 1 spaces it (2 s doubling to 30 s), without the jitter.
+    fn backoff(n: u32) -> f64 {
+        (2.0 * 2f64.powi(n as i32)).min(30.0)
+    }
+
     #[test]
-    fn a_fresh_book_tries_the_routes_in_order() {
+    fn the_routes_are_tried_in_the_measured_order() {
         assert_eq!(ROUTES, [Route::MsEdge, Route::Bing], "the measured order (see `ROUTES`)");
         assert_eq!(RouteBook::default().plan(Instant::now()), vec![FIRST, SECOND]);
-        let book = Mutex::new(RouteBook::default());
-        let (tried, result) = attempt_with(&book, |_| Ok(()));
-        assert_eq!((tried, result), (vec![FIRST], Ok(())));
     }
 
     #[test]
-    fn a_refused_route_falls_back_in_the_same_attempt_and_is_skipped_afterwards() {
-        let book = Mutex::new(RouteBook::default());
-        let first_refuses = |r: Route| if r == FIRST { Err(refused(200)) } else { Ok(()) };
-        let (tried, result) = attempt_with(&book, first_refuses);
-        assert_eq!((tried, result), (vec![FIRST, SECOND], Ok(())));
-        // The next attempt does not ask the refused route again.
-        let (tried, result) = attempt_with(&book, first_refuses);
-        assert_eq!((tried, result), (vec![SECOND], Ok(())));
+    fn a_working_preferred_route_is_the_only_one_ever_contacted() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        for _ in 0..200 {
+            let (tried, result) = attempt_at(&book, &clock, |_| Ok(()));
+            assert_eq!((tried, result), (vec![FIRST], Ok(())));
+            clock.advance(7.0);
+        }
     }
 
     #[test]
-    fn a_refused_route_is_asked_again_once_its_cooldown_ends() {
-        let mut book = RouteBook::default();
-        let t0 = Instant::now();
-        assert!(book.failed(FIRST, Failure::Refused, t0));
-        assert_eq!(book.plan(t0 + REFUSED_COOLDOWN - Duration::from_secs(1)), vec![SECOND]);
-        assert_eq!(book.plan(t0 + REFUSED_COOLDOWN), vec![FIRST, SECOND]);
+    fn one_timeout_then_success_stays_on_the_route() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let (tried, result) = attempt_at(&book, &clock, |_| Err(Failure::Network));
+        assert_eq!(tried, vec![FIRST], "no second handshake for a transient failure");
+        assert_eq!(result.unwrap_err(), format!("edge connect: {} failed (io TimedOut os 10060)", FIRST.name()));
+        clock.advance(2.0);
+        assert_eq!(attempt_at(&book, &clock, |_| Ok(())), (vec![FIRST], Ok(())));
+        // The same for a handshake the caller stopped waiting for.
+        timed_out(&book, FIRST);
+        assert_eq!(attempt_at(&book, &clock, |_| Ok(())), (vec![FIRST], Ok(())));
+        assert_eq!(lock_recover(&book).routes[FIRST.index()].transient, 0, "a connection clears the run");
+    }
+
+    /// The longest self-repairing runs in the recorded sessions, replayed: six 429s over 18.7 s, then the
+    /// scheduler's background retries landing in a server error and a timeout, then success.
+    #[test]
+    fn bursts_that_repair_themselves_never_leave_the_route() {
+        for script in [
+            &[(0.0, Failure::RateLimited), (0.7, Failure::RateLimited), (2.0, Failure::RateLimited), (4.0, Failure::RateLimited), (8.0, Failure::RateLimited), (4.0, Failure::RateLimited)][..],
+            &[(0.0, Failure::ServerError), (0.25, Failure::ServerError), (0.75, Failure::ServerError), (2.0, Failure::Network), (4.0, Failure::TimedOut)][..],
+        ] {
+            let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+            for &(after, failure) in script {
+                clock.advance(after);
+                let (tried, _) = attempt_at(&book, &clock, |_| Err(failure));
+                assert_eq!(tried, vec![FIRST], "{failure:?}");
+            }
+            clock.advance(2.0);
+            assert_eq!(attempt_at(&book, &clock, |_| Ok(())), (vec![FIRST], Ok(())));
+        }
     }
 
     #[test]
-    fn one_transient_failure_changes_nothing() {
-        let book = Mutex::new(RouteBook::default());
-        let (tried, result) = attempt_with(&book, |_| Err(transient(None)));
-        assert_eq!(tried, vec![FIRST], "no second handshake for an ambiguous failure");
-        assert_eq!(result.unwrap_err(), format!("edge connect: {} failed (io TimedOut)", FIRST.name()));
-        assert_eq!(lock_recover(&book).plan(Instant::now()), vec![FIRST, SECOND]);
-    }
-
-    #[test]
-    fn transient_failures_in_a_row_move_to_the_next_route() {
-        let book = Mutex::new(RouteBook::default());
-        let first_times_out = |r: Route| if r == FIRST { Err(transient(None)) } else { Ok(()) };
-        let (tried, _) = attempt_with(&book, first_times_out);
+    fn a_rate_limit_is_waited_out_on_the_same_route() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let (tried, result) = attempt_at(&book, &clock, |_| Err(Failure::RateLimited));
         assert_eq!(tried, vec![FIRST]);
-        let (tried, result) = attempt_with(&book, first_times_out);
-        assert_eq!((tried, result), (vec![FIRST, SECOND], Ok(())));
-        let (tried, _) = attempt_with(&book, first_times_out);
-        assert_eq!(tried, vec![SECOND], "skipped while it cools");
+        assert_eq!(result.unwrap_err(), format!("edge connect: http 429; {} rate-limited (http 429)", FIRST.name()));
+        clock.advance(1.2);
+        assert_eq!(attempt_at(&book, &clock, |_| Ok(())), (vec![FIRST], Ok(())));
     }
 
     #[test]
-    fn a_connection_clears_the_streak() {
-        let mut book = RouteBook::default();
-        let now = Instant::now();
-        assert!(!book.failed(FIRST, Failure::Transient, now));
-        book.succeeded(FIRST);
-        assert!(!book.failed(FIRST, Failure::Transient, now), "the streak restarted");
-        assert_eq!(book.plan(now), vec![FIRST, SECOND]);
+    fn a_sustained_rate_limit_never_sends_two_requests_in_one_attempt() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let mut contacted_second_at = None;
+        for n in 0..12 {
+            let (tried, _) = attempt_at(&book, &clock, |r| if r == FIRST { Err(Failure::RateLimited) } else { Ok(()) });
+            assert_eq!(tried.len(), 1, "attempt {n}: {tried:?}");
+            if tried == vec![SECOND] && contacted_second_at.is_none() {
+                contacted_second_at = Some(n);
+            }
+            clock.advance(backoff(n));
+        }
+        // Three in a row spanning 30 s first happen at the fifth attempt (0, 2, 6, 14, 30 s); only the attempt
+        // after it starts on the other route.
+        assert_eq!(contacted_second_at, Some(5));
     }
 
     #[test]
-    fn a_rate_limit_is_not_a_reason_to_try_the_other_route_at_once() {
-        let book = Mutex::new(RouteBook::default());
-        let (tried, result) = attempt_with(&book, |_| Err(transient(Some(429))));
-        assert_eq!(tried, vec![FIRST]);
-        assert_eq!(result.unwrap_err(), format!("edge connect: http 429; {} failed (http 429)", FIRST.name()));
+    fn a_server_error_is_temporary() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        for n in 0..2 {
+            assert_eq!(attempt_at(&book, &clock, |_| Err(Failure::ServerError)).0, vec![FIRST]);
+            clock.advance(backoff(n));
+        }
+        assert_eq!(attempt_at(&book, &clock, |_| Ok(())), (vec![FIRST], Ok(())));
+        assert_eq!(lock_recover(&book).plan(clock.now()), vec![FIRST, SECOND]);
     }
 
     #[test]
-    fn when_every_route_refuses_each_attempt_asks_only_one() {
-        let book = Mutex::new(RouteBook::default());
-        let both_refuse = |r: Route| Err(refused(if r == FIRST { 200 } else { 403 }));
-        let (tried, result) = attempt_with(&book, both_refuse);
+    fn the_transient_threshold_is_three_in_a_row_spanning_thirty_seconds_and_skips_for_two_minutes() {
+        for (gaps, leaves) in [(&[15.0, 14.9][..], false), (&[15.0, 15.0][..], true), (&[30.0][..], false), (&[0.1, 0.1, 29.8][..], true)] {
+            let mut book = RouteBook::default();
+            let t0 = Instant::now();
+            let mut t = t0;
+            assert!(!book.failed(FIRST, Failure::Network, t));
+            let mut left = false;
+            for gap in gaps {
+                t += Duration::from_secs_f64(*gap);
+                left = book.failed(FIRST, Failure::Network, t);
+            }
+            assert_eq!(left, leaves, "{gaps:?}");
+            if leaves {
+                assert_eq!(book.plan(t + Duration::from_millis(119_999)), vec![SECOND]);
+                assert_eq!(book.plan(t + Duration::from_secs(120)), vec![FIRST, SECOND]);
+            }
+        }
+    }
+
+    #[test]
+    fn sustained_transient_failures_move_to_the_other_route() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let first_down = |r: Route| if r == FIRST { Err(Failure::Network) } else { Ok(()) };
+        for n in 0..4 {
+            assert_eq!(attempt_at(&book, &clock, first_down).0, vec![FIRST], "attempt {n}");
+            clock.advance(backoff(n));
+        }
+        // 30 s after the first failure, the fifth in a row: the route is left within this attempt.
+        assert_eq!(attempt_at(&book, &clock, first_down), (vec![FIRST, SECOND], Ok(())));
+        clock.advance(5.0);
+        assert_eq!(attempt_at(&book, &clock, first_down), (vec![SECOND], Ok(())));
+    }
+
+    #[test]
+    fn repeated_transient_failures_with_the_other_route_also_down_stay_bounded() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let mut handshakes = 0;
+        let mut attempts = 0;
+        let mut second_seen_after = None;
+        // Fifteen minutes of the scheduler's background retries against a network that answers nothing.
+        let mut n = 0;
+        while clock.now() < Instant::now() + Duration::from_secs(900) {
+            let (tried, result) = attempt_at(&book, &clock, |_| Err(Failure::Network));
+            assert!(result.is_err());
+            assert!(!tried.is_empty() && tried.len() <= ROUTES.len(), "{tried:?}");
+            assert!(tried.len() == 1 || tried[0] != tried[1], "{tried:?}");
+            if tried.contains(&SECOND) && second_seen_after.is_none() {
+                second_seen_after = Some(attempts);
+            }
+            handshakes += tried.len();
+            attempts += 1;
+            clock.advance(backoff(n.min(4)));
+            n += 1;
+        }
+        assert_eq!(second_seen_after, Some(4), "the other route only after the first's failures were sustained");
+        assert!(handshakes <= 2 * attempts, "{handshakes} handshakes for {attempts} attempts");
+    }
+
+    #[test]
+    fn a_refused_handshake_moves_on_at_once_and_is_not_repeated() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let first_refuses = |r: Route| if r == FIRST { Err(Failure::Incompatible) } else { Ok(()) };
+        assert_eq!(attempt_at(&book, &clock, first_refuses), (vec![FIRST, SECOND], Ok(())));
+        // The refused route is not asked again while it is skipped.
+        for _ in 0..9 {
+            clock.advance(60.0);
+            assert_eq!(attempt_at(&book, &clock, first_refuses), (vec![SECOND], Ok(())));
+        }
+    }
+
+    #[test]
+    fn a_rejected_credential_moves_on_like_a_refusal_but_says_which_it_was() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let (tried, result) = attempt_at(&book, &clock, |r| if r == FIRST { Err(Failure::Rejected) } else { Err(Failure::Incompatible) });
+        assert_eq!(tried, vec![FIRST, SECOND]);
+        assert_eq!(
+            result.unwrap_err(),
+            format!("edge connect: http 200; {} rejected (http 403), {} refused (http 200)", FIRST.name(), SECOND.name())
+        );
+    }
+
+    #[test]
+    fn a_recovered_preferred_route_is_used_again_without_flapping() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let mut used = Vec::new();
+        // Refused once at the start, working again from then on.
+        let first_refused_once = Cell::new(true);
+        let outcome = |r: Route| if r == FIRST && first_refused_once.replace(false) { Err(Failure::Incompatible) } else { Ok(()) };
+        let mut contacted = Vec::new();
+        for _ in 0..40 {
+            let (tried, result) = attempt_at(&book, &clock, outcome);
+            assert!(result.is_ok());
+            used.push(*tried.last().unwrap());
+            contacted.push(tried);
+            clock.advance(60.0);
+        }
+        // The refusal moves the first attempt to the other route; it is used while the preferred one is skipped
+        // (ten minutes), the preferred route's trial then connects, and it is kept from then on: one switch back.
+        assert_eq!(contacted[0], vec![FIRST, SECOND]);
+        let expected: Vec<Route> = std::iter::repeat(SECOND).take(10).chain(std::iter::repeat(FIRST).take(30)).collect();
+        assert_eq!(used, expected);
+        assert!(contacted[1..].iter().all(|t| t.len() == 1), "no attempt after the first contacted two routes");
+    }
+
+    #[test]
+    fn a_preferred_route_that_stays_broken_is_tried_once_per_doubling_cooldown() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let start = clock.now();
+        let mut first_tried_at = Vec::new();
+        // Three hours of reading with a reconnect every minute; the first route refuses throughout.
+        for _ in 0..180 {
+            let (tried, result) = attempt_at(&book, &clock, |r| if r == FIRST { Err(Failure::Incompatible) } else { Ok(()) });
+            assert!(result.is_ok());
+            if tried.contains(&FIRST) {
+                first_tried_at.push(clock.now().duration_since(start).as_secs() / 60);
+            }
+            clock.advance(60.0);
+        }
+        // Minutes: 0, then after 10, 20, 40, 60, 60 minutes of being skipped.
+        assert_eq!(first_tried_at, vec![0, 10, 30, 70, 130]);
+    }
+
+    #[test]
+    fn when_every_route_refuses_each_attempt_asks_each_once_and_recovery_is_found_at_once() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let both_refuse = |r: Route| Err(if r == FIRST { Failure::Incompatible } else { Failure::Rejected });
+        let (tried, result) = attempt_at(&book, &clock, both_refuse);
         assert_eq!(tried, vec![FIRST, SECOND]);
         // The status is the last route's, in the form `isPermanentFailure` reads.
         assert_eq!(
             result.unwrap_err(),
-            format!("edge connect: http 403; {} refused (http 200), {} refused (http 403)", FIRST.name(), SECOND.name())
+            format!("edge connect: http 403; {} refused (http 200), {} rejected (http 403)", FIRST.name(), SECOND.name())
         );
-        let (tried, _) = attempt_with(&book, both_refuse);
-        assert_eq!(tried, vec![FIRST], "the cooldown that ends first, alone");
-        let (tried, _) = attempt_with(&book, both_refuse);
-        assert_eq!(tried, vec![SECOND]);
-        // The first route that works again is found by the next attempt and clears its record.
-        let (tried, result) = attempt_with(&book, |_| Ok(()));
-        assert_eq!((tried.len(), result), (1, Ok(())));
+        // Two hours of attempts every 30 s: never more than one handshake per route, and every cooldown capped.
+        for _ in 0..240 {
+            clock.advance(30.0);
+            let (tried, _) = attempt_at(&book, &clock, both_refuse);
+            assert_eq!(tried, vec![FIRST, SECOND]);
+            for r in ROUTES {
+                let until = lock_recover(&book).routes[r.index()].cooling_until.unwrap();
+                assert!(until.duration_since(clock.now()) <= MAX_COOLDOWN);
+            }
+        }
+        // The second route comes back: the very next attempt finds it.
+        clock.advance(30.0);
+        let (tried, result) = attempt_at(&book, &clock, |r| if r == FIRST { Err(Failure::Incompatible) } else { Ok(()) });
+        assert_eq!((tried, result), (vec![FIRST, SECOND], Ok(())));
+    }
+
+    #[test]
+    fn a_failed_trial_moves_on_except_after_a_rate_limit() {
+        for (trial, moves_on) in [(Failure::Network, true), (Failure::ServerError, true), (Failure::RateLimited, false)] {
+            let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+            let _ = attempt_at(&book, &clock, |r| if r == FIRST { Err(Failure::Incompatible) } else { Ok(()) });
+            lock_recover(&book).expire(FIRST);
+            let (tried, _) = attempt_at(&book, &clock, |r| if r == FIRST { Err(trial) } else { Ok(()) });
+            assert_eq!(tried.len() == 2, moves_on, "{trial:?}: {tried:?}");
+            // Either way the route is skipped again, for longer.
+            assert_eq!(lock_recover(&book).plan(clock.now()), vec![SECOND], "{trial:?}");
+        }
+    }
+
+    #[test]
+    fn a_handshake_the_caller_gave_up_on_is_its_to_record_and_ends_the_attempt() {
+        let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+        let attempt = Attempt::default();
+        let mut tried = Vec::new();
+        let mut ended = None;
+        let result: Result<(), String> = connect_via(&book, &attempt, || clock.now(), |route| {
+            tried.push(route);
+            ended = attempt.end(); // the caller's budget runs out while this handshake is running
+            Err(error_for(Failure::Incompatible))
+        });
+        assert!(result.is_err());
+        assert_eq!(tried, vec![FIRST], "no further route once the caller has gone");
+        assert_eq!(ended, Some(FIRST), "the caller learns which handshake it abandoned");
+        assert_eq!(lock_recover(&book).plan(clock.now()), vec![FIRST, SECOND], "the worker recorded nothing");
+        // A later attempt object is unaffected.
+        assert_eq!(attempt_at(&book, &clock, |_| Ok(())), (vec![FIRST], Ok(())));
     }
 
     #[test]
     fn an_attempt_never_makes_more_than_one_handshake_per_route() {
-        let outcomes = [Ok(()), Err(Failure::Refused), Err(Failure::Transient)];
-        for &first in &outcomes {
-            for &second in &outcomes {
-                let book = Mutex::new(RouteBook::default());
-                for _ in 0..6 {
-                    let (tried, _) = attempt_with(&book, |r| {
-                        let o = if r == FIRST { first } else { second };
-                        o.map_err(|f| if f == Failure::Refused { refused(403) } else { transient(Some(503)) })
+        let classes = [None, Some(Failure::Incompatible), Some(Failure::Rejected), Some(Failure::RateLimited), Some(Failure::ServerError), Some(Failure::Network)];
+        for &first in &classes {
+            for &second in &classes {
+                let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
+                for n in 0..40 {
+                    let (tried, result) = attempt_at(&book, &clock, |r| match if r == FIRST { first } else { second } {
+                        None => Ok(()),
+                        Some(f) => Err(f),
                     });
                     assert!(!tried.is_empty() && tried.len() <= ROUTES.len(), "{tried:?}");
                     assert!(tried.len() == 1 || tried[0] != tried[1], "{tried:?}");
+                    // One connection at most comes out of an attempt, and only from the last route it tried.
+                    if result.is_ok() {
+                        let last = *tried.last().unwrap();
+                        assert_eq!(if last == FIRST { first } else { second }, None);
+                    }
+                    clock.advance(backoff(n.min(4)));
                 }
             }
         }
@@ -492,6 +887,27 @@ mod live {
     fn open(route: Route, unix_secs: u64) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), AttemptError> {
         let id = uuid::Uuid::new_v4().simple().to_string();
         msedge_tts_split_request(request_for(route, unix_secs, &id).unwrap()).map_err(|e| attempt_error(&e))
+    }
+
+    /// A connection the case needs, with the live service's TRANSIENT answers absorbed the way the scheduler
+    /// absorbs them in the app: a rate limit, a server error or no answer is retried, up to three tries, 3 s
+    /// apart; a refusal or a rejection fails at once, because that is what these cases exist to catch.
+    fn open_ok(route: Route) -> (Sender<TcpStream>, Receiver<TcpStream>) {
+        let mut last = String::new();
+        for attempt in 1..=3 {
+            match open(route, now_secs()) {
+                Ok(client) => {
+                    if attempt > 1 {
+                        println!("  {}: connected on try {attempt} (service transient: {last})", route.name());
+                    }
+                    return client;
+                }
+                Err(e) if e.failure.is_refusal() => panic!("{} refused the request: {}", route.name(), e.detail),
+                Err(e) => last = format!("{} ({})", e.failure.name(), e.detail),
+            }
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        panic!("{}: three transient answers in a row ({last}) — service unavailable, not a code failure", route.name());
     }
 
     /// One synthesis on an open client: (audio bytes, word boundaries).
@@ -531,7 +947,7 @@ mod live {
         for route in ROUTES {
             for (voice, text) in [("en-AU-WilliamMultilingualNeural", "This is a short connection test."), ("ar-EG-SalmaNeural", "هذا اختبار قصير للاتصال.")] {
                 let t = Instant::now();
-                let client = open(route, now_secs()).unwrap_or_else(|e| panic!("{} refused: {}", route.name(), e.detail));
+                let client = open_ok(route);
                 let connected = t.elapsed().as_millis();
                 let (bytes, words) = speak(client, voice_name(voice), text);
                 println!("{} {voice}: connect {connected} ms, total {} ms, {bytes} audio bytes, {words} words", route.name(), t.elapsed().as_millis());
@@ -547,7 +963,7 @@ mod live {
         for route in ROUTES {
             let e = open(route, now_secs() - 3_600).err().unwrap_or_else(|| panic!("{} accepted an hour-old token", route.name()));
             println!("{} with an hour-old token: {:?} ({})", route.name(), e.failure, e.detail);
-            assert_eq!(e.failure, Failure::Refused);
+            assert_eq!(e.failure, Failure::Rejected, "an expired token is a credential rejection");
         }
     }
 
@@ -560,7 +976,7 @@ mod live {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let book = Mutex::new(RouteBook::default());
         let mut tried = Vec::new();
-        let client = connect_via(&book, |route| {
+        let client = connect_via(&book, &Attempt::default(), Instant::now, |route| {
             tried.push(route);
             open(route, if route == ROUTES[0] { now_secs() - 3_600 } else { now_secs() })
         })
@@ -572,18 +988,17 @@ mod live {
 
         // The first route is cooling: the next attempt goes straight to the second.
         let mut tried = Vec::new();
-        connect_via(&book, |route| {
+        connect_via(&book, &Attempt::default(), Instant::now, |route| {
             tried.push(route);
             open(route, now_secs())
         })
         .unwrap();
         assert_eq!(tried, vec![ROUTES[1]]);
 
-        // The first route's cooldown is over (back-dated): a valid request reaches it first and clears its record.
-        let past = Instant::now().checked_sub(REFUSED_COOLDOWN + Duration::from_secs(1)).unwrap();
-        lock_recover(&book).failed(ROUTES[0], Failure::Refused, past);
+        // The first route's cooldown is over: its trial, with a valid request, connects and clears its record.
+        lock_recover(&book).expire(ROUTES[0]);
         let mut tried = Vec::new();
-        let client = connect_via(&book, |route| {
+        let client = connect_via(&book, &Attempt::default(), Instant::now, |route| {
             tried.push(route);
             open(route, now_secs())
         })
@@ -594,21 +1009,33 @@ mod live {
         assert!(bytes > 5_000);
     }
 
-    /// The production connect, end to end, a few times in a row.
+    /// The production connect, end to end, a few times in a row. A transient answer is retried the way the
+    /// scheduler would (3 s apart, three tries); what is asserted is that every connection is eventually made
+    /// and that a rate limit never made the attempt contact a second route.
     #[test]
     #[ignore]
     fn live_connect_in_a_row() {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let book = Mutex::new(RouteBook::default());
-        for i in 0..5 {
-            let t = Instant::now();
-            let r = connect(&book);
-            println!("connect {i}: {} in {} ms", if r.is_ok() { "ok" } else { "FAILED" }, t.elapsed().as_millis());
-            if let Err(e) = &r {
-                println!("  {e}");
+        for i in 0..3 {
+            let mut connected = false;
+            for attempt in 1..=3 {
+                let t = Instant::now();
+                match connect(&book, &Attempt::default()) {
+                    Ok(_) => {
+                        println!("connect {i}: ok in {} ms (try {attempt})", t.elapsed().as_millis());
+                        connected = true;
+                        break;
+                    }
+                    Err(e) => {
+                        println!("connect {i}: try {attempt} failed in {} ms: {e}", t.elapsed().as_millis());
+                        assert!(!e.contains("rate-limited") || !e.contains(','), "a rate limit contacted a second route: {e}");
+                        std::thread::sleep(Duration::from_secs(3));
+                    }
+                }
             }
-            assert!(r.is_ok());
-            std::thread::sleep(Duration::from_millis(800));
+            assert!(connected, "connect {i}: three transient failures in a row — service unavailable, not a code failure");
+            std::thread::sleep(Duration::from_secs(2));
         }
     }
 }

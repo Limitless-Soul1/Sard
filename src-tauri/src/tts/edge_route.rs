@@ -1100,6 +1100,52 @@ mod live {
         panic!("{}: three transient answers in a row ({last}) — service unavailable, not a code failure", route.name());
     }
 
+    /// What a route answered within one attempt: `None` when it connected, else the failure and its detail.
+    type Answer = (Route, Option<(Failure, String)>);
+
+    /// The routes one attempt contacted, in order.
+    fn routes(answers: &[Answer]) -> Vec<Route> {
+        answers.iter().map(|(route, _)| *route).collect()
+    }
+
+    /// An attempt the case needs to CONNECT, made through `connect_via` with this book, with the live service's
+    /// TRANSIENT answers absorbed as `open_ok` absorbs them: an attempt that ends on a rate limit, a server error or
+    /// no answer is made again, up to three tries, 3 s apart; one that ends on a refusal or a rejection fails at
+    /// once. `before` runs before every try. Returns the client and, for every try, what each route answered —
+    /// which the case asserts on and every failure prints.
+    fn connect_ok(
+        book: &Mutex<RouteBook>,
+        unix_secs: impl Fn(Route) -> u64,
+        before: impl Fn(),
+    ) -> ((Sender<TcpStream>, Receiver<TcpStream>), Vec<Vec<Answer>>) {
+        let mut tries: Vec<Vec<Answer>> = Vec::new();
+        for attempt in 1..=3 {
+            before();
+            let mut answers = Vec::new();
+            let result = connect_via(book, &Attempt::default(), Instant::now, false, |route| {
+                let r = open(route, unix_secs(route));
+                answers.push((route, r.as_ref().err().map(|e| (e.failure, e.detail.clone()))));
+                r
+            });
+            let ended_on = answers.last().and_then(|(_, answer)| answer.as_ref().map(|(failure, _)| *failure));
+            tries.push(answers);
+            match result {
+                Ok(client) => {
+                    if attempt > 1 {
+                        println!("  connected on try {attempt} (service transient before it): {tries:?}");
+                    }
+                    return (client, tries);
+                }
+                Err(e) if ended_on.is_some_and(|failure| !failure.is_refusal()) => {
+                    println!("  try {attempt} ended on a service transient: {e}");
+                }
+                Err(e) => panic!("try {attempt} failed: {e}; answers: {tries:?}"),
+            }
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        panic!("three transient answers in a row — service unavailable, not a code failure; answers: {tries:?}");
+    }
+
     /// One synthesis on an open client: (audio bytes, word boundaries).
     fn speak(client: (Sender<TcpStream>, Receiver<TcpStream>), voice: &str, text: &str) -> (usize, usize) {
         let (mut tx, mut rx) = client;
@@ -1159,44 +1205,41 @@ mod live {
 
     /// The fallback against the real service: the first route is made to fail by the service itself (an
     /// expired token), the attempt moves to the second and that connection synthesizes; once the first route's
-    /// cooldown has passed, a valid request reaches it again and clears its record.
+    /// cooldown has passed, a valid request reaches it again and clears its record. Each step is an attempt made
+    /// through `connect_ok`, so a transient answer from the live service (MEASURED 2026-10-24: a 429 on the trial,
+    /// in a run right after the other live cases) is retried instead of failing the case.
     #[test]
     #[ignore]
     fn live_fallback_and_recovery() {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let book = Mutex::new(RouteBook::default());
-        let mut tried = Vec::new();
-        let client = connect_via(&book, &Attempt::default(), Instant::now, false, |route| {
-            tried.push(route);
-            open(route, if route == ROUTES[0] { now_secs() - 3_600 } else { now_secs() })
-        })
-        .unwrap();
-        println!("broken {}: tried {tried:?}", ROUTES[0].name());
-        assert_eq!(tried, ROUTES.to_vec());
+        let (client, tries) = connect_ok(&book, |route| if route == ROUTES[0] { now_secs() - 3_600 } else { now_secs() }, || {});
+        println!("broken {}: {tries:?}", ROUTES[0].name());
+        // The try on which the first route refused moved on to the second within that same attempt. A try before it
+        // ended on a transient from the first route alone; a try after it went straight to the second.
+        let refused = tries
+            .iter()
+            .position(|t| matches!(t.first(), Some((route, Some((failure, _)))) if *route == ROUTES[0] && failure.is_refusal()))
+            .unwrap_or_else(|| panic!("{} never refused the hour-old token: {tries:?}", ROUTES[0].name()));
+        assert_eq!(routes(&tries[refused]), ROUTES.to_vec(), "{tries:?}");
+        assert!(tries[..refused].iter().all(|t| routes(t) == vec![ROUTES[0]]), "{tries:?}");
+        assert!(tries[refused + 1..].iter().all(|t| routes(t) == vec![ROUTES[1]]), "{tries:?}");
         let (bytes, _) = speak(client, voice_name("ar-EG-SalmaNeural"), "هذا اختبار قصير للاتصال.");
-        assert!(bytes > 5_000);
+        assert!(bytes > 5_000, "{bytes} audio bytes");
 
         // The first route is cooling: the next attempt goes straight to the second.
-        let mut tried = Vec::new();
-        connect_via(&book, &Attempt::default(), Instant::now, false, |route| {
-            tried.push(route);
-            open(route, now_secs())
-        })
-        .unwrap();
-        assert_eq!(tried, vec![ROUTES[1]]);
+        let (_, tries) = connect_ok(&book, |_| now_secs(), || {});
+        assert!(tries.iter().all(|t| routes(t) == vec![ROUTES[1]]), "{tries:?}");
 
-        // The first route's cooldown is over: its trial, with a valid request, connects and clears its record.
-        lock_recover(&book).expire(ROUTES[0]);
-        let mut tried = Vec::new();
-        let client = connect_via(&book, &Attempt::default(), Instant::now, false, |route| {
-            tried.push(route);
-            open(route, now_secs())
-        })
-        .unwrap();
-        println!("recovered {}: tried {tried:?}", ROUTES[0].name());
-        assert_eq!(tried, vec![ROUTES[0]]);
+        // The first route's cooldown is over: its trial, with a valid request, connects and clears its record. A
+        // transient answer to the trial ends that attempt without contacting the second route; a rate limit leaves
+        // the route due for another trial and any other transient cools it again, so the cooldown is ended before
+        // every try, as its passing would.
+        let (client, tries) = connect_ok(&book, |_| now_secs(), || lock_recover(&book).expire(ROUTES[0]));
+        println!("recovered {}: {tries:?}", ROUTES[0].name());
+        assert!(tries.iter().all(|t| routes(t) == vec![ROUTES[0]]), "{tries:?}");
         let (bytes, _) = speak(client, voice_name("en-AU-WilliamMultilingualNeural"), "This is a short connection test.");
-        assert!(bytes > 5_000);
+        assert!(bytes > 5_000, "{bytes} audio bytes");
     }
 
     /// The 2026-10-23 failure itself, against the real service: the msedge route is sent the request WITHOUT the

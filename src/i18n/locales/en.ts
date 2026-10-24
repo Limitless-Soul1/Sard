@@ -1478,28 +1478,22 @@ export const en = {
   // chosen language and its direction. Shown once after updating to the version they describe, and
   // published by the release workflow as the update manifest's notes — see
   // `features/updater/whatsNew.ts`. Rewritten, in both locales, for every release.
-  "wn.readAloud.h": "Read aloud is dependable again",
+  "wn.readAloud.h": "Read aloud works again",
   "wn.readAloud.b":
-    "Since 10 October, Microsoft's voice service has been refusing many connections, so listening "
-    + "kept stopping and Try again didn't help. Sard now connects the way Microsoft Edge does, "
-    + "retries a refused connection on its own, and Try again continues from the sentence that stopped.",
-  "wn.keepReplace.h": "Keep or replace a book you already have",
-  "wn.keepReplace.b":
-    "Importing a book that's already in your library now asks whether to keep the existing copy or "
-    + "replace it. Replacing keeps the book's shelves, notes, highlights and reading position. "
-    + "Opening a book from File Explorer simply opens it.",
-  "wn.wholeLibrary.h": "Your whole library after updating",
-  "wn.wholeLibrary.b":
-    "If you updated from Sard 1.2.2 or earlier while a shelf was selected, the library could stay "
-    + "limited to that shelf. It now shows all your books again, with nothing for you to do.",
-  "wn.cardPaper.h": "Photo cards keep their paper colour",
-  "wn.cardPaper.b":
-    "A photo card with a custom paper colour now keeps that exact colour when you save, export or "
-    + "copy it. Cards saved earlier get the right colour the next time you save them.",
-  "wn.fewerSettings.h": "One setting fewer",
-  "wn.fewerSettings.b":
-    "The \"Extra blur in immersive mode\" switch no longer did anything and has been removed. "
-    + "Immersive scrolling and Dim the background work as before.",
+    "Since 23 October, read aloud could not start: every sentence showed \"Edge unavailable\". "
+    + "Sard now sends the connection details Microsoft's voice service requires.",
+  "wn.secondServer.h": "A second voice server",
+  "wn.secondServer.b":
+    "If one of Microsoft's voice servers refuses Sard or stops answering, Sard moves to the other one "
+    + "on its own, and goes back to the first once it works again.",
+  "wn.busyServer.h": "When the service is busy",
+  "wn.busyServer.b":
+    "If Microsoft's voice service keeps answering that it is busy while you wait for a sentence, Sard "
+    + "asks its other voice server for that sentence.",
+  "wn.busyWait.h": "Waiting out a busy moment",
+  "wn.busyWait.b":
+    "When the voice service asks Sard to slow down, Sard now waits a few seconds and tries once more "
+    + "before it stops, instead of spending all its tries in the first two seconds.",
 
   "err.runtime.title": "Your Windows WebView2 needs updating",
   // Nobody is declared innocent here. What was established is that capabilities the rendering

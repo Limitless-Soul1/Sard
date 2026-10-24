@@ -1,6 +1,6 @@
 [package]
 name = "sard"
-version = "1.4.1"
+version = "1.4.2"
 description = "Sard (سَرْد) — a beautiful ebook reader"
 authors = ["Sard"]
 edition = "2021"

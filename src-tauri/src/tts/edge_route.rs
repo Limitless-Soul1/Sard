@@ -62,6 +62,7 @@
 //! exactly as it read the single route's before. Details are HTTP statuses and I/O error kinds only: no URL,
 //! token, key, header or response body.
 
+use std::collections::VecDeque;
 use std::net::TcpStream;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -432,8 +433,86 @@ pub(super) fn connect(book: &Mutex<RouteBook>, attempt: &Attempt, waited_on: boo
         let unix_secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let connection_id = uuid::Uuid::new_v4().simple().to_string();
         let request = request_for(route, unix_secs, &connection_id).map_err(|e| attempt_error(&e.into()))?;
-        msedge_tts_split_request(request).map_err(|e| attempt_error(&e))
+        let started = Instant::now();
+        let result = msedge_tts_split_request(request).map_err(|e| attempt_error(&e));
+        record_try(route, result.as_ref().map(|_| ()), started.elapsed().as_millis() as u64, waited_on);
+        result
     })
+}
+
+// ---- session diagnostics ----------------------------------------------------------------------------------
+//
+// OBSERVATION ONLY. Every route the production connect tries is recorded as it answered: the route, the outcome
+// as the rules above classified it, the HTTP status, how long the handshake took and whether the listener was
+// waiting. It is what tells a listening session's telemetry which route served a sentence — the frontend only
+// ever sees a call's one result. Bounded and in memory; never a URL, a header, a token or a body. Nothing in
+// the routing reads it.
+
+/// One route the production connect tried, as it answered.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteTry {
+    /// Increases by one per try, for the life of the process.
+    pub seq: u64,
+    /// Unix time, in ms, when the handshake ended.
+    pub at: u64,
+    pub route: &'static str,
+    /// `ok`, or the failure's class: refused, rejected, rate-limited, server-error, failed, timed-out.
+    pub outcome: &'static str,
+    pub status: Option<u16>,
+    pub ms: u64,
+    pub waited_on: bool,
+}
+
+const ROUTE_LOG_KEEP: usize = 400;
+static ROUTE_LOG: Mutex<(u64, VecDeque<RouteTry>)> = Mutex::new((0, VecDeque::new()));
+
+fn record_try(route: Route, outcome: Result<(), &AttemptError>, ms: u64, waited_on: bool) {
+    let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let (outcome, status) = match outcome {
+        Ok(()) => ("ok", None),
+        Err(e) => (e.failure.name(), e.status),
+    };
+    let mut log = lock_recover(&ROUTE_LOG);
+    log.0 += 1;
+    let seq = log.0;
+    log.1.push_back(RouteTry { seq, at, route: route.name(), outcome, status, ms, waited_on });
+    if log.1.len() > ROUTE_LOG_KEEP {
+        log.1.pop_front();
+    }
+}
+
+/// The routes tried after sequence number `since`, oldest first.
+pub(super) fn route_log_since(since: u64) -> Vec<RouteTry> {
+    lock_recover(&ROUTE_LOG).1.iter().filter(|t| t.seq > since).cloned().collect()
+}
+
+#[cfg(test)]
+mod route_log_tests {
+    use super::*;
+
+    #[test]
+    fn the_route_log_records_each_try_in_order_with_its_class_and_stays_bounded() {
+        let before = route_log_since(0).last().map_or(0, |t| t.seq);
+        let limited = AttemptError { failure: Failure::RateLimited, status: Some(429), detail: "http 429".into() };
+        record_try(Route::MsEdge, Err(&limited), 650, true);
+        record_try(Route::Bing, Ok(()), 480, true);
+        let got = route_log_since(before);
+        assert_eq!(got.len(), 2);
+        assert_eq!((got[0].route, got[0].outcome, got[0].status, got[0].ms, got[0].waited_on), ("msedge", "rate-limited", Some(429), 650, true));
+        assert_eq!((got[1].route, got[1].outcome, got[1].status, got[1].ms), ("bing", "ok", None, 480));
+        assert_eq!(got[1].seq, got[0].seq + 1);
+        assert!(got[0].at > 0 && got[1].at >= got[0].at);
+        // What the frontend receives: no URL, header, token or body — only these fields.
+        let json = serde_json::to_string(&got[0]).unwrap();
+        assert_eq!(json, format!(r#"{{"seq":{},"at":{},"route":"msedge","outcome":"rate-limited","status":429,"ms":650,"waitedOn":true}}"#, got[0].seq, got[0].at));
+
+        for _ in 0..ROUTE_LOG_KEEP + 10 {
+            record_try(Route::Bing, Ok(()), 1, false);
+        }
+        assert_eq!(route_log_since(0).len(), ROUTE_LOG_KEEP);
+        assert!(route_log_since(u64::MAX).is_empty());
+    }
 }
 
 #[cfg(test)]

@@ -184,6 +184,13 @@ pub async fn tts_synth_streaming(engines: State<'_, TtsEngine>) -> Result<bool, 
     Ok(engines.streaming.load(Ordering::SeqCst))
 }
 
+/// SESSION DIAGNOSTICS: the routes the synthesis connection tried after `since` (a sequence number), as they
+/// answered. Observation only; the frontend's telemetry reads it while nothing is sounding.
+#[tauri::command]
+pub async fn tts_route_log(since: u64) -> Result<Vec<edge_route::RouteTry>, String> {
+    Ok(edge_route::route_log_since(since))
+}
+
 /// This call's cancel flag, installed for the duration of the call and retired on EVERY exit path.
 ///
 /// THE DEFECT THIS CLOSES (found by the live cancellation tests, intermittently): the flag used to be

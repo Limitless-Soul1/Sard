@@ -117,6 +117,14 @@ pub fn msedge_tts_split() -> Result<(Sender<TcpStream>, Receiver<TcpStream>)> {
     split(websocket_connect()?)
 }
 
+// SARD LOCAL MODIFICATION — see ../../VENDOR.txt. The same split client, over a connection made with a
+// request the caller built instead of the crate's own.
+pub fn msedge_tts_split_request(
+    request: tungstenite::handshake::client::Request,
+) -> Result<(Sender<TcpStream>, Receiver<TcpStream>)> {
+    split(crate::tts::websocket_connect_request(request)?)
+}
+
 #[cfg(feature = "proxy")]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "blocking", feature = "proxy"))))]
 pub use crate::tts::proxy::blocking::msedge_tts_split_proxy;

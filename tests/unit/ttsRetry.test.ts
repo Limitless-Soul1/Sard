@@ -388,6 +388,17 @@ describe("what the classifier calls permanent", () => {
     expect(isPermanentFailure("unknown edge voice: en-US-TestNeural")).toBe(true);
     expect(isPermanentFailure(`${VOICE_MISMATCH_MARKER}: en-US-TestNeural returned 6 bytes for 40 chars`)).toBe(true);
   });
+
+  // The connection as the engine reports it across its routes (`edge_route` in src-tauri/src/tts/): the last
+  // route's status in the same marker, then each route tried. Read exactly as a single route's report was.
+  it("a report across the routes is classified by the last route's status", () => {
+    expect(isPermanentFailure("edge connect: http 403; msedge refused (http 200), bing rejected (http 403)")).toBe(false);
+    expect(isPermanentFailure("edge connect: http 200; msedge refused (http 200), bing refused (http 200)")).toBe(false);
+    expect(isPermanentFailure("edge connect: http 429; msedge rate-limited (http 429)")).toBe(false);
+    expect(isPermanentFailure("edge connect: http 503; msedge server-error (http 503)")).toBe(false);
+    expect(isPermanentFailure("edge connect: msedge failed (io Uncategorized os 11001)")).toBe(false);
+    expect(isPermanentFailure("edge connect: http 404; msedge refused (http 200), bing refused (http 404)")).toBe(true);
+  });
 });
 
 describe("a refused handshake is absorbed by the bounded round", () => {

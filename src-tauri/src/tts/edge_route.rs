@@ -89,7 +89,7 @@ impl Route {
 const USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 10; HD1913) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.7499.193 Mobile Safari/537.36 EdgA/143.0.3650.125";
 const ORIGIN: &str = "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold";
 /// `2-` names the token scheme; the browser version after it matches the identity above. Measured
-/// 2026-10-24: a bare `2-` is refused, and any version is accepted.
+/// 2026-10-24: a bare `2-` is refused, and every browser version tried after it was accepted.
 const GEC_VERSION: &str = "2-143.0.3650.125";
 /// What a browser's own WebSocket request sends. Since 2026-10-23 the msedge host upgrades a request only when
 /// it carries `Accept` or `Accept-Encoding`; the bing host does not mind either way.

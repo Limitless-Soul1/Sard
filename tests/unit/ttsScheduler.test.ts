@@ -53,18 +53,18 @@ function harness(script: Script, opts: { count?: number; lens?: number[]; policy
   const clock = new Clock();
   const count = opts.count ?? 60;
   const lens = opts.lens ?? Array.from({ length: count }, () => 80); // ≈ 6 s of audio per sentence
-  const calls: { idx: number; ctx: DispatchContext; at: number; done?: number; ok?: boolean }[] = [];
+  const calls: { idx: number; ctx: DispatchContext; at: number; done?: number; ok?: boolean; err?: string }[] = [];
   const attempts = new Map<number, number>();
   let live = 0, maxLive = 0, cancels = 0;
   let cancelNext: (() => void) | null = null;
   const dispatch = (idx: number, ctx: DispatchContext) => new Promise<Syn>((resolve, reject) => {
     const n = (attempts.get(idx) ?? 0) + 1; attempts.set(idx, n);
     live++; maxLive = Math.max(maxLive, live);
-    const rec: { idx: number; ctx: DispatchContext; at: number; done?: number; ok?: boolean } = { idx, ctx, at: clock.now() }; calls.push(rec);
+    const rec: { idx: number; ctx: DispatchContext; at: number; done?: number; ok?: boolean; err?: string } = { idx, ctx, at: clock.now() }; calls.push(rec);
     const out = script(idx, n, ctx);
     let settled = false;
     const finish = (good: boolean, err?: string) => {
-      if (settled) return; settled = true; live--; rec.done = clock.now(); rec.ok = good;
+      if (settled) return; settled = true; live--; rec.done = clock.now(); rec.ok = good; rec.err = err;
       good ? resolve({ durationSec: lens[idx] * 0.0757 }) : reject(new Error(err));
     };
     clock.setTimeout(() => finish(out.ok, out.ok ? undefined : out.err), out.ms);
@@ -77,6 +77,7 @@ function harness(script: Script, opts: { count?: number; lens?: number[]; policy
     isPermanent: (e) => /HTTP 4\d\d/.test(String(e)) && !/429/.test(String(e)),
     isCancelled: (e) => String(e).includes("edge synth cancelled"),
     isFastReset: (e, ms) => ms < 150 && /10054/.test(String(e)),
+    isRateLimited: (e) => /\bhttp 429;/.test(String(e)),
     onCancel: () => { cancels++; cancelNext?.(); },
     clock, random: () => 0.5, policy: opts.policy,
   });
@@ -603,6 +604,248 @@ describe("service conditions", () => {
     expect(r.stoppedAt).toBe(N + 2);
     expect(r.maxWait).toBeLessThanOrEqual(DEFAULT_POLICY.budgetMs + 1);
     expect(h.attempts.get(N + 2)).toBe(2);
+  });
+});
+
+// ---- RULE 2b: a rate limit is waited out, not retried into -------------------------------------------------
+//
+// What the engine reports for a refused handshake (`edge_route`): the last route's status first. A refusal is
+// answered in ~0.65 s (the recorded median). Inside one engine call, the third 429 in a row on a call the
+// listener waits for also tries the engine's other route — the scheduler only ever sees that call's result.
+
+const LIMITED = "edge connect: http 429; msedge rate-limited (http 429)";
+const BOTH_LIMITED = "edge connect: http 429; msedge rate-limited (http 429), bing rate-limited (http 429)";
+const limited = (err = LIMITED, ms = 650): Outcome => ({ ok: false, ms, err });
+const P = DEFAULT_POLICY;
+
+/** The service limits every call made before `until` (virtual ms) — a limit that lasts, whoever asks. */
+function limitedUntil(until: number, only?: (idx: number) => boolean) {
+  const box: { clock?: Clock } = {};
+  const script: Script = (idx) => ((!only || only(idx)) && box.clock!.now() < until ? limited() : ok());
+  return { script, attach: (h: ReturnType<typeof harness>) => { box.clock = h.clock; } };
+}
+
+/** No look-ahead or probe call starts within `rateLimitHoldMs` of a 429 answer. */
+function expectHoldRespected(h: ReturnType<typeof harness>) {
+  const refusedAt = h.calls.filter((c) => c.ok === false && /\bhttp 429;/.test(c.err ?? "")).map((c) => c.done!);
+  for (const c of h.calls) {
+    if (c.ctx.role !== "look-ahead" && c.ctx.role !== "probe") continue;
+    const inside = refusedAt.filter((t) => t <= c.at && c.at - t < P.rateLimitHoldMs);
+    expect(inside, `${c.ctx.role} for ${c.idx} at ${c.at} inside the hold`).toEqual([]);
+  }
+}
+
+/** Every sentence played was produced by exactly one successful call: no duplicate audio. */
+function expectOneSuccessEach(h: ReturnType<typeof harness>, order: number[]) {
+  for (const j of order) expect(h.calls.filter((c) => c.idx === j && c.ok === true).length, `sentence ${j}`).toBe(1);
+}
+
+describe("RULE 2b — a rate limit is waited out, not retried into", () => {
+  it("a single 429 as playback starts: the fast retry plays it, with nothing added", async () => {
+    const h = harness((i, n) => (i === 0 && n === 1 ? limited() : ok()));
+    const r = await play(h, 0, 60_000);
+    expect(r.stoppedAt).toBeNull();
+    expect(r.order.slice(0, 6)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(h.attempts.get(0)).toBe(2);
+    expect(r.waits[0]).toBe(650 + P.recoverySpacing[1] + 300); // refused, the fast spacing, the call
+    expect(h.calls.some((c) => c.ctx.attempt > P.maxRecoveryAttempts)).toBe(false);
+    expectOneSuccessEach(h, r.order);
+    expectHoldRespected(h);
+    expectInvariants(h);
+  });
+
+  it("429 three times running: one delayed attempt, 4.5 s after the third, plays it inside the budget", async () => {
+    const h = harness((i, n) => (i === 0 && n <= 3 ? limited(n === 3 ? BOTH_LIMITED : LIMITED) : ok()));
+    const r = await play(h, 0, 60_000);
+    expect(r.stoppedAt).toBeNull();
+    expect(r.order.slice(0, 6)).toEqual([0, 1, 2, 3, 4, 5]);
+    const tries = h.calls.filter((c) => c.idx === 0);
+    expect(tries.length).toBe(4);
+    expect(tries[1].ctx).toMatchObject({ role: "recovery", attempt: 2, maxAttempts: P.maxRecoveryAttempts });
+    expect(tries[3].ctx).toMatchObject({ role: "recovery", attempt: 4, maxAttempts: P.maxRecoveryAttempts + 1 });
+    expect(tries[2].at - tries[1].done!).toBe(P.recoverySpacing[2]); // the fast spacing is unchanged
+    expect(tries[3].at - tries[2].done!).toBe(P.rateLimitWaitMs);
+    expect(tries[3].ctx.budgetMs!).toBeGreaterThanOrEqual(P.rateLimitMinLeftMs);
+    expect(r.waits[0]).toBeLessThan(P.budgetMs);
+    expect(Math.max(...r.waits.slice(1))).toBe(0); // and the sentences after it never wait
+    expectOneSuccessEach(h, r.order);
+    expectHoldRespected(h);
+    expectInvariants(h);
+  });
+
+  it("the other route answers inside the third attempt: no delayed attempt and no added wait", async () => {
+    const h = harness((i, n) => (i === 0 && n <= 2 ? limited() : ok()));
+    const r = await play(h, 0, 60_000);
+    expect(r.stoppedAt).toBeNull();
+    expect(h.attempts.get(0)).toBe(3);
+    expect(r.waits[0]).toBe(650 + P.recoverySpacing[1] + 650 + P.recoverySpacing[2] + 300);
+    expect(h.calls.some((c) => c.ctx.attempt > P.maxRecoveryAttempts)).toBe(false);
+    expectOneSuccessEach(h, r.order);
+  });
+
+  it("every route stays limited: the delayed attempt is the last, the failure shows inside 12 s, and nothing is retried into the limit", async () => {
+    const h = harness((i) => (i === 0 ? limited(BOTH_LIMITED) : ok()));
+    const r = await play(h, 0, 60_000);
+    expect(r.stoppedAt).toBe(0);
+    expect(r.error).toContain(TTS_EDGE_DOWN);
+    expect(r.error).toContain("after 4 attempt(s)");
+    expect(r.maxWait).toBeLessThanOrEqual(P.budgetMs);
+    const round = h.calls.filter((c) => c.idx === 0 && c.at <= r.maxWait);
+    expect(round.length).toBe(4); // three fast attempts and the delayed one — never more
+    // After the failure, the sentence is re-attempted in the background on the RULE-1 spacing, never back to back.
+    await h.clock.run(h.clock.now() + 30_000);
+    const later = h.calls.filter((c) => c.idx === 0 && c.at > r.maxWait);
+    expect(later.length).toBeGreaterThan(0);
+    for (let k = 1; k < later.length; k++) expect(later[k].at - later[k - 1].done!).toBeGreaterThanOrEqual(P.backoffBaseMs * 0.8);
+    expectHoldRespected(h);
+    expectInvariants(h);
+    expect(h.s.checkInvariants()).toEqual([]);
+  });
+
+  it("slow refusals: the delayed attempt is shortened to leave 3 s for the call, or skipped when that leaves under 2 s to wait", async () => {
+    // Each refusal takes 2 s: the third ends at 7 s, 5 s are left — so 2 s of waiting and 3 s for the call.
+    const a = harness((i, n) => (i === 0 && n <= 3 ? limited(LIMITED, 2_000) : ok()));
+    const ra = await play(a, 0, 60_000);
+    const ta = a.calls.filter((c) => c.idx === 0);
+    expect(ta.length).toBe(4);
+    expect(ta[3].at - ta[2].done!).toBe(P.rateLimitMinWaitMs);
+    expect(ta[3].ctx.budgetMs).toBe(P.rateLimitMinLeftMs);
+    expect(ra.stoppedAt).toBeNull();
+    // Each takes 2.5 s: the third ends at 8.5 s; 3.5 s cannot hold 2 s of waiting and 3 s for the call.
+    const b = harness((i, n) => (i === 0 && n <= 3 ? limited(LIMITED, 2_500) : ok()));
+    const rb = await play(b, 0, 60_000);
+    expect(rb.stoppedAt).toBe(0);
+    expect(rb.error).toContain("after 3 attempt(s)");
+    expect(b.calls.filter((c) => c.idx === 0 && c.at <= rb.maxWait).length).toBe(3);
+    expect(rb.maxWait).toBe(3 * 2_500 + P.recoverySpacing[1] + P.recoverySpacing[2]);
+  });
+
+  it("only a rate limit earns it: rounds of other failures keep exactly the three fast attempts", async () => {
+    for (const err of ["edge connect: 11001 host not found", "edge connect timed out", "edge connect: http 503; msedge server-error (http 503)"]) {
+      const h = harness((i) => (i === 0 ? fail(err, 650) : ok()));
+      const r = await play(h, 0, 60_000);
+      expect(r.stoppedAt, err).toBe(0);
+      expect(h.calls.filter((c) => c.idx === 0 && c.at <= r.maxWait).length, err).toBe(3);
+      expect(r.maxWait, err).toBe(3 * 650 + P.recoverySpacing[1] + P.recoverySpacing[2]);
+    }
+  });
+
+  it("it is the round's last answer that counts: 429, 429 then a timeout gets no delayed attempt; two timeouts then a 429 does", async () => {
+    const timeout = fail("edge connect timed out", 650);
+    const a = harness((i, n) => (i === 0 ? (n <= 2 ? limited() : timeout) : ok()));
+    const ra = await play(a, 0, 60_000);
+    expect(ra.stoppedAt).toBe(0);
+    expect(a.calls.filter((c) => c.idx === 0 && c.at <= ra.maxWait).length).toBe(3);
+    const b = harness((i, n) => (i === 0 ? (n <= 2 ? timeout : n === 3 ? limited() : ok()) : ok()));
+    const rb = await play(b, 0, 60_000);
+    expect(rb.stoppedAt).toBeNull();
+    expect(b.calls.filter((c) => c.idx === 0).map((c) => c.ctx.attempt)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("the 12-second limit holds whatever the delayed attempt does: one that stalls is cut by the budget", async () => {
+    const h = harness((i, n, ctx) => (i === 0 ? (n <= 3 ? limited() : stall(ctx)) : ok()));
+    const r = await play(h, 0, 60_000);
+    expect(r.stoppedAt).toBe(0);
+    expect(r.maxWait).toBe(P.budgetMs);
+    expect(h.calls.filter((c) => c.idx === 0 && c.at <= r.maxWait).length).toBe(4);
+  });
+
+  it("during playback, a 429 on a sentence ahead is repaired in the background: playback never waits, and look-ahead holds back meanwhile", async () => {
+    const h = harness((i, n) => (i === N + 4 && n === 1 ? limited() : ok()));
+    const r = await play(h, N, 120_000);
+    expect(r.stoppedAt).toBeNull();
+    expect(r.order.slice(0, 10)).toEqual([...Array(10).keys()].map((k) => N + k));
+    expect(Math.max(...r.waits.slice(1))).toBe(0);
+    expect(h.attempts.get(N + 4)).toBe(2);
+    const refused = h.calls.find((c) => c.idx === N + 4 && c.ok === false)!;
+    const next = h.calls.find((c) => c.at >= refused.done!)!;
+    expect(next.at - refused.done!).toBeGreaterThanOrEqual(P.rateLimitHoldMs); // nothing was sent into the limit
+    expectOneSuccessEach(h, r.order);
+    expectHoldRespected(h);
+    expectInvariants(h);
+  });
+
+  it("mid-chapter: playback reaching a sentence that is still limited gets the same round and continues in order, nothing skipped or repeated", async () => {
+    // N+4 is limited for its first 25 s, past the moment playback reaches it (~19 s): its background attempts and
+    // the round's three fast ones are refused, and the delayed one connects.
+    const lim = limitedUntil(25_000, (i) => i === N + 4);
+    const h = harness(lim.script);
+    lim.attach(h);
+    const r = await play(h, N, 120_000);
+    expect(r.stoppedAt).toBeNull();
+    expect(r.order.slice(0, 10)).toEqual([...Array(10).keys()].map((k) => N + k));
+    const k = r.order.indexOf(N + 4);
+    expect(r.waits[k]).toBeGreaterThan(0);
+    expect(r.waits[k]).toBeLessThan(P.budgetMs);
+    expect(h.calls.some((c) => c.idx === N + 4 && c.ctx.role === "recovery" && c.ctx.attempt === 4 && c.ok === true)).toBe(true);
+    expect(Math.max(...r.waits.slice(k + 1))).toBe(0); // the sentences after it were prepared and play straight on
+    expectOneSuccessEach(h, r.order);
+    expectHoldRespected(h);
+    expectInvariants(h);
+  });
+
+  it("starting in the middle of a chapter during a service-wide limit: the delayed attempt starts playback, and the next sentence is ready in time", async () => {
+    const lim = limitedUntil(5_000);
+    const h = harness(lim.script);
+    lim.attach(h);
+    const r = await play(h, 20, 90_000);
+    expect(r.stoppedAt).toBeNull();
+    expect(r.order.slice(0, 6)).toEqual([20, 21, 22, 23, 24, 25]);
+    expect(r.waits[0]).toBe(650 + P.recoverySpacing[1] + 650 + P.recoverySpacing[2] + 650 + P.rateLimitWaitMs + 300);
+    expect(Math.max(...r.waits.slice(1))).toBe(0);
+    expectOneSuccessEach(h, r.order);
+    expectHoldRespected(h);
+    expectInvariants(h);
+  });
+
+  it("moving on during the delayed wait cancels the round: no delayed call for the old sentence, the new one plays, and Back gives a fresh round", async () => {
+    const h = harness((i, n) => (i === N && n <= 3 ? limited() : ok()));
+    h.s.begin(60, N); h.request(N); h.request(N + 1); h.prefetch();
+    const waiting = h.s.recover(N);
+    waiting.catch(() => {});
+    await h.clock.run(4_000); // the three fast attempts are spent; the delayed one is due at ~7.45 s
+    expect(h.calls.filter((c) => c.idx === N).length).toBe(3);
+    h.s.reprioritize(N + 1); h.s.userAction(); // what skip(+1) does
+    expect(String((await settle(h, waiting)).e)).toContain(RECOVERY_CANCELLED);
+    const next = await settle(h, h.s.recover(N + 1));
+    expect(next.v).toBeDefined();
+    await h.clock.run(h.clock.now() + 20_000);
+    expect(h.calls.filter((c) => c.idx === N).length).toBe(3); // the delayed call was never made
+    expect(h.s.checkInvariants()).toEqual([]);
+    // Back onto it: a fresh round (the script now lets it through).
+    h.s.reprioritize(N);
+    const back = await settle(h, h.s.recover(N));
+    expect(back.v).toBeDefined();
+    expect(h.s.checkInvariants()).toEqual([]);
+    expectInvariants(h);
+  });
+
+  it("stop during the delayed wait: nothing is dispatched afterwards and nothing is left pending", async () => {
+    const h = harness((i) => (i === N ? limited() : ok()));
+    h.s.begin(60, N); h.request(N); h.request(N + 1); h.prefetch();
+    h.s.recover(N).catch(() => {});
+    await h.clock.run(4_000);
+    expect(h.s.inRecovery).toBe(true);
+    await expectCleanAfterReset(h);
+  });
+
+  it("a chapter change right after a 429: the new chapter's sentence and the next one are asked at once; only look-ahead holds", async () => {
+    const h = harness((i, n) => (i === N + 2 && n === 1 ? limited() : ok()));
+    h.s.begin(60, N); h.request(N); h.request(N + 1); h.prefetch();
+    await h.clock.run(2_000);
+    const refused = h.calls.find((c) => c.ok === false)!;
+    expect(refused.idx).toBe(N + 2);
+    const t = h.clock.now();
+    h.s.begin(60, 0); h.request(0); h.request(1); h.prefetch(); // the next chapter starts inside the hold
+    await h.clock.run(t + 5_000);
+    const after = h.calls.filter((c) => c.at >= t);
+    expect(after[0]).toMatchObject({ idx: 0 });
+    expect(after[0].at).toBe(t); // the sentence the listener needs is never held
+    expect(after.find((c) => c.idx === 1)!.ctx.role).toBe("lead");
+    expectHoldRespected(h);
+    expect(h.s.isReady(0) && h.s.isReady(1)).toBe(true);
+    expectInvariants(h);
+    await expectCleanAfterReset(h);
   });
 });
 

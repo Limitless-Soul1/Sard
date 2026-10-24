@@ -117,6 +117,21 @@ export function seriesSummary(s: LatencySeries): { n: number; avg: number; min: 
 //   silence, not streaming — and the single-flight rule holds, since the yield is cooperative and the
 //   next attempt only starts once the engine has settled.
 //
+//   RULE 2b — A RATE LIMIT IS WAITED OUT, NOT RETRIED INTO. The service answers some handshakes with HTTP
+//   429. Measured over 200 recorded sessions: most 429s are a single refused request, and an attempt a
+//   quarter of a second later usually connects (13 of 17 under 0.5 s), so the round's fast spacing stays.
+//   A few last several seconds (3.6 s, 4.9 s and 6.1 s in the rounds that failed): the three fast attempts
+//   are spent inside the limit in about two seconds, with most of the budget unused. So when the round's
+//   last attempt was itself rate-limited, the round gets ONE more attempt, made as late as the budget
+//   allows — `rateLimitWaitMs` after that answer, shortened to leave `rateLimitMinLeftMs` for the call
+//   itself, and not made at all if that leaves less than `rateLimitMinWaitMs` of waiting. The engine's
+//   other route is tried inside the third attempt as before, so a working route still answers there with
+//   no added wait. The budget's hard timer is untouched, and every other failure keeps the fast spacing.
+//   Separately, after ANY 429, speculative work (look-ahead, the breaker's probe) waits `rateLimitHoldMs`:
+//   measured, a request for another sentence sent within a second of a 429 was refused too 15 times in 36,
+//   and each of those failures counts toward the outage breaker. The sentence the listener needs, the
+//   next one and the retries of sentences already failed are never held.
+//
 // Playback order is structural: `recover(i)` waits on sentence i and nothing else, so a ready i+1 can
 // never be played before i. The engine stays SINGLE-FLIGHT (D60): one dispatch at a time, chosen by
 // how soon playback needs it. A cancel is COOPERATIVE: the scheduler only asks (`onCancel`) when a
@@ -139,6 +154,8 @@ export interface DispatchContext {
    */
   firstAudioMs?: number;
   attempt: number;
+  /** Present only for a recovery attempt: how many attempts the round holds — one more once RULE 2b grants it. */
+  maxAttempts?: number;
 }
 
 /** Injected so every timing rule can be exercised on a virtual clock. */
@@ -171,6 +188,8 @@ export interface SchedulerConfig<T = unknown> {
   isPermanent?: (err: unknown) => boolean;
   isCancelled?: (err: unknown) => boolean;
   isFastReset?: (err: unknown, ms: number) => boolean;
+  /** RULE 2b: the service refused the call with a rate limit (HTTP 429). Absent, nothing is rate-limited. */
+  isRateLimited?: (err: unknown) => boolean;
   clock?: SchedulerClock;
   random?: () => number;
   policy?: Partial<SchedulerPolicy>;
@@ -209,6 +228,14 @@ export interface SchedulerPolicy {
   preemptWindowMs: number;
   /** After a failed recovery round the sentence is re-attempted in the background this soon. */
   postRecoveryRetryMs: number;
+  /** RULE 2b: the wait before a round's delayed attempt, after its last attempt was rate-limited. */
+  rateLimitWaitMs: number;
+  /** RULE 2b: the delayed attempt starts with at least this much of the budget left for the call itself. */
+  rateLimitMinLeftMs: number;
+  /** RULE 2b: no delayed attempt if the budget leaves less than this to wait — it would land inside the limit. */
+  rateLimitMinWaitMs: number;
+  /** RULE 2b: after any rate-limited call, speculative work (look-ahead, probe) waits this long. */
+  rateLimitHoldMs: number;
 }
 
 export const DEFAULT_POLICY: SchedulerPolicy = {
@@ -229,6 +256,15 @@ export const DEFAULT_POLICY: SchedulerPolicy = {
   reserveMs: 1_500,
   preemptWindowMs: 20_000,
   postRecoveryRetryMs: 2_000,
+  // The delayed attempt reaches 8–9 s into the round on a typical sustained limit, which covers the longest
+  // limit a failed round recorded (6.1 s) and leaves room for the call: a successful one takes 0.56 s at the
+  // median and 1.2 s at p90.
+  rateLimitWaitMs: 4_500,
+  rateLimitMinLeftMs: 3_000,
+  rateLimitMinWaitMs: 2_000,
+  // A refused request is answered in ~0.65 s; a request for another sentence 1–2 s after a 429 connected 21
+  // times in 25.
+  rateLimitHoldMs: 1_500,
 };
 
 /** The marker a failed recovery round rejects with. It is the frontend's `TTS_EDGE_DOWN`; the two are
@@ -269,6 +305,8 @@ interface Recovery<T> {
   hardTimer: unknown;
   /** RULE 2a for an adopted in-flight call: the moment it is asked to yield if it has not answered. */
   yieldTimer: unknown;
+  /** RULE 2b: the round's one delayed attempt has been granted. */
+  delayed: boolean;
   lastError: unknown;
   resolve: (v: T) => void;
   reject: (e: unknown) => void;
@@ -302,6 +340,8 @@ export class SynthScheduler<T> {
   private consecutiveFailures = 0;
   private failedUnits = new Set<number>();
   private lastProbeAt = -Infinity;
+  /** RULE 2b: speculative work (look-ahead, probe) waits until then after a rate-limited call. */
+  private holdUntil = -Infinity;
   private readonly clock: SchedulerClock;
   private readonly random: () => number;
   private readonly policy: SchedulerPolicy;
@@ -368,6 +408,7 @@ export class SynthScheduler<T> {
     if (!this.running && this.rec) v.push("recovery round while not running");
     if (!this.running && this.wakeTimer !== null) v.push("wake timer while not running");
     if (this.rec && this.rec.idx !== this.prio) v.push(`recovery for ${this.rec.idx} while the cursor is ${this.prio}`);
+    if (this.rec && this.rec.attempts > this.roundCeiling(this.rec)) v.push(`recovery made ${this.rec.attempts} attempts, over its ${this.roundCeiling(this.rec)}`);
     return v;
   }
 
@@ -450,7 +491,7 @@ export class SynthScheduler<T> {
     this.cancelRecovery(RECOVERY_CANCELLED);
     return new Promise<T>((resolve, reject) => {
       const t0 = this.clock.now();
-      const rec: Recovery<T> = { idx: i, t0, attempts: 0, nextAt: t0, hardTimer: null, yieldTimer: null, lastError: e.lastError, resolve, reject };
+      const rec: Recovery<T> = { idx: i, t0, attempts: 0, nextAt: t0, hardTimer: null, yieldTimer: null, delayed: false, lastError: e.lastError, resolve, reject };
       // The budget is a HARD ceiling on the listener's wait, whatever the engine does.
       rec.hardTimer = this.clock.setTimeout(() => { rec.hardTimer = null; this.failRecovery("budget"); }, budgetMs);
       (rec as Recovery<T> & { budgetMs: number }).budgetMs = budgetMs;
@@ -623,7 +664,7 @@ export class SynthScheduler<T> {
     if (this.rec) {
       const r = this.rec;
       const budget = (r as Recovery<T> & { budgetMs: number }).budgetMs;
-      if (r.attempts >= this.policy.maxRecoveryAttempts) { this.failRecovery("attempts"); return null; }
+      if (r.attempts >= this.roundCeiling(r)) { this.failRecovery("attempts"); return null; }
       const left = r.t0 + budget - now;
       if (left < this.policy.minAttemptMs) { this.failRecovery("budget"); return null; }
       if (now < r.nextAt) return { wakeAt: r.nextAt };
@@ -631,14 +672,14 @@ export class SynthScheduler<T> {
       if (!e || e.state === "inflight" || e.state === "ready" || e.state === "dead") return null;
       // RULE 2a: only the round's first attempt is capped; a later one already has at most half the budget.
       const firstAudioMs = r.attempts === 0 ? Math.round(budget / 2) : undefined;
-      return { idx: r.idx, ctx: { role: "recovery", budgetMs: Math.round(left), attempt: r.attempts + 1, ...(firstAudioMs !== undefined ? { firstAudioMs } : {}) } };
+      return { idx: r.idx, ctx: { role: "recovery", budgetMs: Math.round(left), attempt: r.attempts + 1, maxAttempts: this.roundCeiling(r), ...(firstAudioMs !== undefined ? { firstAudioMs } : {}) } };
     }
     if (!this.running || !this.futureAllowed()) return null;
     const list = this.cache.get(this.prio)?.state === "ready" ? this.workSet() : [this.prio, ...this.workSet()];
     if (this.health === "open") {
       const j = list.find((k) => { const s = this.stateOf(k); return s !== "ready" && s !== "dead" && s !== "inflight"; });
       if (j === undefined) return null;
-      const at = Math.max(this.lastProbeAt + this.policy.probeMs, this.cache.get(j)?.retryAt ?? 0);
+      const at = Math.max(this.lastProbeAt + this.policy.probeMs, this.cache.get(j)?.retryAt ?? 0, this.holdUntil);
       if (now < at) return { wakeAt: at };
       return { idx: j, ctx: { role: "probe", attempt: (this.cache.get(j)?.failures ?? 0) + 1 } };
     }
@@ -656,9 +697,12 @@ export class SynthScheduler<T> {
         // Keep the engine free for a waiting sentence that is due soon: a look-ahead call could hold
         // it for its whole bound just as that sentence's last chance comes.
         if (firstWaiting.retryAt <= now + this.policy.reserveMs) continue;
+        if (now < this.holdUntil) { wakeAt = Math.min(wakeAt, this.holdUntil); continue; } // RULE 2b
         return { idx: j, ctx: { role: "look-ahead", attempt: 1 } };
       }
-      return { idx: j, ctx: { role: j === this.prio ? "current" : j === this.prio + 1 ? "lead" : "look-ahead", attempt: 1 } };
+      const role = j === this.prio ? "current" : j === this.prio + 1 ? "lead" : "look-ahead";
+      if (role === "look-ahead" && now < this.holdUntil) { wakeAt = Math.min(wakeAt, this.holdUntil); continue; } // RULE 2b
+      return { idx: j, ctx: { role, attempt: 1 } };
     }
     return Number.isFinite(wakeAt) ? { wakeAt } : null;
   }
@@ -779,6 +823,8 @@ export class SynthScheduler<T> {
     }
     e.resetRetried = false;
     e.lastError = err;
+    const rateLimited = !!this.cfg.isRateLimited?.(err);
+    if (rateLimited) this.holdUntil = Math.max(this.holdUntil, now + this.policy.rateLimitHoldMs); // RULE 2b
     const permanent = !!this.cfg.isPermanent?.(err);
     if (!permanent) this.noteFailure(e.idx);
     if (this.rec && this.rec.idx === e.idx) {
@@ -794,7 +840,16 @@ export class SynthScheduler<T> {
         return;
       }
       e.state = "waiting";
-      if (r.attempts >= this.policy.maxRecoveryAttempts) { this.failRecovery("attempts"); return; }
+      if (r.attempts >= this.roundCeiling(r)) {
+        // RULE 2b: a round whose last attempt was rate-limited waits the limit out for one more attempt.
+        const wait = rateLimited ? this.delayedAttemptWait(r, now) : null;
+        if (wait === null) { this.failRecovery("attempts"); return; }
+        r.delayed = true;
+        e.retryAt = now + wait;
+        r.nextAt = e.retryAt;
+        this.afterSettle();
+        return;
+      }
       const spacing = this.policy.recoverySpacing[Math.min(r.attempts, this.policy.recoverySpacing.length - 1)] ?? 0;
       e.retryAt = now + spacing;
       r.nextAt = e.retryAt;
@@ -857,6 +912,19 @@ export class SynthScheduler<T> {
   }
 
   // ---- recovery bookkeeping -------------------------------------------------------------------------
+  /** The attempts a round holds: `maxRecoveryAttempts`, and one more once RULE 2b has granted it. */
+  private roundCeiling(r: Recovery<T>): number {
+    return this.policy.maxRecoveryAttempts + (r.delayed ? 1 : 0);
+  }
+  /** RULE 2b: how long a round waits before its delayed attempt, or null when it gets none — it already had
+   *  it, or the budget cannot hold a useful wait and still leave `rateLimitMinLeftMs` for the call. */
+  private delayedAttemptWait(r: Recovery<T>, now: number): number | null {
+    if (r.delayed) return null;
+    const p = this.policy;
+    const left = r.t0 + (r as Recovery<T> & { budgetMs: number }).budgetMs - now;
+    const wait = Math.min(p.rateLimitWaitMs, left - p.rateLimitMinLeftMs);
+    return wait >= p.rateLimitMinWaitMs ? wait : null;
+  }
   private succeedRecovery(v: T): void {
     const r = this.rec!;
     if (r.hardTimer !== null) this.clock.clearTimeout(r.hardTimer);

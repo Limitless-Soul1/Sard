@@ -40,13 +40,14 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, endDismissed, engine, voice, index, total, speed, volume, chapterLabel, error, underruns, abandoned, lastFailure, mismatch, debug, retryAttempt, skip, setSpeed, setVolume, retry, resumeEdge, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, chapterLabel, error, underruns, abandoned, lastFailure, mismatch, debug, retryAttempt, retryOf, skip, setSpeed, setVolume, retry, resumeEdge, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
       speed: s.speed, volume: s.volume, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned, lastFailure: s.lastFailure,
       mismatch: s.mismatch, // WP-5C: which voice the pre-flight refused, so the state can name it
       debug: s.debug, // RAWY-257/255: reactive, so toggling the setting shows/hides the readout immediately
       retryAttempt: s.retryAttempt, // RAWY-257 2B (D68): which backoff attempt is in flight (0 = none)
+      retryOf: s.retryOf, // how many attempts that round holds (one more when a rate limit is waited out)
       skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
     })),
   );
@@ -167,7 +168,7 @@ export function TtsPlayer({
     preparing ? ` · ${t("tts.preparing")}` :
     // RAWY-257 2B (D68): a retry is VISIBLE waiting, not a dead player. It takes precedence over the plain
     // "buffering" wording because it says something the user can act on: it is still trying, and how far in.
-    retryAttempt > 0 ? ` · ${t("tts.retrying", { n: localeNum(retryAttempt, lang), of: localeNum(TTS_MAX_RETRIES, lang) })}` :
+    retryAttempt > 0 ? ` · ${t("tts.retrying", { n: localeNum(retryAttempt, lang), of: localeNum(retryOf || TTS_MAX_RETRIES, lang) })}` :
     buffering ? ` · ${t("tts.buffering")}` : // RAWY-231: visible mid-playback synth wait
     status === "paused" ? ` · ${t("tts.paused")}` : "";
   // RAWY-231 (invariant E): a tiny debug readout for seeing stalls, not just feeling them. Off by default.

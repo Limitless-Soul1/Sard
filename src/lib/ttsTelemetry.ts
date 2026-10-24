@@ -12,7 +12,8 @@
 // IT OBSERVES; IT NEVER STEERS. The same four guarantees v3 states, for the same reasons:
 //   1. NO WRITE WHILE AUDIO IS SOUNDING. `settings_set` is a SYNC `#[tauri::command]`, and a sync
 //      command blocks the native window (RAWY-183/188). Persistence happens at the end of a session,
-//      at a chapter end, or at teardown — never mid-sentence.
+//      at a chapter end, or at teardown — never mid-sentence. The session in progress is also kept on its
+//      own small key at moments when nothing sounds (waiting, paused, an error), so a crash cannot lose it.
 //   2. NO TIMER. Every measurement is transition-driven arithmetic, driven by the store subscription
 //      and by the dispatch hook. No interval, no rAF, nothing that runs while the reader listens.
 //   3. NO STORE WRITES, NO SCHEDULER CALLS. This module reads `useTts` and `ttsStats()`. It cannot
@@ -28,7 +29,7 @@
 // stalled: no audio", a socket code) and never from the book. The voice id and the playback speed are
 // recorded because a latency number means nothing without them.
 import { useTts, cursorEpoch } from "./tts";
-import { settingsGet, settingsSet } from "./ipc";
+import { settingsGet, settingsSet, ttsRouteLog, type RouteTry } from "./ipc";
 
 /** The key this instrument owns. New name, new shape — never mixed with v3's outcome records. */
 const KEY = "tts_resilience_v1";
@@ -36,6 +37,9 @@ const KEY = "tts_resilience_v1";
 const KEEP_SESSIONS = 200;
 const KEEP_DISPATCHES = 800;
 const KEEP_EVENTS = 400;
+const KEEP_ROUTES = 800;
+/** CRASH SAFETY: the session in progress, on its own small key (see `snapshotLive`). */
+const LIVE_KEY = "tts_resilience_live";
 
 // ---- record shapes ------------------------------------------------------------------------------
 
@@ -155,7 +159,10 @@ export interface ResilienceSession {
   /** how much decoded audio was ahead of the cursor when playback advanced, sampled at advances */
   bufferedAheadSec: { n: number; p50: number; min: number } | null;
   /** the instrument's own health, so a thin record is never mistaken for a quiet session */
-  meta: { events: number; faults: number; lastFault: string | null; version: 1 };
+  meta: { events: number; faults: number; lastFault: string | null; version: 1; recoveredFromLive?: boolean };
+  /** SESSION DIAGNOSTICS: every route the engine tried during this session, as it answered (`tts_route_log`). */
+  routes?: RouteTry[];
+  routesDropped?: number;
 }
 
 // ---- in-flight state ----------------------------------------------------------------------------
@@ -167,6 +174,8 @@ let loaded = false;
 let history: ResilienceSession[] = [];
 let cur: ResilienceSession | null = null;
 let phase: Phase = "idle";
+/** Read through a call, so a check made after an `await` sees the phase as it is now, not as it was. */
+const sounding = (): boolean => phase === "sounding";
 let phaseSince = 0;
 let sessionT0 = 0;
 let lastIndex = -1;
@@ -186,6 +195,10 @@ let lastStats: Stats = {};
 /** The engine’s underrun counter as it stood while the session was still running (see `lastStats`). */
 let lastUnderruns = 0;
 let dirty = false;
+/** The last `tts_route_log` sequence number filed. */
+let routeSeq = 0;
+/** A snapshot of the session in progress is on `LIVE_KEY` and must be cleared once the session is filed. */
+let liveWritten = false;
 let events = 0;
 let faults = 0;
 let lastFault: string | null = null;
@@ -375,6 +388,56 @@ async function load(): Promise<void> {
     const raw = await settingsGet(KEY);
     if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) history = parsed as ResilienceSession[]; }
   } catch { /* an unreadable record must never break the reader */ }
+  // A snapshot still on the live key means the last session never ended — the process was killed or crashed.
+  // It is filed as it stood, marked, so the evidence of what happened just before survives.
+  try {
+    const live = await settingsGet(LIVE_KEY);
+    if (live) {
+      const s = JSON.parse(live) as ResilienceSession;
+      if (s && typeof s.id === "string" && !history.some((h) => h.id === s.id)) {
+        s.meta = { ...s.meta, recoveredFromLive: true };
+        history.push(s);
+        if (history.length > KEEP_SESSIONS) history = history.slice(-KEEP_SESSIONS);
+        dirty = true;
+      }
+      await settingsSet(LIVE_KEY, "");
+    }
+  } catch (e) { faults++; lastFault = String(e); }
+}
+
+/**
+ * SESSION DIAGNOSTICS: the routes the engine tried since the last read, each filed under the session it
+ * happened in, by time. Only called where a write is already allowed — never while audio is sounding.
+ */
+async function collectRoutes(): Promise<void> {
+  let got: RouteTry[];
+  try { got = await ttsRouteLog(routeSeq); } catch (e) { faults++; lastFault = String(e); return; }
+  for (const r of got) {
+    if (r.seq <= routeSeq) continue;
+    routeSeq = r.seq;
+    const owner = [cur, ...[...history].reverse()].find((s) => s && s.startedAt <= r.at && r.at <= (s.endedAt ?? Infinity));
+    if (!owner) continue;
+    const list = (owner.routes ??= []);
+    if (list.length >= KEEP_ROUTES) { owner.routesDropped = (owner.routesDropped ?? 0) + 1; continue; }
+    list.push(r);
+  }
+}
+
+/**
+ * CRASH SAFETY. The session in progress is written to its own small key whenever nothing is sounding — the
+ * listener is waiting, paused, or looking at an error — so a killed or crashed process cannot take the evidence
+ * of a problem with it: the moments worth recording are exactly the moments nothing sounds. GUARANTEE 1 is
+ * kept (checked again after the route read, right before the write). Filing the session clears it (`flush`).
+ */
+async function snapshotLive(): Promise<void> {
+  if (!cur || sounding()) return;
+  try {
+    await collectRoutes();
+    if (!cur || sounding()) return;
+    const snap: ResilienceSession = { ...cur, unitOutcomes: [...units.values()].map((u) => ({ ...u })), meta: { events, faults, lastFault, version: 1 } };
+    await settingsSet(LIVE_KEY, JSON.stringify(snap));
+    liveWritten = true;
+  } catch (e) { faults++; lastFault = String(e); }
 }
 
 async function flush(force = false): Promise<void> {
@@ -384,7 +447,10 @@ async function flush(force = false): Promise<void> {
   dirty = false;
   try {
     await load();
+    await collectRoutes();
+    if (!force && sounding()) { dirty = true; return; }
     await settingsSet(KEY, JSON.stringify(history));
+    if (!cur && liveWritten) { await settingsSet(LIVE_KEY, ""); liveWritten = false; }
   } catch (e) { faults++; lastFault = String(e); dirty = true; }
 }
 
@@ -494,6 +560,7 @@ function onChange(s: Snap, p: Snap): void {
     if (!round) { round = { at: Math.round(t - sessionT0), unit: s.index, attempts: s.retryAttempt, startedMs: t }; pushEvent("recoveryStart", s.index, s.retryAttempt); }
     else round.attempts = Math.max(round.attempts, s.retryAttempt);
     pushEvent("retryIndicator", s.index, s.retryAttempt);
+    void snapshotLive(); // the round's progress, while the listener waits (nothing is sounding)
   }
 
   // status transitions drive the phase accounting
@@ -551,6 +618,8 @@ function onChange(s: Snap, p: Snap): void {
       lastUserActionAt = t;
       pushEvent("userRetry", s.index);
     }
+    // CRASH SAFETY: every move into a phase where nothing sounds files the session in progress (`snapshotLive`).
+    if (phase !== "sounding") void snapshotLive();
   }
 }
 

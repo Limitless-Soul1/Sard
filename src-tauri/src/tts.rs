@@ -7,10 +7,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use msedge_tts::tts::stream::{msedge_tts_split, Receiver, Sender, SynthesizedResponse};
+use msedge_tts::tts::stream::{Receiver, Sender, SynthesizedResponse};
 use msedge_tts::tts::SpeechConfig;
 use msedge_tts::voice::{get_voices_list, Voice};
 use tauri::State;
+
+mod edge_route; // which way the synthesis connection is opened, and what a refused way teaches
+mod edge_token; // the Sec-MS-GEC token the service asks of every connection
 
 /// RAWY-FINAL: lock, RECOVERING from poisoning rather than failing (or, worse, silently skipping)
 /// forever. Same reasoning as `AppState::conn` — a `std::sync::Mutex` poisons permanently on the
@@ -41,6 +44,9 @@ pub struct TtsEngine {
     /// `tts_synth_streaming` so the scheduler can tell a call that is SILENT from one that is slow but
     /// streaming: the first may be asked to yield for a fresh attempt, the second is left to finish.
     streaming: AtomicBool,
+    /// Which synthesis routes have lately been refused or failing (`edge_route`). Shared with the connect
+    /// worker, which records its outcome even when its caller has stopped waiting.
+    edge_routes: Arc<Mutex<edge_route::RouteBook>>,
 }
 
 /// Edge (engine #2, RAWY-111): a warm WebSocket client bound to one voice's SpeechConfig, reused
@@ -408,6 +414,9 @@ fn remaining(deadline: std::time::Instant, phase: &str) -> Result<std::time::Dur
 /// (`isPermanentFailure` in src/lib/tts.ts). It used to be recovered by scanning the whole debug text for a
 /// three-digit 4xx number, which also matched header values — a 5xx carrying `Content-Length: 434` would
 /// have read as a permanent rejection. The debug text still follows, for diagnosis.
+///
+/// The synthesis connection reports through `edge_route` instead, in the same `edge connect: http <status>;`
+/// form, with the route each status came from and no debug text.
 fn edge_error(phase: &str, e: &msedge_tts::error::Error) -> String {
     match http_status(e) {
         Some(status) => format!("{phase}: http {status}; {e:?}"),
@@ -436,10 +445,13 @@ fn http_status(e: &msedge_tts::error::Error) -> Option<u16> {
 /// on a cold engine, up to the whole budget on a slow route), so a Listen started right after a Stop
 /// never queues behind a connection nobody wants. The abandoned connect finishes on its own; its
 /// socket is dropped with the result nobody receives.
-fn connect_bounded(budget: Duration, cancel: &AtomicBool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
+///
+/// The worker opens the connection on the first route that accepts it (`edge_route::connect`, at most one
+/// handshake per route), all inside the same budget.
+fn connect_bounded(routes: Arc<Mutex<edge_route::RouteBook>>, budget: Duration, cancel: &AtomicBool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(msedge_tts_split().map_err(|e| edge_error("edge connect", &e)));
+        let _ = tx.send(edge_route::connect(&routes));
     });
     wait_bounded(rx, budget, cancel, "edge connect timed out")
 }
@@ -782,7 +794,7 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Opt
             .ok_or_else(|| format!("unknown edge voice: {id}"))?;
         let mut config = SpeechConfig::from(voice);
         config.audio_format = "audio-24khz-48kbitrate-mono-mp3".to_string(); // force MP3 for WebAudio
-        let (tx, rx) = connect_bounded(remaining(deadline, "connect")?, &cancel)?;
+        let (tx, rx) = connect_bounded(engines.edge_routes.clone(), remaining(deadline, "connect")?, &cancel)?;
         *guard = Some(EdgeRunning { voice_id: id.clone(), config, tx, rx, last_used: Instant::now() });
     }
     // RAWY-FINAL: `let Some(..) else` rather than `.unwrap()`. The `need_new` branch above makes this

@@ -1,9 +1,12 @@
-// THE EDGE READ-ALOUD ENDPOINTS, PINNED.
+// THE EDGE READ-ALOUD CONNECTION, PINNED.
 //
-// The synthesis WebSocket is built from a vendored copy of msedge-tts carrying exactly one change: the host
-// it connects to (see src-tauri/vendor/msedge-tts/VENDOR.txt for why, and what was measured). These tests
-// fail if that change is lost on a re-vendor, if it spreads to anything else the client sends, or if the
-// copy drifts from the published crate in any other file.
+// Sard builds the synthesis WebSocket request itself (src-tauri/src/tts/edge_route.rs: the routes, the token,
+// the headers) and opens it through a vendored copy of msedge-tts carrying exactly two changes: a way to connect
+// with that request, and keep-alive frames treated as no data (see src-tauri/vendor/msedge-tts/VENDOR.txt). The
+// exact URLs and headers are pinned by the Rust tests beside the code that builds them. These tests fail if the
+// connection stops going through Sard's request, if the identity it presents drifts from the published client's,
+// if a vendored change is lost on a re-vendor or spreads to anything else, or if the copy drifts from the
+// published crate in any other file.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,30 +14,34 @@ import { describe, expect, it } from "vitest";
 
 const VENDOR = resolve(__dirname, "../../src-tauri/vendor/msedge-tts");
 const read = (rel: string) => readFileSync(resolve(VENDOR, rel), "utf8");
-const constant = (name: string) => {
-  const m = read("src/constants.rs").match(new RegExp(`pub const ${name}: &str = "([^"]*)";`));
-  if (!m) throw new Error(`${name} not found in constants.rs`);
+const source = (rel: string) => readFileSync(resolve(__dirname, "../../src-tauri/src", rel), "utf8");
+const constantIn = (text: string, name: string) => {
+  const m = text.match(new RegExp(`(?:pub )?const ${name}: &str = "([^"]*)";`));
+  if (!m) throw new Error(`${name} not found`);
   return m[1];
 };
+const constant = (name: string) => constantIn(read("src/constants.rs"), name);
 const KEY = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
-describe("the endpoints the Edge client uses", () => {
-  it("synthesis connects to the host Edge itself uses, with the same client key", () => {
-    expect(constant("WSS_URL")).toBe(
-      `wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1?Ocp-Apim-Subscription-Key=${KEY}&ConnectionId=`,
-    );
+describe("the connection the Edge client makes", () => {
+  it("synthesis connects with Sard's own request, never the crate's", () => {
+    const route = source("tts/edge_route.rs");
+    expect(route).toMatch(/msedge_tts_split_request\(request\)/);
+    for (const file of ["tts.rs", "tts/edge_route.rs"]) {
+      expect(source(file)).not.toMatch(/msedge_tts_split\(\)|tts::client::connect\(/);
+    }
+  });
+
+  it("the request presents the identity of the published client", () => {
+    const route = source("tts/edge_route.rs");
+    expect(constantIn(route, "USER_AGENT")).toBe(constant("USER_AGENT"));
+    expect(constantIn(route, "ORIGIN")).toBe(constant("ORIGIN"));
+    expect(constantIn(source("tts/edge_token.rs"), "CLIENT_KEY")).toBe(KEY);
   });
 
   it("the voice list stays on its original host — it was measured working and needs no change", () => {
     expect(constant("VOICE_LIST_URL")).toBe(
       `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${KEY}`,
-    );
-  });
-
-  it("the identity the client presents is untouched", () => {
-    expect(constant("ORIGIN")).toBe("chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold");
-    expect(constant("USER_AGENT")).toBe(
-      "Mozilla/5.0 (Linux; Android 10; HD1913) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.7499.193 Mobile Safari/537.36 EdgA/143.0.3650.125",
     );
   });
 
@@ -53,22 +60,31 @@ describe("keep-alive frames are not synthesis failures", () => {
 const sha = (text: string) => createHash("sha256").update(text.replace(/\r/g, "")).digest("hex");
 
 describe("the vendored copy is the published crate apart from the recorded changes", () => {
-  // Each modified file, with exactly the change VENDOR.txt records taken back out, must be the published
+  // Each modified file, with exactly the changes VENDOR.txt records taken back out, must be the published
   // file byte for byte — so nothing else can have changed in it.
-  it("constants.rs differs only by the synthesis host", () => {
-    const original = read("src/constants.rs").replace(/\r/g, "").replace(
-      /\/\/ SARD LOCAL MODIFICATION[^\n]*\n(?:\/\/[^\n]*\n){3}pub const WSS_URL: &str = "[^"]*";/,
-      'pub const WSS_URL: &str = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4&ConnectionId=";',
-    );
-    expect(sha(original)).toBe("4d02b93495aa9108f8f060a6bb336cd72e004683a8fe0c3c177c32f08de5fe99");
+  it("tts/mod.rs differs only by the keep-alive arm and the connection made with a given request", () => {
+    const original = read("src/tts/mod.rs")
+      .replace(/\r/g, "")
+      .replace(
+        /\n {12}\/\/ SARD LOCAL MODIFICATION[^\n]*\n(?: {12}\/\/[^\n]*\n){2} {12}tungstenite::Message::Ping\(_\) \| tungstenite::Message::Pong\(_\) => Ok\(None\),/,
+        "",
+      )
+      .replace(
+        /\n {4}websocket_connect_request\(build_websocket_request\(\)\?\)\n\}\n\n\/\/ SARD LOCAL MODIFICATION[^\n]*\n\/\/[^\n]*\n#\[cfg\(feature = "blocking"\)\]\nfn websocket_connect_request\(\n {4}request: tungstenite::handshake::client::Request,\n\) -> Result<tungstenite::WebSocket<RustlsStream<std::net::TcpStream>>> \{/,
+        "",
+      )
+      .replace(/\n\n {4}let host = request\n/, "\n\n    let request = build_websocket_request()?;\n    let host = request\n");
+    expect(sha(original)).toBe("e34b87af3bde94bfa598ca3a2a1403ea7c945d1fb82383cb11820e38fff25360");
   });
 
-  it("tts/mod.rs differs only by the keep-alive arm", () => {
-    const original = read("src/tts/mod.rs").replace(/\r/g, "").replace(
-      /\n {12}\/\/ SARD LOCAL MODIFICATION[^\n]*\n(?: {12}\/\/[^\n]*\n){2} {12}tungstenite::Message::Ping\(_\) \| tungstenite::Message::Pong\(_\) => Ok\(None\),/,
-      "",
-    );
-    expect(sha(original)).toBe("e34b87af3bde94bfa598ca3a2a1403ea7c945d1fb82383cb11820e38fff25360");
+  it("tts/stream/blocking.rs differs only by the split client over a given request", () => {
+    const original = read("src/tts/stream/blocking.rs")
+      .replace(/\r/g, "")
+      .replace(
+        /\n\n\/\/ SARD LOCAL MODIFICATION[^\n]*\n\/\/[^\n]*\npub fn msedge_tts_split_request\(\n {4}request: tungstenite::handshake::client::Request,\n\) -> Result<\(Sender<TcpStream>, Receiver<TcpStream>\)> \{\n {4}split\(crate::tts::websocket_connect_request\(request\)\?\)\n\}/,
+        "",
+      );
+    expect(sha(original)).toBe("cdae2126ed2588079660be87f34bf9f8a0d0bc128c712c86daaa6f1f59110f07");
   });
 
   // Every other file: sha256 of crates.io msedge-tts 0.4.0, line endings normalised (a Windows checkout may
@@ -77,6 +93,7 @@ describe("the vendored copy is the published crate apart from the recorded chang
     "Cargo.toml": "e314bd2b778e790c6a5e9233d21234ff1b73e7aff1a9f46a68904f2fbfa2eaa6",
     "LICENSE": "1ab49fbef60eb74f02a280f5bcefb187dd040a5ca1ff5dc6e2630bf7fb54fc16",
     "README.md": "76a28c6ca1aedacff818aecbfd100c213f023c382bfb1daa9ecf26cc0ebc7d0e",
+    "src/constants.rs": "4d02b93495aa9108f8f060a6bb336cd72e004683a8fe0c3c177c32f08de5fe99",
     "src/error.rs": "91d06032d778b094ace144760c4bb2985903edc41d49ef3c51e144bc83338cd7",
     "src/lib.rs": "ad283233032fb468096a05bd4d07b97e6a504a70926ba895d917a358fc29f903",
     "src/tts/client/blocking.rs": "4aa5fab43ca50d358640be6017695c5ca3007786b1185d394292a185b738fb25",
@@ -87,7 +104,6 @@ describe("the vendored copy is the published crate apart from the recorded chang
     "src/tts/proxy/mod.rs": "d312189bdd31f6be9e8eb19831b17d850ae1a01e462fed6fd9a2c426ee1e398c",
     "src/tts/proxy/smol_runtime.rs": "d8e6d263cc7bdb405c7bac9cd5518a1226656c0253a494b8434d0f460783e247",
     "src/tts/proxy/tokio_runtime.rs": "03f0671a732b35282646ce2722f964ea2463b0d3b5c42517309a5b2f7272880b",
-    "src/tts/stream/blocking.rs": "cdae2126ed2588079660be87f34bf9f8a0d0bc128c712c86daaa6f1f59110f07",
     "src/tts/stream/mod.rs": "486501d3ea21842c9e8602531351a3b695819a733def292ba1b177cd43ef9eb0",
     "src/tts/stream/smol_runtime.rs": "331ff94fd3296ca03e64b9a9fe0c89438b57f723852959fb120f8cabb88d13b8",
     "src/tts/stream/tokio_runtime.rs": "643c76047d145b1bee9b9891fea0119ff05e88f8acaa633c5d7b86b72d6ad7a0",

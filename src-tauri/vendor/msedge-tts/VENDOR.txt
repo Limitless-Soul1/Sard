@@ -1,11 +1,11 @@
-msedge-tts 0.4.0 vendored from crates.io, with TWO local modifications.
+msedge-tts 0.4.0 vendored from crates.io, with THREE local modifications.
 Source:   https://github.com/hs-CN/msedge-tts  (crates.io msedge-tts 0.4.0, published 2026-05-20)
 Checksum: c5ee3d00bfd237fac2dcd03050c073d60769c9d1f2718545854374f1aa4d6d5b (crates.io .crate, as recorded in
           Cargo.lock before vendoring)
 License:  MIT OR Apache-2.0 (see ./LICENSE)
 Wired in: src-tauri/Cargo.toml [patch.crates-io] — the dependency declaration itself is unchanged.
 
-Copied:   Cargo.toml, LICENSE, README.md, src/ — byte-identical to the published crate except the two changes
+Copied:   Cargo.toml, LICENSE, README.md, src/ — byte-identical to the published crate except the three changes
           below. Nothing else from the package is needed to build it.
 
 
@@ -52,6 +52,21 @@ listening session — one failed synthesis and one reconnect per two minutes of 
 A keep-alive frame carries no synthesis data, and tungstenite answers a Ping by itself, so both now yield
 no payload. The turn's state is untouched and every other frame keeps its handling.
 
+
+=== MODIFICATION 3: BROWSER HEADERS ON THE HANDSHAKE ================================================
+
+src/tts/mod.rs, `build_websocket_request`: two headers added after ORIGIN —
+
+  Accept-Encoding: gzip, deflate, br, zstd
+  Accept-Language: en-US,en;q=0.9
+
+WHY. Measured 2026-10-24 from a Windows desktop: with the request this crate built before, every handshake
+to api.msedgeservices.com came back `HTTP 200`, empty body, no upgrade (4 of 4, repeatedly), which the
+client surfaces as a failed connect — Edge read-aloud dead. Same URL, same Sec-MS-GEC, same User-Agent and
+Origin, adding only Accept-Encoding: upgraded every time (12 of 12 across runs); adding only Accept-Language
+did not (0 of 4). Accept-Language is sent as well because a browser sends both and the host may start
+requiring it. The occasional 429 seen while probing is rate limiting from the probe, not a handshake fault.
+The original host still answers 403 regardless of headers.
 
 === RE-VENDORING / REMOVING ========================================================================
 

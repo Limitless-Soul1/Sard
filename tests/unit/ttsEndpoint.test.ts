@@ -44,6 +44,15 @@ describe("the endpoints the Edge client uses", () => {
   });
 });
 
+describe("the handshake carries the browser headers the synthesis host requires", () => {
+  // Without Accept-Encoding the host answers a plain 200 with no upgrade (measured 2026-10-24).
+  it("sends Accept-Encoding and Accept-Language", () => {
+    const src = read("src/tts/mod.rs");
+    expect(src).toMatch(/headers\.insert\(header::ACCEPT_ENCODING, "gzip, deflate, br, zstd"\.parse\(\)\.unwrap\(\)\);/);
+    expect(src).toMatch(/headers\.insert\(header::ACCEPT_LANGUAGE, "en-US,en;q=0\.9"\.parse\(\)\.unwrap\(\)\);/);
+  });
+});
+
 describe("keep-alive frames are not synthesis failures", () => {
   it("a Ping or Pong arriving during a synthesis yields no payload instead of an error", () => {
     expect(read("src/tts/mod.rs")).toMatch(/tungstenite::Message::Ping\(_\) \| tungstenite::Message::Pong\(_\) => Ok\(None\),/);
@@ -63,9 +72,12 @@ describe("the vendored copy is the published crate apart from the recorded chang
     expect(sha(original)).toBe("4d02b93495aa9108f8f060a6bb336cd72e004683a8fe0c3c177c32f08de5fe99");
   });
 
-  it("tts/mod.rs differs only by the keep-alive arm", () => {
+  it("tts/mod.rs differs only by the keep-alive arm and the handshake headers", () => {
     const original = read("src/tts/mod.rs").replace(/\r/g, "").replace(
       /\n {12}\/\/ SARD LOCAL MODIFICATION[^\n]*\n(?: {12}\/\/[^\n]*\n){2} {12}tungstenite::Message::Ping\(_\) \| tungstenite::Message::Pong\(_\) => Ok\(None\),/,
+      "",
+    ).replace(
+      /\n {4}\/\/ SARD LOCAL MODIFICATION[^\n]*\n(?: {4}\/\/[^\n]*\n){2} {4}headers\.insert\(header::ACCEPT_ENCODING[^\n]*\n {4}headers\.insert\(header::ACCEPT_LANGUAGE[^\n]*/,
       "",
     );
     expect(sha(original)).toBe("e34b87af3bde94bfa598ca3a2a1403ea7c945d1fb82383cb11820e38fff25360");

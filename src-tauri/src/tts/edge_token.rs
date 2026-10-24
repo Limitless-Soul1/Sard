@@ -12,9 +12,13 @@
 //! WHY VERSION 2. Version 1 was the bare digest of the ticks and the key. From 2026-10-10 the original host
 //! refuses it (HTTP 403) and accepts this one; the other host accepts both. Measured 2026-10-24.
 //!
-//! PROVENANCE. Written for Sard from a description of the algorithm, and checked only against outputs: the
-//! example published with the change, and tokens a separate implementation produced as a black box for
-//! fixed timestamps (the tests below). No other implementation's code is used or copied.
+//! PROVENANCE. Written for Sard after reading the version-2 token code in msedge-tts 0.4.1 (`src/tts/drm.rs`,
+//! published as MIT OR Apache-2.0), which describes itself as a port of `drm.py` in edge-tts. The checksum below
+//! follows the structure of that file's `cs64_digest` loop: the names of its loop variables and the order of its
+//! steps. Unlike it, this file hashes the whole input with the `sha2` crate's SHA-256 and runs the checksum over
+//! every word of the input, with no precomputed tables. It is checked against the example published with the
+//! version-2 change (edge-tts PR #492) and against tokens edge-tts 7.3.1 produced, run as a black box, for fixed
+//! timestamps (the tests below).
 
 use sha2::{Digest, Sha256};
 
@@ -118,11 +122,11 @@ mod tests {
         );
     }
 
-    /// Tokens a separate implementation produced for these timestamps, run as a black box (48 of 48 agreed
-    /// when this was written; a spread of them is pinned here). Each covers a different input, so every step of
-    /// the checksum and the digest is exercised.
+    /// Tokens edge-tts 7.3.1 produced for these timestamps, run as a black box (48 of 48 agreed when this was
+    /// written; a spread of them is pinned here). Each covers a different input, so every step of the checksum and
+    /// the digest is exercised.
     #[test]
-    fn tokens_agree_with_an_independent_implementation() {
+    fn tokens_agree_with_edge_tts_run_as_a_black_box() {
         let vectors = [
             (1_609_459_200, "0548AAA9D28D83D6-BAAD4C2ADC7C1D94CBB1809DFE512562E2430B3B3C8F49C25D48F790646565AA"),
             (1_700_000_123, "0919602B5750900A-EC9DD394F23CB5635CF62A0E8E24136DCD32B26D10C543B10082E482D7516397"),

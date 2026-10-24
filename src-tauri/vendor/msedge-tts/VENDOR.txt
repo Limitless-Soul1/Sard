@@ -65,6 +65,12 @@ src/constants.rs is the published file again. It carried Sard's first change (th
 2026-10-12); the host is now chosen by Sard's own request, so the crate's constant is no longer read for
 synthesis and was restored. VOICE_LIST_URL, which the voice list still uses, was never changed.
 
+src/tts/mod.rs, `build_websocket_request`, carries no header change. PR #66 (Basil Alrashedi) found the
+2026-10-23 cause independently — the msedge host answers a handshake without Accept-Encoding with a plain
+HTTP 200 — and fixed it first, by adding Accept-Encoding and Accept-Language to this crate's own request.
+That request is no longer used for synthesis: Sard's request (src-tauri/src/tts/edge_route.rs) sends the
+same two headers, so the lines are carried there instead of being kept here as a second, unused copy.
+
 
 === RE-VENDORING / REMOVING ========================================================================
 

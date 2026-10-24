@@ -57,6 +57,18 @@ describe("the connection the Edge client makes", () => {
   });
 });
 
+describe("the handshake carries the browser headers the synthesis host requires", () => {
+  // Without Accept-Encoding the msedge host answers a plain 200 with no upgrade (measured 2026-10-24; found
+  // independently and first fixed in #66). Sard's own request carries both headers.
+  it("sends Accept-Encoding and Accept-Language", () => {
+    const route = source("tts/edge_route.rs");
+    expect(constantIn(route, "ACCEPT_ENCODING")).toBe("gzip, deflate, br, zstd");
+    expect(constantIn(route, "ACCEPT_LANGUAGE")).toBe("en-US,en;q=0.9");
+    expect(route).toMatch(/\(header::ACCEPT_ENCODING, ACCEPT_ENCODING\),/);
+    expect(route).toMatch(/\(header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE\),/);
+  });
+});
+
 describe("keep-alive frames are not synthesis failures", () => {
   it("a Ping or Pong arriving during a synthesis yields no payload instead of an error", () => {
     expect(read("src/tts/mod.rs")).toMatch(/tungstenite::Message::Ping\(_\) \| tungstenite::Message::Pong\(_\) => Ok\(None\),/);

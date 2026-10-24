@@ -209,6 +209,11 @@ fn build_websocket_request() -> tungstenite::Result<tungstenite::handshake::clie
     headers.insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
     headers.insert(header::USER_AGENT, constants::USER_AGENT.parse().unwrap());
     headers.insert(header::ORIGIN, constants::ORIGIN.parse().unwrap());
+    // SARD LOCAL MODIFICATION 3 — see ../../VENDOR.txt. The synthesis host answers a handshake that
+    // lacks Accept-Encoding with a plain `200` and no upgrade, which the client reports as a failed
+    // connect. A browser always sends both.
+    headers.insert(header::ACCEPT_ENCODING, "gzip, deflate, br, zstd".parse().unwrap());
+    headers.insert(header::ACCEPT_LANGUAGE, "en-US,en;q=0.9".parse().unwrap());
     Ok(request)
 }
 

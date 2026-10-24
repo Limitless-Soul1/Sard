@@ -1009,6 +1009,35 @@ mod live {
         assert!(bytes > 5_000);
     }
 
+    /// The 2026-10-23 failure itself, against the real service: the msedge route is sent the request WITHOUT the
+    /// browser headers, which that host answers with a plain HTTP 200. The attempt must read it as a refusal and
+    /// reach the other route at once, and that connection must speak.
+    #[test]
+    #[ignore]
+    fn live_an_http_200_from_the_first_route_moves_the_attempt_on() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        assert_eq!(ROUTES[0], Route::MsEdge, "the header-less request is refused by msedge, not by bing");
+        let book = Mutex::new(RouteBook::default());
+        let mut answers = Vec::new();
+        let client = connect_via(&book, &Attempt::default(), Instant::now, |route| {
+            let id = uuid::Uuid::new_v4().simple().to_string();
+            let mut request = request_for(route, now_secs(), &id).unwrap();
+            if route == Route::MsEdge {
+                request.headers_mut().remove(header::ACCEPT_ENCODING);
+                request.headers_mut().remove(header::ACCEPT_LANGUAGE);
+            }
+            let r = msedge_tts_split_request(request).map_err(|e| attempt_error(&e));
+            answers.push((route, r.as_ref().err().map(|e| (e.failure, e.detail.clone()))));
+            r
+        })
+        .unwrap_or_else(|e| panic!("no route connected: {e}"));
+        println!("answers: {answers:?}");
+        assert_eq!(answers[0], (Route::MsEdge, Some((Failure::Incompatible, "http 200".to_string()))));
+        assert_eq!(answers[1], (Route::Bing, None));
+        let (bytes, words) = speak(client, voice_name("ar-EG-SalmaNeural"), "هذا اختبار قصير للاتصال.");
+        assert!(bytes > 5_000 && words > 0);
+    }
+
     /// The production connect, end to end, a few times in a row. A transient answer is retried the way the
     /// scheduler would (3 s apart, three tries); what is asserted is that every connection is eventually made
     /// and that a rate limit never made the attempt contact a second route.

@@ -12,7 +12,7 @@
 import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 type Answer = { ok: true; ms?: number } | { ok: false; err: string; ms?: number } | { stall: true };
-interface Call { text: string; budgetMs: number | null; diagId?: number | null; settled?: "ok" | "err" | "cancelled" }
+interface Call { text: string; budgetMs: number | null; firstAudioMs?: number | null; diagId?: number | null; settled?: "ok" | "err" | "cancelled" }
 
 const h = vi.hoisted(() => {
   // A framed `[u32 BE json_len][json words][audio]` body — the shape `tts_synthesize` returns.
@@ -29,7 +29,7 @@ const h = vi.hoisted(() => {
     calls: [] as Call[],
     /** What the scheduler's dispatch hook recorded, in order (`noteDispatch`). */
     dispatches: [] as { unit: number; ok: boolean; diag?: number }[],
-    script: ((): Answer => ({ ok: true })) as (text: string, nth: number) => Answer,
+    script: ((): Answer => ({ ok: true })) as (text: string, nth: number, call: { firstAudioMs: number | null }) => Answer,
     cancelCurrent: null as null | (() => void),
     onPlay: null as null | (() => void),
     framed,
@@ -87,9 +87,9 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args: { text: string; budgetMs: number | null; firstAudioMs: number | null; diagId: number | null }) => {
     if (cmd !== "tts_synthesize") return Promise.reject(`unexpected command: ${cmd}`);
     return new Promise<ArrayBuffer>((resolve, reject) => {
-      const call: Call = { text: args.text, budgetMs: args.budgetMs, diagId: args.diagId };
+      const call: Call = { text: args.text, budgetMs: args.budgetMs, firstAudioMs: args.firstAudioMs, diagId: args.diagId };
       h.calls.push(call);
-      const answer = h.script(args.text, h.calls.filter((c) => c.text === args.text).length);
+      const answer = h.script(args.text, h.calls.filter((c) => c.text === args.text).length, { firstAudioMs: args.firstAudioMs });
       let done = false;
       const finish = (f: () => void) => {
         if (done) return;
@@ -359,6 +359,47 @@ describe("Retry after a transient failure (unchanged behaviour)", () => {
     expect(n2 - n1).toBeGreaterThanOrEqual(1);
     expect(n2 - n1).toBeLessThanOrEqual(3);
     expect(played).toEqual([]);
+    expectEngineSound();
+  });
+});
+
+// THE TURN.START EXTENSION, seen from the scheduler. The engine lets a round's capped first attempt wait past its
+// first-audio cap once the service has acknowledged the request (`bounds_for` in src-tauri/src/tts.rs); to the
+// scheduler that is simply a first attempt that answers after the cap. It must play once, with no other attempt
+// made beside it, and a skip during it must leave nothing behind.
+describe("a round's first attempt that answers after its first-audio cap", () => {
+  /** S[2] fails ahead of playback; the round's capped first attempt answers at `ms` (the engine kept it waiting). */
+  const lateFirstAttempt = (ms: number) => (text: string, _nth: number, call: { firstAudioMs: number | null }): Answer =>
+    text !== S[2] ? { ok: true } : call.firstAudioMs ? { ok: true, ms } : { ok: false, err: HOST_DOWN, ms: 30 };
+  const callsFor2 = () => h.calls.filter((c) => c.text === S[2]);
+
+  it("plays once, inside the budget, with no other attempt made beside it", async () => {
+    h.script = lateFirstAttempt(9_000);
+    await listen();
+    await until(() => st().status === "chapter-end");
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    const capped = callsFor2().filter((c) => c.firstAudioMs);
+    expect(capped.length).toBe(1);
+    expect(capped[0].firstAudioMs!).toBeLessThan(9_000); // it answered after its cap...
+    expect(capped[0].budgetMs!).toBeGreaterThan(9_000); // ...inside its budget
+    expect(capped[0].settled).toBe("ok");
+    expect(callsFor2().at(-1)).toBe(capped[0]); // and nothing for that sentence after it
+    expect(pauses()).toBe(0);
+    expectEngineSound();
+  });
+
+  it("a skip during it moves on at once, and its audio never plays", async () => {
+    h.script = lateFirstAttempt(9_000);
+    await listen();
+    await until(() => callsFor2().some((c) => c.firstAudioMs));
+    await run(7_000); // past the cap, still waiting on the extended attempt
+    expect(st().index).toBe(2);
+    st().skip(1);
+    await until(() => st().status === "chapter-end");
+    // Whether the call is let finish or cancelled is the scheduler's own policy for a sentence behind the cursor,
+    // unchanged; what the listener hears is the point: the skipped sentence never sounds, nothing sounds twice.
+    expect(played).toEqual([0, 1, 3, 4, 5]);
+    expect(callsFor2().filter((c) => c.firstAudioMs).length).toBe(1);
     expectEngineSound();
   });
 });

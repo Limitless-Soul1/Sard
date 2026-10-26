@@ -111,8 +111,13 @@ export function seriesSummary(s: LatencySeries): { n: number; avg: number; min: 
 //   listener pressing Retry. The round's promised attempts never happened. So the first fresh attempt
 //   carries `firstAudioMs = budget / 2`, and a call that was already in flight when the round began (it
 //   counts as the first attempt) is asked to yield at the same point if it has not answered. Either way
-//   the second attempt starts with at least half the budget, on a fresh connection. The invariant this
-//   keeps: a round that can make a second attempt always does; the total budget is never exceeded
+//   the second attempt starts with at least half the budget, on a fresh connection. The cap bounds a
+//   connection that answers NOTHING: once the service has acknowledged the request with `turn.start`, the
+//   engine lets that fresh first attempt wait for its first audio up to the budget (`bounds_for` in tts.rs) —
+//   measured, an acknowledged request's audio followed within 7.3 s — so an acknowledged attempt that stays
+//   silent can use the round by itself. To the scheduler that is an attempt answering late; an adopted call is
+//   still asked to yield if it has produced no audio. The invariant this keeps: a round whose first attempt was
+//   not acknowledged, and that can make a second attempt, always does; the total budget is never exceeded
 //   (the hard timer is untouched); a call that is producing audio is never cut for this — the cap bounds
 //   silence, not streaming — and the single-flight rule holds, since the yield is cooperative and the
 //   next attempt only starts once the engine has settled.

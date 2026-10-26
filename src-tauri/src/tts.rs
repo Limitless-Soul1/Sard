@@ -153,7 +153,8 @@ fn framed(audio: Vec<u8>, words: &[WordTiming]) -> Result<tauri::ipc::Response, 
 // `first_audio_ms` is a further cap on how long this call may go WITHOUT A FIRST AUDIO BYTE — connect,
 // voice list and the first frame together. The scheduler sets it on the first attempt of a recovery round
 // so that a connection which opens and then falls silent cannot spend the listener's whole budget by
-// itself; see `bounds_for`. It never shortens a call that is producing audio.
+// itself; see `bounds_for`. It never shortens a call that is producing audio, and it gives way once the service
+// has acknowledged the request with `turn.start` (the turn.start extension, also in `bounds_for`).
 // `diag_id` is the frontend's number for the dispatch, carried into the session diagnostics (`edge_calls`) and
 // nowhere else.
 #[tauri::command]
@@ -575,10 +576,10 @@ enum Chunk<R = EdgeRunning> {
     Err(String),
 }
 
-/// The moments one synthesis reached, for the session diagnostics (`edge_calls`): the request written and the
-/// service's `turn.start`, noted by the worker; the first audio, noted by the caller. Set once each, and shared
-/// outside the channel ON PURPOSE: a message would wake the waiting caller, and every bound would then be checked
-/// at different moments than before. No bound reads them.
+/// The moments one synthesis reached: the request written and the service's `turn.start`, noted by the worker; the
+/// first audio, noted by the caller. Set once each, and shared outside the channel ON PURPOSE: a message would wake
+/// the waiting caller, and every bound would then be checked at different moments than before. The session
+/// diagnostics (`edge_calls`) read all three; one bound reads `turn_start` (the turn.start extension, `bounds_for`).
 #[derive(Default)]
 struct Milestones {
     sent: std::sync::OnceLock<Instant>,
@@ -609,6 +610,9 @@ impl Milestones {
 struct Bounds {
     /// No audio at all by then → the socket is treated as dead.
     first_audio: Duration,
+    /// The same, once the service has acknowledged the request with `turn.start`: the window without the
+    /// first-audio cap. Never shorter than `first_audio`, never past the budget (see `bounds_for`).
+    first_audio_acknowledged: Duration,
     /// Audio had started but nothing arrived for this long → the stream is treated as dead.
     idle: Duration,
     /// Hard ceiling on the whole synthesis, scaled to the text length.
@@ -656,10 +660,20 @@ fn adaptive_first_audio_ms(samples: &[u64]) -> u64 {
 /// — the round's second and third attempts never had a chance. The cap bounds only the wait for the FIRST
 /// byte, so a call that is streaming, however slowly, keeps its full budget; it is clamped below to the
 /// second the frontend may not go under, and it is always at most the budget.
+///
+/// THE TURN.START EXTENSION (`first_audio_acknowledged`). The cap exists for a connection that opens and then
+/// sends NOTHING. A request the service has acknowledged with `turn.start` is not that: measured on the owner's
+/// network (2026-10-26, 800 syntheses), `turn.start` was the first message of every one, 0.14–0.70 s after the
+/// request, and the first audio followed up to 7.3 s after the request on the slower route (p95 5.5 s) — past
+/// a cap that is 6 s from the call's start, connect included. So once `turn.start` has arrived, the wait for the
+/// first byte is the window the call would have had without the cap: the adaptive window, clamped to the
+/// budget. The rule only ever lengthens a wait — the acknowledged window is never shorter than the capped one —
+/// and the budget stays its maximum. Without a cap, or without `turn.start`, nothing changes.
 fn bounds_for(chars: usize, adaptive_first_audio: u64, budget: Option<Duration>, first_audio_cap: Option<Duration>) -> Bounds {
     let total_ms = (TOTAL_BASE_MS + chars as u64 * TOTAL_PER_CHAR_MS).min(TOTAL_MAX_MS);
     let mut b = Bounds {
         first_audio: Duration::from_millis(adaptive_first_audio),
+        first_audio_acknowledged: Duration::ZERO,
         idle: Duration::from_millis(STREAM_IDLE_MS),
         total: Duration::from_millis(total_ms),
     };
@@ -668,6 +682,8 @@ fn bounds_for(chars: usize, adaptive_first_audio: u64, budget: Option<Duration>,
         b.idle = b.idle.min(budget);
         b.total = budget;
     }
+    // Taken before the cap, which is the only thing it differs by.
+    b.first_audio_acknowledged = b.first_audio;
     if let Some(cap) = first_audio_cap {
         b.first_audio = b.first_audio.min(cap.max(Duration::from_millis(FIRST_AUDIO_CAP_FLOOR_MS)));
     }
@@ -797,8 +813,11 @@ fn await_stream<R>(rx: std::sync::mpsc::Receiver<Chunk<R>>, bounds: &Bounds, can
         }
         let now = Instant::now();
         let since_start = now.duration_since(start);
+        // THE TURN.START EXTENSION (see `bounds_for`): read where the bound is checked, so a `turn.start` that
+        // arrives after the call was declared silent cannot revive it.
+        let first_audio_bound = if seen.turn_start.get().is_some() { bounds.first_audio_acknowledged } else { bounds.first_audio };
         let stalled = match first_audio {
-            None if since_start >= bounds.first_audio => Some("edge synth stalled: no audio"),
+            None if since_start >= first_audio_bound => Some("edge synth stalled: no audio"),
             Some(_) if now.duration_since(last_activity) >= bounds.idle => Some("edge synth stalled: stream idle"),
             _ if since_start >= bounds.total => Some("edge synth stalled: over budget"),
             _ => None,
@@ -1547,15 +1566,33 @@ mod tests {
         Cancelled,
     }
 
+    /// Bounds a `turn.start` cannot widen: every call but a recovery round's capped first attempt.
     fn bounds(first_audio: u64, idle: u64, total: u64) -> Bounds {
-        Bounds { first_audio: Duration::from_millis(first_audio), idle: Duration::from_millis(idle), total: Duration::from_millis(total) }
+        capped(first_audio, first_audio, idle, total)
+    }
+
+    /// A recovery round's capped first attempt: `first_audio` until the service acknowledges, `acknowledged` after.
+    fn capped(first_audio: u64, acknowledged: u64, idle: u64, total: u64) -> Bounds {
+        Bounds {
+            first_audio: Duration::from_millis(first_audio),
+            first_audio_acknowledged: Duration::from_millis(acknowledged),
+            idle: Duration::from_millis(idle),
+            total: Duration::from_millis(total),
+        }
     }
 
     /// Waits on a stream that delivers `script` (ms from the start, what arrives), with `turn_start` noted by the
     /// worker and a cancel raised at those moments when given. The scripted worker stops at the first step it
     /// cannot deliver, as the real one does. Returns what the wait came to, when, and what it noted.
     fn wait_on(script: &[(u64, Step)], b: Bounds, turn_start: Option<u64>, cancel_at: Option<u64>) -> (Came, Duration, Arc<Milestones>) {
+        let (came, t, seen, _) = wait_on_counting(script, b, turn_start, cancel_at);
+        (came, t, seen)
+    }
+
+    /// `wait_on`, also counting the steps that reached the wait.
+    fn wait_on_counting(script: &[(u64, Step)], b: Bounds, turn_start: Option<u64>, cancel_at: Option<u64>) -> (Came, Duration, Arc<Milestones>, Arc<AtomicUsize>) {
         let (tx, rx) = std::sync::mpsc::channel::<Chunk<u32>>();
+        let delivered = Arc::new(AtomicUsize::new(0));
         let seen = Arc::new(Milestones::default());
         let cancel = Arc::new(AtomicBool::new(false));
         let t0 = Instant::now();
@@ -1575,6 +1612,7 @@ mod tests {
             });
         }
         let script = script.to_vec();
+        let counted = delivered.clone();
         std::thread::spawn(move || {
             for (ms, step) in script {
                 at(ms);
@@ -1585,7 +1623,11 @@ mod tests {
                     Step::Fail => tx.send(Chunk::Err("edge synth: scripted".into())),
                     Step::Vanish => return,
                 };
-                if sent.is_err() || matches!(step, Step::Done | Step::Fail) {
+                if sent.is_err() {
+                    return;
+                }
+                counted.fetch_add(1, Ordering::SeqCst);
+                if matches!(step, Step::Done | Step::Fail) {
                     return;
                 }
             }
@@ -1600,7 +1642,7 @@ mod tests {
             EdgeSynth::Stalled(why) => Came::Stalled(why),
             EdgeSynth::Cancelled => Came::Cancelled,
         };
-        (came, t0.elapsed(), seen)
+        (came, t0.elapsed(), seen, delivered)
     }
 
     fn within(elapsed: Duration, from_ms: u64, to_ms: u64) -> bool {
@@ -1652,8 +1694,9 @@ mod tests {
         assert_eq!(came, Came::Cancelled, "a worker that left on the cancel is a cancel");
     }
 
-    /// The milestones are noted where they happened and change nothing: every script ends the same way, inside the
-    /// same bound's window, with or without a `turn.start`. (They cannot move the wait's wake-ups at all — no message
+    /// The milestones are noted where they happened and, for a call `turn.start` cannot widen (every call but a
+    /// recovery round's capped first attempt), change nothing: every script ends the same way, inside the same
+    /// bound's window, with or without a `turn.start`. (They cannot move the wait's wake-ups at all — no message
     /// is sent for them — so the windows are only as wide as a loaded machine needs.)
     #[test]
     fn a_noted_turn_start_changes_no_wait() {
@@ -1695,6 +1738,94 @@ mod tests {
         let r = probe.noted();
         assert!(matches!(r.sent_ms, Some(4..=6)) && matches!(r.turn_start_ms, Some(189..=191)), "{r:?}");
         assert_eq!(r.first_audio_ms, None);
+    }
+
+    // ---- the turn.start extension: a recovery round's capped first attempt, once the service has acknowledged it ----
+
+    /// That attempt's shape, scaled down: silent until 300 ms, or until 700 ms once acknowledged, inside a 900 ms budget.
+    fn first_attempt() -> Bounds {
+        capped(300, 700, 200, 900)
+    }
+
+    #[test]
+    fn an_acknowledged_first_attempt_may_wait_past_the_cap_for_its_first_audio() {
+        use Step::*;
+        // turn.start, then audio before the cap: exactly as without the extension.
+        let (came, t, _) = wait_on(&[(100, Audio), (150, Done)], first_attempt(), Some(30), None);
+        assert!(matches!(came, Came::Ok { bytes: 100, .. }) && within(t, 150, 300), "{came:?} {t:?}");
+        // turn.start, then audio after the cap: the call is kept and its audio played...
+        let (came, t, _) = wait_on(&[(450, Audio), (500, Done)], first_attempt(), Some(30), None);
+        assert!(matches!(came, Came::Ok { bytes: 100, .. }) && within(t, 500, 650), "{came:?} {t:?}");
+        // ...where, without turn.start, it is cut at the cap as it always was.
+        let (came, t, _) = wait_on(&[(450, Audio), (500, Done)], first_attempt(), None, None);
+        assert_eq!(came, Came::Stalled("edge synth stalled: no audio".into()));
+        assert!(within(t, 300, 450), "{t:?}");
+    }
+
+    #[test]
+    fn the_extension_has_a_maximum_and_ends_the_way_a_silent_call_always_has() {
+        use Step::*;
+        // turn.start and then nothing: declared silent at the acknowledged window — the maximum, never later.
+        let (came, t, _) = wait_on(&[], first_attempt(), Some(30), None);
+        assert_eq!(came, Came::Stalled("edge synth stalled: no audio".into()));
+        assert!(within(t, 700, 850), "{t:?}");
+        // A failure during the extension is reported as the failure it is.
+        let (came, t, _) = wait_on(&[(500, Fail)], first_attempt(), Some(30), None);
+        assert_eq!(came, Came::Failed("edge synth: scripted".into()));
+        assert!(within(t, 500, 650), "{t:?}");
+        // A turn.start that comes after the call was declared silent does not revive it.
+        let (came, t, _) = wait_on(&[(800, Audio)], first_attempt(), Some(650), None);
+        assert_eq!(came, Came::Stalled("edge synth stalled: no audio".into()));
+        assert!(within(t, 300, 450), "{t:?}");
+        // Once audio has begun, the stream is held to the bounds it always was: idle, then the budget.
+        let (came, t, _) = wait_on(&[(450, Audio)], first_attempt(), Some(30), None);
+        assert_eq!(came, Came::Stalled("edge synth stalled: stream idle".into()));
+        assert!(within(t, 650, 800), "{t:?}");
+        let steady: Vec<_> = (9..=24).map(|i| (i * 50, Audio)).collect();
+        let (came, t, _) = wait_on(&steady, first_attempt(), Some(30), None);
+        assert_eq!(came, Came::Stalled("edge synth stalled: over budget".into()));
+        assert!(within(t, 900, 1_050), "{t:?}");
+    }
+
+    #[test]
+    fn a_cancel_or_a_skip_ends_an_extended_wait_at_once_and_no_audio_reaches_anyone_after() {
+        use Step::*;
+        // The listener skips — the scheduler cancels the call — during the extension, after turn.start.
+        let (came, t, _, delivered) = wait_on_counting(&[(1_000, Audio), (1_050, Done)], first_attempt(), Some(30), Some(450));
+        assert_eq!(came, Came::Cancelled);
+        assert!(within(t, 450, 600), "{t:?}");
+        std::thread::sleep(Duration::from_millis(800));
+        assert_eq!(delivered.load(Ordering::SeqCst), 0, "the late audio reached no one");
+        // A call that stayed silent to its maximum delivers nothing afterwards either.
+        let (came, _, _, delivered) = wait_on_counting(&[(1_000, Audio), (1_050, Done)], first_attempt(), Some(30), None);
+        assert_eq!(came, Came::Stalled("edge synth stalled: no audio".into()));
+        std::thread::sleep(Duration::from_millis(600));
+        assert_eq!(delivered.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn the_acknowledged_window_is_the_uncapped_one_and_only_ever_longer() {
+        let ms = Duration::from_millis;
+        // The measured case: a 12 s round's first attempt, capped at 6 s, may wait the whole budget once acknowledged.
+        let first = bounds_for(77, 12_000, Some(ms(12_000)), Some(ms(6_000)));
+        assert_eq!((first.first_audio, first.first_audio_acknowledged), (ms(6_000), ms(12_000)));
+        // What is left of the budget is the maximum.
+        let late = bounds_for(77, 12_000, Some(ms(7_500)), Some(ms(2_500)));
+        assert_eq!((late.first_audio, late.first_audio_acknowledged), (ms(2_500), ms(7_500)));
+        // Without a cap the two are one: a background call, a round's later attempts — turn.start changes nothing.
+        for b in [bounds_for(77, 12_000, None, None), bounds_for(77, 18_000, None, None), bounds_for(77, 12_000, Some(ms(12_000)), None)] {
+            assert_eq!(b.first_audio_acknowledged, b.first_audio);
+        }
+        // For any history, budget and cap: never shorter than the capped window, never past the budget.
+        for adaptive in [12_000, 20_000, 30_000] {
+            for budget in [1_000, 3_000, 6_000, 12_000] {
+                for cap in [None, Some(10), Some(3_000), Some(6_000), Some(20_000)] {
+                    let b = bounds_for(500, adaptive, Some(ms(budget)), cap.map(ms));
+                    assert!(b.first_audio_acknowledged >= b.first_audio, "{adaptive} {budget} {cap:?}");
+                    assert!(b.first_audio_acknowledged <= ms(budget) && b.first_audio_acknowledged <= b.total, "{adaptive} {budget} {cap:?}");
+                }
+            }
+        }
     }
 }
 

@@ -461,10 +461,11 @@ fn connect_bounded(routes: Arc<Mutex<edge_route::RouteBook>>, budget: Duration, 
 }
 
 /// `connect_bounded` with the connection supplied, so its bounds can be tested without a network. The result
-/// is exactly what the wait returns; the only addition is what the routes learn from the handshakes this call
-/// stopped waiting for — out of budget, a transient failure of each route still running; cancelled by the
-/// listener, nothing. A call that connected records nothing here either: a second route still running beside
-/// the winner lost the attempt, which says nothing about it.
+/// is what the wait returns, except that a cancelled call's failure is reported as the cancel; the only addition
+/// is what the routes learn from the handshakes this call stopped waiting for — out of budget, a transient
+/// failure of each route still running; cancelled by the listener, nothing. A call that connected records
+/// nothing here either: a second route still running beside the winner lost the attempt, which says nothing
+/// about it.
 fn connect_bounded_with<C: Send + 'static>(
     routes: Arc<Mutex<edge_route::RouteBook>>,
     budget: Duration,
@@ -479,12 +480,19 @@ fn connect_bounded_with<C: Send + 'static>(
     });
     let result = wait_bounded(rx, budget, cancel, "edge connect timed out");
     let still_running = attempt.end();
-    if result.is_err() && !cancel.load(Ordering::SeqCst) {
+    let cancelled = cancel.load(Ordering::SeqCst);
+    if result.is_err() && !cancelled {
         for route in still_running {
             edge_route::timed_out(&routes, route);
         }
     }
-    result
+    match result {
+        // A cancel stops any further handshake from starting, so the attempt can answer inside the caller's wait
+        // slice — `abandoned`, or the failure of the one handshake that ran. That answer belongs to a call nobody
+        // waits on any more: the scheduler must see the cancel, never a connection failure.
+        Err(_) if cancelled => Err("edge synth cancelled".into()),
+        r => r,
+    }
 }
 
 /// Wait for a bounded worker's result in short slices, so a cancel raised meanwhile is honoured
@@ -1398,6 +1406,34 @@ mod tests {
             for route in ROUTES {
                 assert_eq!(routes.lock().unwrap().transient_failures(route), 0, "a cancel says nothing about {route:?}");
             }
+        }
+    }
+
+    /// THE DEFECT THIS PINS (found under load): a cancel that lands just before a handshake is due stops it from
+    /// starting, and the attempt then answers at once — `edge connect: abandoned` when no handshake began, or the
+    /// failure of the one that did when the next could not start. The caller, still inside its wait slice, used to
+    /// return that answer: a cancelled call reported as a connection failure, which the scheduler counts against
+    /// the sentence instead of treating as the scheduling event it is.
+    #[test]
+    fn a_cancelled_connect_reports_the_cancel_whatever_the_attempt_answered() {
+        for first_fails in [false, true] {
+            let routes = Arc::new(Mutex::new(RouteBook::default()));
+            let cancel = Arc::new(AtomicBool::new(false));
+            let handshakes = Arc::new(AtomicUsize::new(0));
+            let (c, h) = (cancel.clone(), handshakes.clone());
+            let r = super::connect_bounded_with(routes.clone(), Duration::from_secs(5), &cancel, move |book, attempt| {
+                std::thread::sleep(Duration::from_millis(30)); // the caller is inside its wait slice
+                if !first_fails {
+                    c.store(true, Ordering::SeqCst); // before the first handshake is due
+                }
+                edge_route::connect_hedged_via(book, attempt, false, Duration::from_secs(2), Arc::new(move |_| -> Result<(), AttemptError> {
+                    h.fetch_add(1, Ordering::SeqCst);
+                    c.store(true, Ordering::SeqCst); // during it: the refusal would move on, but nothing may start now
+                    Err(AttemptError { failure: Failure::Incompatible, status: Some(200), detail: "http 200".into() })
+                }))
+            });
+            assert_eq!(r.err(), Some("edge synth cancelled".to_string()), "first handshake {}", if first_fails { "refused" } else { "never began" });
+            assert_eq!(handshakes.load(Ordering::SeqCst), usize::from(first_fails), "nothing began after the cancel");
         }
     }
 }

@@ -701,8 +701,9 @@ function framedFault(audio: Uint8Array): ArrayBuffer {
   return out.buffer;
 }
 
-/** ONE `tts_synthesize` call, with the dev fault seam in front of it. Unarmed → a bare `invoke`. */
-async function rawSynth(engine: TtsEngineKind, id: string, text: string, unit: number, budgetMs?: number, firstAudioMs?: number): Promise<ArrayBuffer> {
+/** ONE `tts_synthesize` call, with the dev fault seam in front of it. Unarmed → a bare `invoke`. `diag` is the
+ *  dispatch's number (`nextDiag`), carried into the engine's session diagnostics and nowhere else. */
+async function rawSynth(engine: TtsEngineKind, id: string, text: string, unit: number, budgetMs?: number, firstAudioMs?: number, diag?: number): Promise<ArrayBuffer> {
   if (faultArmed() && faultAims(unit)) {
     fault.times--;
     const mode = fault.mode;
@@ -754,7 +755,7 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string, unit: n
   }
   // RAWY-264: synthesis is ALWAYS at the voice's natural rate. Speed is applied at playback, so the same
   // bytes serve every speed and a speed change never invalidates them.
-  return await invoke<ArrayBuffer>("tts_synthesize", { engine, id, text, budgetMs: budgetMs ?? null, firstAudioMs: firstAudioMs ?? null });
+  return await invoke<ArrayBuffer>("tts_synthesize", { engine, id, text, budgetMs: budgetMs ?? null, firstAudioMs: firstAudioMs ?? null, diagId: diag ?? null });
 }
 
 // RAWY-257 package 2B (C3): ONE attempt. The retry that used to live here is gone — it fired in the SAME
@@ -791,7 +792,7 @@ function engineTextFor(text: string): string {
 /** Everything the produced bytes depend on: the engine, the voice, and the string sent for this sentence. */
 const prepKey = (text: string): string => `${curEngine}|${curVoice}|${engineTextFor(text)}`;
 
-async function synthInvoke(i: number, budgetMs?: number, firstAudioMs?: number): Promise<ArrayBuffer> {
+async function synthInvoke(i: number, budgetMs?: number, firstAudioMs?: number, diag?: number): Promise<ArrayBuffer> {
   const text = sentences[i];
   // `speakableText` is the ONLY place the spoken string may differ from the displayed one. It exists
   // because Edge silently drops standalone Extended Arabic-Indic digit runs — measured: two different
@@ -814,7 +815,7 @@ async function synthInvoke(i: number, budgetMs?: number, firstAudioMs?: number):
   // `FoliateController`'s `Intl.Segmenter`, and nothing here is fed back into it — so unit count,
   // sentence boundaries, chunk indices and the ranges the highlight is drawn from cannot move,
   // whichever way the setting is set.
-  const buf = await rawSynth(curEngine, curVoice, engineTextFor(text), i, budgetMs, firstAudioMs);
+  const buf = await rawSynth(curEngine, curVoice, engineTextFor(text), i, budgetMs, firstAudioMs, diag);
   if (isImplausiblyShortAudio(text, buf?.byteLength ?? 0)) {
     throw new Error(`${VOICE_MISMATCH_MARKER}: ${curVoice} returned ${buf?.byteLength ?? 0} bytes for ${text.length} chars`);
   }
@@ -890,7 +891,7 @@ let pendingDecodeInfo: { bytes: number; head: string } | null = null;
 // RAWY-231: the scheduler's dispatch — invoke (bounded so a stalled socket frees the single-flight slot) →
 // parse the framed word timings → decode to an AudioBuffer. Engine-agnostic (WebAudio decodes
 // Edge MP3 alike). This is the ONLY thing the scheduler runs; ordering/priority/eviction are the scheduler's.
-async function attemptSynth(i: number, ctx: DispatchContext): Promise<Synthesized> {
+async function attemptSynth(i: number, ctx: DispatchContext, diag: number): Promise<Synthesized> {
   // The engine bounds the call itself (on the listener's budget for a recovery attempt, on progress
   // otherwise — see `edge_synthesize`); this ceiling is the safety net a stuck IPC would need, sized so
   // the engine's own, specific reason always arrives first.
@@ -909,7 +910,7 @@ async function attemptSynth(i: number, ctx: DispatchContext): Promise<Synthesize
     return ready;
   }
   // THE LISTENER'S OWN SYNTHESIS TAKES THE TURN, pre-empting a preparation that holds the engine.
-  const raw = await withTimeout(engine.run(() => synthInvoke(i, ctx.budgetMs, ctx.firstAudioMs), { preempt: true }), ceiling);
+  const raw = await withTimeout(engine.run(() => synthInvoke(i, ctx.budgetMs, ctx.firstAudioMs, diag), { preempt: true }), ceiling);
   const { words, audio } = parseFramed(raw);
   // RAWY-257 (Phase 1 — CONFIRMED DEFECT, found by the fault harness on its first real use):
   // `decodeAudioData` DETACHES the ArrayBuffer it is given. The RAWY-247 capture below used to read `audio`
@@ -967,6 +968,13 @@ async function attemptSynth(i: number, ctx: DispatchContext): Promise<Synthesize
 // A1: this ladder IS the Edge tolerance band the path never had. A RECOVERED fault never reaches a dialog;
 // only EXHAUSTION does.
 
+/**
+ * SESSION DIAGNOSTICS: each dispatch's number, so the telemetry can put the engine's record of a call
+ * (`tts_call_log`) beside the dispatch it served. A counter for the life of the page — never derived from text.
+ */
+let diagSeq = 0;
+const nextDiag = (): number => ++diagSeq;
+
 // ONE attempt per dispatch. The scheduler owns every retry decision (RULE 1 backoff ahead of playback,
 // RULE 2's bounded round once current) and hands the context down: a recovery attempt carries what is left
 // of the listener's budget, which the engine treats as its deadline.
@@ -985,12 +993,13 @@ async function synthDispatch(i: number, ctx: DispatchContext): Promise<Synthesiz
   // object and returns; it is wrapped in its own try/catch so a fault in measurement cannot reach
   // playback. See src/lib/ttsTelemetry.ts.
   const tDispatch = performance.now();
+  const diag = nextDiag();
   try {
-    const out = await attemptSynth(i, ctx);
+    const out = await attemptSynth(i, ctx, diag);
     noteDispatch({
       unit: i, len: sentences[i]?.length ?? -1, role: ctx.role, attempt: ctx.attempt,
       budgetMs: ctx.budgetMs ?? null, ms: Math.round(performance.now() - tDispatch), ok: true,
-      audioSec: out.durationSec, kind: null, detail: lastWasPrepared ? "prepared" : null,
+      audioSec: out.durationSec, kind: null, detail: lastWasPrepared ? "prepared" : null, diag,
     });
     return out;
   } catch (e) {
@@ -998,7 +1007,7 @@ async function synthDispatch(i: number, ctx: DispatchContext): Promise<Synthesiz
     noteDispatch({
       unit: i, len: sentences[i]?.length ?? -1, role: ctx.role, attempt: ctx.attempt,
       budgetMs: ctx.budgetMs ?? null, ms: Math.round(performance.now() - tDispatch), ok: false,
-      audioSec: null, kind: classifyFailure(e), detail: String(e).slice(0, 120),
+      audioSec: null, kind: classifyFailure(e), detail: String(e).slice(0, 120), diag,
     });
     throw e;
   }
@@ -1631,6 +1640,7 @@ async function runPrepare(myGen: number): Promise<void> {
     const key = prepKey(text);
     if (prepared.has(key)) continue;
     const tStart = performance.now();
+    const diag = nextDiag();
     try {
       const out = await engine.run(async () => {
         if (myGen !== gen) throw new Error("edge synth cancelled");
@@ -1642,7 +1652,7 @@ async function runPrepare(myGen: number): Promise<void> {
           void ttsCancelSynth().catch(() => {});
         });
         try {
-          const raw = await withTimeout(rawSynth(curEngine, curVoice, engineTextFor(text), PREPARE_UNIT), BACKGROUND_SYNTH_CEILING_MS);
+          const raw = await withTimeout(rawSynth(curEngine, curVoice, engineTextFor(text), PREPARE_UNIT, undefined, undefined, diag), BACKGROUND_SYNTH_CEILING_MS);
           const { words, audio } = parseFramed(raw);
           const bytes = audio.slice(0);
           const buffer = await audioCtx().decodeAudioData(audio);
@@ -1653,12 +1663,12 @@ async function runPrepare(myGen: number): Promise<void> {
           engine.setYielder(null);
         }
       });
-      noteDispatch({ unit: PREPARE_UNIT, len: text.length, role: "prepare", attempt: 1, budgetMs: null, ms: Math.round(performance.now() - tStart), ok: true, audioSec: out.durationSec, kind: null, detail: null });
+      noteDispatch({ unit: PREPARE_UNIT, len: text.length, role: "prepare", attempt: 1, budgetMs: null, ms: Math.round(performance.now() - tStart), ok: true, audioSec: out.durationSec, kind: null, detail: null, diag });
       if (myGen !== gen) { prepareStats.cancelled++; return; } // stopped or re-voiced while it ran: never keep it
       prepared.set(key, out);
       prepareStats.units++;
     } catch (e) {
-      noteDispatch({ unit: PREPARE_UNIT, len: text.length, role: "prepare", attempt: 1, budgetMs: null, ms: Math.round(performance.now() - tStart), ok: false, audioSec: null, kind: classifyFailure(e), detail: String(e).slice(0, 120) });
+      noteDispatch({ unit: PREPARE_UNIT, len: text.length, role: "prepare", attempt: 1, budgetMs: null, ms: Math.round(performance.now() - tStart), ok: false, audioSec: null, kind: classifyFailure(e), detail: String(e).slice(0, 120), diag });
       if (isCancelledSynth(e) || myGen !== gen) prepareStats.cancelled++;
       else { prepareStats.failed++; prepareStats.lastError = String(e).slice(0, 120); }
       return; // one failure ends the attempt; nothing is retried in the background

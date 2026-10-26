@@ -1,17 +1,18 @@
 // SESSION DIAGNOSTICS of the read-aloud telemetry: the session in progress survives a crash, and each route the
-// engine tried is filed under the session it happened in.
+// engine tried, and each synthesis call it made, is filed under the session it happened in.
 //
 // The observer is driven through the real store, as in ttsTelemetryCoverage.test.ts. Persistence and the
 // engine's route log are stubbed in memory; every write records the player's status at that instant, so the
 // one guarantee that matters most here — nothing is ever written while audio is sounding — is checked on every
 // write, not only where a test expects one.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RouteTry } from "../../src/lib/ipc";
+import type { CallRecord, RouteTry } from "../../src/lib/ipc";
 
 const h = vi.hoisted(() => ({
   settings: new Map<string, string>(),
   writes: [] as { key: string; status: string }[],
   routes: [] as RouteTry[],
+  calls: [] as CallRecord[],
   status: (): string => "",
   /** When set, the route read waits for it — so a test can let audio start while a snapshot is under way. */
   gate: null as Promise<void> | null,
@@ -20,12 +21,13 @@ vi.mock("../../src/lib/ipc", () => ({
   settingsGet: async (k: string) => h.settings.get(k) ?? null,
   settingsSet: async (k: string, v: string) => { h.writes.push({ key: k, status: h.status() }); h.settings.set(k, v); },
   ttsRouteLog: async (since: number) => { if (h.gate) await h.gate; return h.routes.filter((r) => r.seq > since); },
+  ttsCallLog: async (since: number) => h.calls.filter((c) => c.seq > since),
 }));
 // The suite runs in plain Node (see vitest.config.ts); the observer needs `window` only for `pagehide`.
 (globalThis as unknown as { window: EventTarget }).window = new EventTarget();
 
 import { useTts } from "../../src/lib/tts";
-import { registerTtsTelemetry, resetTtsTelemetry, ttsTelemetry, ttsTelemetryHealth, type ResilienceSession } from "../../src/lib/ttsTelemetry";
+import { noteDispatch, registerTtsTelemetry, resetTtsTelemetry, ttsTelemetry, ttsTelemetryHealth, type ResilienceSession } from "../../src/lib/ttsTelemetry";
 h.status = () => useTts.getState().status;
 
 const LIVE = "tts_resilience_live";
@@ -39,12 +41,17 @@ function startChapter(total: number, index = 0) {
 const play = (index: number) => set({ status: "playing", index });
 const stop = () => set({ active: false, status: "idle" });
 const route = (seq: number, at: number, r: string, outcome: string, status: number | null): RouteTry => ({ seq, at, route: r, outcome, status, ms: 600, waitedOn: true });
+// The engine numbers its records for the life of the process, and the telemetry remembers the last one it filed —
+// so, as in the app, the numbers only ever increase, across tests too.
+let engineSeq = 0;
+const call = (at: number, diag: number, end = "ok"): CallRecord => ({ seq: ++engineSeq, diag, at, waitedOn: false, prior: 0, fresh: false, idleMs: 900, route: "msedge", sentMs: 1, turnStartMs: 190, firstAudioMs: 640, windowMs: 12_000, endMs: 1_900, end });
 const live = (): ResilienceSession | null => { const v = h.settings.get(LIVE); return v ? (JSON.parse(v) as ResilienceSession) : null; };
 
 beforeEach(async () => {
   h.settings.clear();
   h.writes.length = 0;
   h.routes.length = 0;
+  h.calls.length = 0;
   h.gate = null;
   await resetTtsTelemetry();
   stop();
@@ -155,6 +162,54 @@ describe("routes — each route the engine tried is filed under the session it h
     expect(filed.length).toBe(1);
     expect(filed[0].routes!.map((r) => r.seq)).toEqual([2, 3, 4]); // in order, each once, the stray one left out
     for (const w of h.writes) expect(w.status).not.toBe("playing");
+  });
+});
+
+describe("calls — each synthesis call the engine made is filed under the session it began in", () => {
+  it("in order, each once, beside the dispatch it served; a call between sessions belongs to neither", async () => {
+    h.calls.push(call(Date.now() - 60_000, 1)); // before this session: not its call
+    startChapter(40, 0); await tick();
+    const t = Date.now();
+    noteDispatch({ unit: 0, len: 34, role: "current", attempt: 1, budgetMs: null, ms: 1_900, ok: true, audioSec: 2.1, kind: null, detail: null, diag: 2 });
+    h.calls.push(call(t, 2));
+    play(0); set({ status: "buffering" }); await tick();
+    expect(live()!.calls!.map((c) => c.diag)).toEqual([2]);
+    play(0); await tick();
+    noteDispatch({ unit: 1, len: 51, role: "lead", attempt: 1, budgetMs: null, ms: 6_000, ok: false, audioSec: null, kind: "stall-synth", detail: "edge synth stalled: no audio", diag: 3 });
+    h.calls.push(call(Date.now(), 3, "no-audio"));
+    stop(); await tick();
+    const [filed] = JSON.parse(h.settings.get(KEY)!) as ResilienceSession[];
+    expect(filed.calls!.map((c) => [c.diag, c.end])).toEqual([[2, "ok"], [3, "no-audio"]]);
+    // The engine's record and the scheduler's meet on the dispatch's number.
+    for (const c of filed.calls!) expect(filed.dispatches.filter((d) => d.diag === c.diag).length).toBe(1);
+    for (const w of h.writes) expect(w.status).not.toBe("playing");
+    expect(ttsTelemetryHealth().faults).toBe(0);
+  });
+
+  it("are kept up to 400 per session; the rest are counted, not kept", async () => {
+    startChapter(40, 0); await tick();
+    const t = Date.now();
+    for (let n = 1; n <= 405; n++) h.calls.push(call(t, n));
+    play(0); await tick();
+    stop(); await tick();
+    const [filed] = JSON.parse(h.settings.get(KEY)!) as ResilienceSession[];
+    expect(filed.calls!.length).toBe(400);
+    expect(filed.callsDropped).toBe(5);
+    expect(filed.calls!.map((c) => c.diag)).toEqual(Array.from({ length: 400 }, (_, i) => i + 1)); // the first 400, in order
+  });
+
+  it("are kept for the newest 20 sessions only, and never carry text", async () => {
+    for (let n = 0; n < 23; n++) {
+      startChapter(40, 0); await tick();
+      h.calls.push(call(Date.now(), n + 1));
+      play(0); await tick();
+      stop(); await tick();
+    }
+    const filed = JSON.parse(h.settings.get(KEY)!) as ResilienceSession[];
+    expect(filed.length).toBe(23);
+    expect(filed.map((s) => s.calls?.length ?? 0)).toEqual([...Array(3).fill(0), ...Array(20).fill(1)]);
+    const raw = h.settings.get(KEY)!;
+    expect(raw).not.toContain(PRIVATE_LABEL);
   });
 });
 

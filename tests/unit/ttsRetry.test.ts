@@ -12,7 +12,7 @@
 import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 type Answer = { ok: true; ms?: number } | { ok: false; err: string; ms?: number } | { stall: true };
-interface Call { text: string; budgetMs: number | null; settled?: "ok" | "err" | "cancelled" }
+interface Call { text: string; budgetMs: number | null; diagId?: number | null; settled?: "ok" | "err" | "cancelled" }
 
 const h = vi.hoisted(() => {
   // A framed `[u32 BE json_len][json words][audio]` body — the shape `tts_synthesize` returns.
@@ -27,6 +27,8 @@ const h = vi.hoisted(() => {
   };
   const state = {
     calls: [] as Call[],
+    /** What the scheduler's dispatch hook recorded, in order (`noteDispatch`). */
+    dispatches: [] as { unit: number; ok: boolean; diag?: number }[],
     script: ((): Answer => ({ ok: true })) as (text: string, nth: number) => Answer,
     cancelCurrent: null as null | (() => void),
     onPlay: null as null | (() => void),
@@ -82,10 +84,10 @@ const h = vi.hoisted(() => {
 // The engine. One call at a time is the frontend's contract with it (see ttsLadder.test.ts); a cancel
 // reaches the call in flight, which then answers "edge synth cancelled" — as `tts_cancel_synth` does.
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args: { text: string; budgetMs: number | null; firstAudioMs: number | null }) => {
+  invoke: (cmd: string, args: { text: string; budgetMs: number | null; firstAudioMs: number | null; diagId: number | null }) => {
     if (cmd !== "tts_synthesize") return Promise.reject(`unexpected command: ${cmd}`);
     return new Promise<ArrayBuffer>((resolve, reject) => {
-      const call: Call = { text: args.text, budgetMs: args.budgetMs };
+      const call: Call = { text: args.text, budgetMs: args.budgetMs, diagId: args.diagId };
       h.calls.push(call);
       const answer = h.script(args.text, h.calls.filter((c) => c.text === args.text).length);
       let done = false;
@@ -108,6 +110,11 @@ vi.mock("@tauri-apps/api/core", () => ({
       }), answer.ms ?? 200);
     });
   },
+}));
+
+// The telemetry's dispatch hook, recorded: the one thing `tts.ts` takes from it.
+vi.mock("../../src/lib/ttsTelemetry", () => ({
+  noteDispatch: (rec: { unit: number; ok: boolean; diag?: number }) => { h.dispatches.push({ unit: rec.unit, ok: rec.ok, diag: rec.diag }); },
 }));
 
 vi.mock("../../src/lib/ipc", () => ({
@@ -175,6 +182,7 @@ beforeAll(() => {
 });
 beforeEach(() => {
   h.calls.length = 0;
+  h.dispatches.length = 0;
   h.script = () => ({ ok: true });
   played = [];
   h.onPlay = () => played.push(st().index);
@@ -199,6 +207,20 @@ describe("Listen", () => {
     expect(played).toEqual([0, 1, 2, 3, 4, 5]);
     expect(S.map((_, i) => requestsFor(i))).toEqual([1, 1, 1, 1, 1, 1]);
     expectEngineSound();
+  });
+
+  it("each engine call carries its own dispatch number for the diagnostics, a retry included", async () => {
+    h.script = (text, nth) => (text === S[2] && nth === 1 ? { ok: false, err: HOST_DOWN } : { ok: true });
+    await listen();
+    await until(() => st().status === "chapter-end");
+    expect(played).toEqual([0, 1, 2, 3, 4, 5]);
+    const ids = h.calls.map((c) => c.diagId);
+    expect(ids.every((d) => typeof d === "number" && d > 0)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect([...ids].sort((a, b) => a! - b!)).toEqual(ids); // in the order the calls were made
+    // ...and the dispatch record of each carries the same number, the failed one included.
+    expect(h.dispatches.map((d) => d.diag)).toEqual(ids);
+    expect(h.dispatches.filter((d) => !d.ok).length).toBe(1);
   });
 });
 

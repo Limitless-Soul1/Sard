@@ -91,6 +91,13 @@ impl<T: Read + Write> Receiver<T> {
         let (can_read, _) = &*self.can_read_cvar;
         *can_read.lock().unwrap()
     }
+
+    // SARD LOCAL MODIFICATION — see ../../VENDOR.txt. Whether the turn in progress has received its
+    // `turn.start` message. Read-only: it reports the flag `read` already keeps, and changes nothing about
+    // how any message is handled. The flag clears with the rest of the turn's state when the turn ends.
+    pub fn turn_started(&self) -> bool {
+        self.turn_start
+    }
 }
 
 pub(crate) fn split<T: Read + Write>(

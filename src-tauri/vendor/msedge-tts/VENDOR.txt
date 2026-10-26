@@ -1,11 +1,11 @@
-msedge-tts 0.4.0 vendored from crates.io, with TWO local modifications.
+msedge-tts 0.4.0 vendored from crates.io, with THREE local modifications.
 Source:   https://github.com/hs-CN/msedge-tts  (crates.io msedge-tts 0.4.0, published 2026-05-20)
 Checksum: c5ee3d00bfd237fac2dcd03050c073d60769c9d1f2718545854374f1aa4d6d5b (crates.io .crate, as recorded in
           Cargo.lock before vendoring)
 License:  MIT OR Apache-2.0 (see ./LICENSE)
 Wired in: src-tauri/Cargo.toml [patch.crates-io] — the dependency declaration itself is unchanged.
 
-Copied:   Cargo.toml, LICENSE, README.md, src/ — byte-identical to the published crate except the two changes
+Copied:   Cargo.toml, LICENSE, README.md, src/ — byte-identical to the published crate except the three changes
           below. Nothing else from the package is needed to build it.
 
 Sard does not use this crate's own synthesis request. It builds the request itself — the route, the
@@ -59,6 +59,22 @@ A keep-alive frame carries no synthesis data, and tungstenite answers a Ping by 
 no payload. The turn's state is untouched and every other frame keeps its handling.
 
 
+=== MODIFICATION 3: WHETHER THE TURN HAS STARTED (READ-ONLY) ==========================================
+
+src/tts/stream/blocking.rs, `Receiver`: one added function —
+
+  pub fn turn_started(&self) -> bool
+
+which returns the `turn_start` flag `read` already keeps (set by the service's turn.start message, cleared
+with the rest of the turn's state when the turn ends). Nothing about how a message is handled changes.
+
+WHY. `read` answers `Ok(None)` for turn.start, response, turn.end, Close, Ping, Pong and for audio that
+arrives before the turn starts, so the caller cannot tell from it whether the service has accepted the
+request. Sard records when turn.start arrives, separately from the first audio (measured 2026-10-26 on
+the owner's network: turn.start was the first text message in 800 of 800 syntheses, 0.14-0.70 s after
+the request, every message carrying the request's X-RequestId).
+
+
 === NO LONGER MODIFIED ==============================================================================
 
 src/constants.rs is the published file again. It carried Sard's first change (the synthesis host, from
@@ -75,7 +91,7 @@ same two headers, so the lines are carried there instead of being kept here as a
 === RE-VENDORING / REMOVING ========================================================================
 
 Remove this directory and the [patch.crates-io] entry once an upstream msedge-tts release can connect with
-a request the caller builds and handles keep-alive frames. To re-vendor: copy the four items above from
+a request the caller builds, handles keep-alive frames and tells whether the turn has started. To re-vendor: copy the four items above from
 the new published crate, re-apply the changes still needed, update this file, and check the copy against
 the published crate file by file — the only expected differences are the ones recorded here.
 tests/unit/ttsEndpoint.test.ts pins both changes, that synthesis goes through Sard's own request, and every

@@ -582,16 +582,22 @@ pub(super) fn connect_hedged_via<C: Send + 'static>(
     }
 }
 
-/// Open the split synthesis client on the first route that accepts it.
-pub(super) fn connect(book: &Arc<Mutex<RouteBook>>, attempt: &Arc<Attempt>, waited_on: bool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
+/// Open the split synthesis client on the first route that accepts it, and say which route that was. `diag`, the
+/// frontend's number for the call, only labels the route log's entries.
+pub(super) fn connect(
+    book: &Arc<Mutex<RouteBook>>,
+    attempt: &Arc<Attempt>,
+    waited_on: bool,
+    diag: Option<u64>,
+) -> Result<(Route, Sender<TcpStream>, Receiver<TcpStream>), String> {
     connect_hedged_via(book, attempt, waited_on, HEDGE_AFTER, Arc::new(move |route| {
         let unix_secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let connection_id = uuid::Uuid::new_v4().simple().to_string();
         let request = request_for(route, unix_secs, &connection_id).map_err(|e| attempt_error(&e.into()))?;
         let started = Instant::now();
         let result = msedge_tts_split_request(request).map_err(|e| attempt_error(&e));
-        record_try(route, result.as_ref().map(|_| ()), started.elapsed().as_millis() as u64, waited_on);
-        result
+        record_try(route, result.as_ref().map(|_| ()), started.elapsed().as_millis() as u64, waited_on, diag);
+        result.map(|(tx, rx)| (route, tx, rx))
     }))
 }
 
@@ -617,12 +623,15 @@ pub struct RouteTry {
     pub status: Option<u16>,
     pub ms: u64,
     pub waited_on: bool,
+    /// The frontend's number for the synthesis call this try opened a connection for (`edge_calls`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diag: Option<u64>,
 }
 
 const ROUTE_LOG_KEEP: usize = 400;
 static ROUTE_LOG: Mutex<(u64, VecDeque<RouteTry>)> = Mutex::new((0, VecDeque::new()));
 
-fn record_try(route: Route, outcome: Result<(), &AttemptError>, ms: u64, waited_on: bool) {
+fn record_try(route: Route, outcome: Result<(), &AttemptError>, ms: u64, waited_on: bool, diag: Option<u64>) {
     let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
     let (outcome, status) = match outcome {
         Ok(()) => ("ok", None),
@@ -631,7 +640,7 @@ fn record_try(route: Route, outcome: Result<(), &AttemptError>, ms: u64, waited_
     let mut log = lock_recover(&ROUTE_LOG);
     log.0 += 1;
     let seq = log.0;
-    log.1.push_back(RouteTry { seq, at, route: route.name(), outcome, status, ms, waited_on });
+    log.1.push_back(RouteTry { seq, at, route: route.name(), outcome, status, ms, waited_on, diag });
     if log.1.len() > ROUTE_LOG_KEEP {
         log.1.pop_front();
     }
@@ -650,8 +659,8 @@ mod route_log_tests {
     fn the_route_log_records_each_try_in_order_with_its_class_and_stays_bounded() {
         let before = route_log_since(0).last().map_or(0, |t| t.seq);
         let limited = AttemptError { failure: Failure::RateLimited, status: Some(429), detail: "http 429".into() };
-        record_try(Route::MsEdge, Err(&limited), 650, true);
-        record_try(Route::Bing, Ok(()), 480, true);
+        record_try(Route::MsEdge, Err(&limited), 650, true, Some(31));
+        record_try(Route::Bing, Ok(()), 480, true, Some(31));
         let got = route_log_since(before);
         assert_eq!(got.len(), 2);
         assert_eq!((got[0].route, got[0].outcome, got[0].status, got[0].ms, got[0].waited_on), ("msedge", "rate-limited", Some(429), 650, true));
@@ -660,10 +669,10 @@ mod route_log_tests {
         assert!(got[0].at > 0 && got[1].at >= got[0].at);
         // What the frontend receives: no URL, header, token or body — only these fields.
         let json = serde_json::to_string(&got[0]).unwrap();
-        assert_eq!(json, format!(r#"{{"seq":{},"at":{},"route":"msedge","outcome":"rate-limited","status":429,"ms":650,"waitedOn":true}}"#, got[0].seq, got[0].at));
+        assert_eq!(json, format!(r#"{{"seq":{},"at":{},"route":"msedge","outcome":"rate-limited","status":429,"ms":650,"waitedOn":true,"diag":31}}"#, got[0].seq, got[0].at));
 
         for _ in 0..ROUTE_LOG_KEEP + 10 {
-            record_try(Route::Bing, Ok(()), 1, false);
+            record_try(Route::Bing, Ok(()), 1, false, None);
         }
         assert_eq!(route_log_since(0).len(), ROUTE_LOG_KEEP);
         assert!(route_log_since(u64::MAX).is_empty());
@@ -1818,9 +1827,9 @@ mod live {
             let mut connected = false;
             for attempt in 1..=3 {
                 let t = Instant::now();
-                match connect(&book, &Arc::new(Attempt::default()), false) {
-                    Ok(_) => {
-                        println!("connect {i}: ok in {} ms (try {attempt})", t.elapsed().as_millis());
+                match connect(&book, &Arc::new(Attempt::default()), false, None) {
+                    Ok((route, ..)) => {
+                        println!("connect {i}: ok on {} in {} ms (try {attempt})", route.name(), t.elapsed().as_millis());
                         connected = true;
                         break;
                     }

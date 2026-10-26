@@ -1,8 +1,9 @@
 // THE EDGE READ-ALOUD CONNECTION, PINNED.
 //
 // Sard builds the synthesis WebSocket request itself (src-tauri/src/tts/edge_route.rs: the routes, the token,
-// the headers) and opens it through a vendored copy of msedge-tts carrying exactly two changes: a way to connect
-// with that request, and keep-alive frames treated as no data (see src-tauri/vendor/msedge-tts/VENDOR.txt). The
+// the headers) and opens it through a vendored copy of msedge-tts carrying exactly three changes: a way to connect
+// with that request, keep-alive frames treated as no data, and a read-only report of whether the turn has started
+// (see src-tauri/vendor/msedge-tts/VENDOR.txt). The
 // exact URLs and headers are pinned by the Rust tests beside the code that builds them. These tests fail if the
 // connection stops going through Sard's request, if the identity it presents drifts from the published client's,
 // if a vendored change is lost on a re-vendor or spreads to anything else, or if the copy drifts from the
@@ -34,8 +35,9 @@ describe("the connection the Edge client makes", () => {
 
   it("the connection is told the listener is waiting exactly when the call carries a budget", () => {
     // The rate-limit fallback of `edge_route` applies only to recovery-round calls, the only calls that carry
-    // `budgetMs`; the engine passes that fact, and nothing else about the caller, to the connection.
-    expect(source("tts.rs")).toMatch(/connect_bounded\(engines\.edge_routes\.clone\(\), remaining\(deadline, "connect"\)\?, &cancel, budget_ms\.is_some\(\)\)\?/);
+    // `budgetMs`; the engine passes that fact, and nothing else about the caller, to the connection (beside the
+    // dispatch's number, which only labels the route log).
+    expect(source("tts.rs")).toMatch(/connect_bounded\(engines\.edge_routes\.clone\(\), remaining\(deadline, "connect"\)\?, &cancel, budget_ms\.is_some\(\), probe\.diag\(\)\)\?/);
   });
 
   it("the request presents the identity of the published client", () => {
@@ -95,9 +97,13 @@ describe("the vendored copy is the published crate apart from the recorded chang
     expect(sha(original)).toBe("e34b87af3bde94bfa598ca3a2a1403ea7c945d1fb82383cb11820e38fff25360");
   });
 
-  it("tts/stream/blocking.rs differs only by the split client over a given request", () => {
+  it("tts/stream/blocking.rs differs only by the split client over a given request and the turn-start report", () => {
     const original = read("src/tts/stream/blocking.rs")
       .replace(/\r/g, "")
+      .replace(
+        /\n\n {4}\/\/ SARD LOCAL MODIFICATION[^\n]*\n(?: {4}\/\/[^\n]*\n){2} {4}pub fn turn_started\(&self\) -> bool \{\n {8}self\.turn_start\n {4}\}/,
+        "",
+      )
       .replace(
         /\n\n\/\/ SARD LOCAL MODIFICATION[^\n]*\n\/\/[^\n]*\npub fn msedge_tts_split_request\(\n {4}request: tungstenite::handshake::client::Request,\n\) -> Result<\(Sender<TcpStream>, Receiver<TcpStream>\)> \{\n {4}split\(crate::tts::websocket_connect_request\(request\)\?\)\n\}/,
         "",

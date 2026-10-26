@@ -17,6 +17,7 @@ vi.mock("../../src/lib/ipc", () => ({
   settingsGet: async (k: string) => settings.get(k) ?? null,
   settingsSet: async (k: string, v: string) => { settings.set(k, v); },
   ttsRouteLog: async () => [],
+  ttsCallLog: async () => [],
 }));
 
 // The suite runs in plain Node, by design (see vitest.config.ts). The observer needs `window` for one

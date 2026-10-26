@@ -12,6 +12,7 @@ use msedge_tts::tts::SpeechConfig;
 use msedge_tts::voice::{get_voices_list, Voice};
 use tauri::State;
 
+mod edge_calls; // what each synthesis call went through, for the session diagnostics
 mod edge_route; // which way the synthesis connection is opened, and what a refused way teaches
 mod edge_token; // the Sec-MS-GEC token the service asks of every connection
 
@@ -60,6 +61,8 @@ struct EdgeRunning {
     rx: Receiver<TcpStream>,
     /// When this client last finished a synthesis — the input to the idle rule below.
     last_used: Instant,
+    /// The route its connection was opened on (session diagnostics only).
+    route: edge_route::Route,
 }
 
 /// HOW LONG A WARM CLIENT MAY SIT IDLE BEFORE IT IS REPLACED RATHER THAN USED.
@@ -151,6 +154,8 @@ fn framed(audio: Vec<u8>, words: &[WordTiming]) -> Result<tauri::ipc::Response, 
 // voice list and the first frame together. The scheduler sets it on the first attempt of a recovery round
 // so that a connection which opens and then falls silent cannot spend the listener's whole budget by
 // itself; see `bounds_for`. It never shortens a call that is producing audio.
+// `diag_id` is the frontend's number for the dispatch, carried into the session diagnostics (`edge_calls`) and
+// nowhere else.
 #[tauri::command]
 pub async fn tts_synthesize(
     engines: State<'_, TtsEngine>,
@@ -159,9 +164,10 @@ pub async fn tts_synthesize(
     text: String,
     budget_ms: Option<u64>,
     first_audio_ms: Option<u64>,
+    diag_id: Option<u64>,
 ) -> Result<tauri::ipc::Response, String> {
     match engine.as_str() {
-        "edge" => edge_synthesize(&engines, id, text, budget_ms, first_audio_ms),
+        "edge" => edge_synthesize(&engines, id, text, budget_ms, first_audio_ms, diag_id),
         other => Err(format!("unknown TTS engine: {other}")),
     }
 }
@@ -189,6 +195,13 @@ pub async fn tts_synth_streaming(engines: State<'_, TtsEngine>) -> Result<bool, 
 #[tauri::command]
 pub async fn tts_route_log(since: u64) -> Result<Vec<edge_route::RouteTry>, String> {
     Ok(edge_route::route_log_since(since))
+}
+
+/// SESSION DIAGNOSTICS: the synthesis calls that ended after `since` (a sequence number), each with the moments it
+/// went through (`edge_calls`). Observation only, read like the route log.
+#[tauri::command]
+pub async fn tts_call_log(since: u64) -> Result<Vec<edge_calls::CallRecord>, String> {
+    Ok(edge_calls::call_log_since(since))
 }
 
 /// This call's cancel flag, installed for the duration of the call and retired on EVERY exit path.
@@ -455,9 +468,16 @@ fn http_status(e: &msedge_tts::error::Error) -> Option<u16> {
 ///
 /// The worker opens the connection on the first route that accepts it (`edge_route::connect`, at most one
 /// handshake per route), all inside the same budget. `waited_on` — the call carries a listener's budget — is
-/// the one thing the routes are told about the caller (see the rate-limit rule in `edge_route`).
-fn connect_bounded(routes: Arc<Mutex<edge_route::RouteBook>>, budget: Duration, cancel: &Arc<AtomicBool>, waited_on: bool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
-    connect_bounded_with(routes, budget, cancel, move |book, attempt| edge_route::connect(book, attempt, waited_on))
+/// the one thing the routes are told about the caller (see the rate-limit rule in `edge_route`). `diag` only labels
+/// the route log's entries.
+fn connect_bounded(
+    routes: Arc<Mutex<edge_route::RouteBook>>,
+    budget: Duration,
+    cancel: &Arc<AtomicBool>,
+    waited_on: bool,
+    diag: Option<u64>,
+) -> Result<(edge_route::Route, Sender<TcpStream>, Receiver<TcpStream>), String> {
+    connect_bounded_with(routes, budget, cancel, move |book, attempt| edge_route::connect(book, attempt, waited_on, diag))
 }
 
 /// `connect_bounded` with the connection supplied, so its bounds can be tested without a network. The result
@@ -530,8 +550,9 @@ fn load_edge_voices_bounded(budget: std::time::Duration, cancel: &AtomicBool) ->
 /// config to reconnect); `Stalled` means the worker still OWNS the client — it drops the socket at the
 /// next message from the service, or when the OS finally times the socket out — so the caller must
 /// reconnect next time. `Cancelled` is the same shape, raised by the frontend rather than a bound.
-enum EdgeSynth {
-    Ok(StreamedAudio, EdgeRunning),
+/// (`R` is the client handed back; only the tests use anything but `EdgeRunning`.)
+enum EdgeSynth<R = EdgeRunning> {
+    Ok(StreamedAudio, R),
     /// The service answered with an error; the worker has dropped the client.
     Failed(String),
     Stalled(String),
@@ -547,11 +568,36 @@ struct StreamedAudio {
 }
 
 /// One message from the streaming worker to the waiting caller.
-enum Chunk {
+enum Chunk<R = EdgeRunning> {
     Audio(Vec<u8>),
     Meta(Vec<msedge_tts::tts::AudioMetadata>),
-    Done(EdgeRunning),
+    Done(R),
     Err(String),
+}
+
+/// The moments one synthesis reached, for the session diagnostics (`edge_calls`): the request written and the
+/// service's `turn.start`, noted by the worker; the first audio, noted by the caller. Set once each, and shared
+/// outside the channel ON PURPOSE: a message would wake the waiting caller, and every bound would then be checked
+/// at different moments than before. No bound reads them.
+#[derive(Default)]
+struct Milestones {
+    sent: std::sync::OnceLock<Instant>,
+    turn_start: std::sync::OnceLock<Instant>,
+    first_audio: std::sync::OnceLock<Instant>,
+}
+
+impl Milestones {
+    fn note_into(&self, probe: &mut edge_calls::Probe) {
+        if let Some(&t) = self.sent.get() {
+            probe.sent(t);
+        }
+        if let Some(&t) = self.turn_start.get() {
+            probe.turn_started(t);
+        }
+        if let Some(&t) = self.first_audio.get() {
+            probe.first_audio(t);
+        }
+    }
 }
 
 /// The bounds one synthesis is held to, all measured from the moment the request is written.
@@ -678,7 +724,7 @@ fn escape_ssml_text(text: &str) -> String {
     out
 }
 
-fn edge_synth_once(mut running: EdgeRunning, text: &str, bounds: Bounds, cancel: Arc<AtomicBool>, streaming: &AtomicBool) -> EdgeSynth {
+fn edge_synth_once(mut running: EdgeRunning, text: &str, bounds: Bounds, cancel: Arc<AtomicBool>, streaming: &AtomicBool, probe: &mut edge_calls::Probe) -> EdgeSynth {
     // The worker owns the client for the duration of the call. It writes the request, then forwards
     // every message the service sends, and hands the client back with `Done` when the turn ends. It
     // checks the cancel flag BEFORE each read: a cancelled or abandoned call drops the client — and
@@ -688,11 +734,14 @@ fn edge_synth_once(mut running: EdgeRunning, text: &str, bounds: Bounds, cancel:
     let (tx, rx) = std::sync::mpsc::channel::<Chunk>();
     let text = escape_ssml_text(text); // the crate interpolates this straight into SSML
     let worker_cancel = cancel.clone();
+    let seen = Arc::new(Milestones::default());
+    let worker_seen = seen.clone();
     std::thread::spawn(move || {
         if let Err(e) = running.tx.send(&text, &running.config) {
             let _ = tx.send(Chunk::Err(edge_error("edge synth", &e)));
             return;
         }
+        let _ = worker_seen.sent.set(Instant::now());
         loop {
             if worker_cancel.load(Ordering::SeqCst) {
                 return; // drops `running` → the socket closes
@@ -708,6 +757,11 @@ fn edge_synth_once(mut running: EdgeRunning, text: &str, bounds: Bounds, cancel:
                     return;
                 }
             };
+            // `turn.start` reads as `Ok(None)`, like every message that carries no audio, so it is recognised by
+            // the client's own turn state (which the turn's end clears), never by position.
+            if worker_seen.turn_start.get().is_none() && running.rx.turn_started() {
+                let _ = worker_seen.turn_start.set(Instant::now());
+            }
             if let Some(m) = msg {
                 if tx.send(m).is_err() {
                     return; // the caller stopped waiting → drop the client
@@ -719,7 +773,15 @@ fn edge_synth_once(mut running: EdgeRunning, text: &str, bounds: Bounds, cancel:
             }
         }
     });
+    let outcome = await_stream(rx, &bounds, &cancel, streaming, &seen);
+    // What the worker reaches after this is after the call, and is not the call's.
+    seen.note_into(probe);
+    outcome
+}
 
+/// The caller's side of one synthesis: everything the worker sends, held to the three progress bounds. Separate
+/// from the worker so the bounds can be tested against a scripted stream.
+fn await_stream<R>(rx: std::sync::mpsc::Receiver<Chunk<R>>, bounds: &Bounds, cancel: &AtomicBool, streaming: &AtomicBool, seen: &Milestones) -> EdgeSynth<R> {
     // The caller waits in short slices so a cancel raised from another command is seen promptly,
     // and applies the three progress bounds. On any bound or a cancel the worker is abandoned with
     // the flag raised; it drops the socket at its next message.
@@ -748,8 +810,10 @@ fn edge_synth_once(mut running: EdgeRunning, text: &str, bounds: Bounds, cancel:
         match rx.recv_timeout(SLICE) {
             Ok(Chunk::Audio(b)) => {
                 if first_audio.is_none() {
-                    first_audio = Some(Instant::now());
+                    let now = Instant::now();
+                    first_audio = Some(now);
                     streaming.store(true, Ordering::SeqCst);
+                    let _ = seen.first_audio.set(now);
                 }
                 last_activity = Instant::now();
                 audio.extend_from_slice(&b);
@@ -793,7 +857,23 @@ fn first_audio_window(engines: &TtsEngine) -> u64 {
 /// Synthesize one sentence → MP3 bytes over the free Edge Read-Aloud WebSocket. Reuses a warm client
 /// per voice; a dropped socket reconnects on the next call. Online-required — an unreachable endpoint
 /// surfaces a clear error, which the frontend surfaces as the explicit Edge-unavailable pause.
-fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Option<u64>, first_audio_ms: Option<u64>) -> Result<tauri::ipc::Response, String> {
+fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Option<u64>, first_audio_ms: Option<u64>, diag: Option<u64>) -> Result<tauri::ipc::Response, String> {
+    // SESSION DIAGNOSTICS (`edge_calls`): the call is noted as it goes and filed on every exit path, after it has
+    // decided what it returns. Nothing below reads the record.
+    let mut probe = edge_calls::Probe::begin(diag, &text, budget_ms, first_audio_ms);
+    let result = edge_synthesize_noted(engines, id, text, budget_ms, first_audio_ms, &mut probe);
+    probe.finish(result.as_ref().err().map(String::as_str));
+    result
+}
+
+fn edge_synthesize_noted(
+    engines: &TtsEngine,
+    id: String,
+    text: String,
+    budget_ms: Option<u64>,
+    first_audio_ms: Option<u64>,
+    probe: &mut edge_calls::Probe,
+) -> Result<tauri::ipc::Response, String> {
     // A call the listener is waiting on carries its budget (clamped to the range the JS side may ask
     // for); the connect and voice-list phases draw from it too, so the whole command returns inside it.
     let budget = budget_ms.map(|b| Duration::from_millis(b.clamp(1_000, EDGE_SYNTH_TIMEOUT_SECS * 1_000)));
@@ -817,7 +897,9 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Opt
     }
     // A client the service has probably closed already (see `EDGE_IDLE_MAX_MS`) is replaced here, before
     // the request is written, rather than discovered as a failure by the caller.
-    let idle = guard.as_ref().map(|r| r.last_used.elapsed()).unwrap_or_default();
+    let found = guard.as_ref().map(|r| r.last_used.elapsed());
+    probe.found_client(found);
+    let idle = found.unwrap_or_default();
     let stale = guard.is_some() && edge_client_is_stale(idle, edge_idle_max());
     let need_new = guard.as_ref().map(|r| r.voice_id != id).unwrap_or(true) || stale;
     if need_new {
@@ -833,8 +915,10 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Opt
             .ok_or_else(|| format!("unknown edge voice: {id}"))?;
         let mut config = SpeechConfig::from(voice);
         config.audio_format = "audio-24khz-48kbitrate-mono-mp3".to_string(); // force MP3 for WebAudio
-        let (tx, rx) = connect_bounded(engines.edge_routes.clone(), remaining(deadline, "connect")?, &cancel, budget_ms.is_some())?;
-        *guard = Some(EdgeRunning { voice_id: id.clone(), config, tx, rx, last_used: Instant::now() });
+        probe.connecting();
+        let (route, tx, rx) = connect_bounded(engines.edge_routes.clone(), remaining(deadline, "connect")?, &cancel, budget_ms.is_some(), probe.diag())?;
+        probe.connected(route);
+        *guard = Some(EdgeRunning { voice_id: id.clone(), config, tx, rx, last_used: Instant::now(), route });
     }
     // RAWY-FINAL: `let Some(..) else` rather than `.unwrap()`. The `need_new` branch above makes this
     // provably `Some` today, but this line runs while `engines.edge` is HELD — the one place a panic
@@ -842,14 +926,18 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Opt
     let Some(running) = guard.take() else {
         return Err("edge connect: no warm client".into());
     };
+    if !need_new {
+        probe.reused(running.route);
+    }
     let budget_left = budget.map(|b| b.saturating_sub(started.elapsed()));
     let cap_left = first_audio_cap.map(|c| c.saturating_sub(started.elapsed()));
     let bounds = bounds_for(text.chars().count(), first_audio_window(engines), budget_left, cap_left);
+    probe.window(bounds.first_audio);
     // RAWY-172 (AUD-2) / RAWY-257: the synth is bounded while HOLDING the guard, so callers serialize
     // exactly as before (no second connection): the warm client is moved to the worker and put back.
     // On a stall or a cancel the slot is left empty, so the next call reconnects.
     engines.streaming.store(false, Ordering::SeqCst);
-    let outcome = edge_synth_once(running, &text, bounds, cancel.clone(), &engines.streaming);
+    let outcome = edge_synth_once(running, &text, bounds, cancel.clone(), &engines.streaming, probe);
     engines.streaming.store(false, Ordering::SeqCst);
     let streamed = match outcome {
         EdgeSynth::Ok(audio, mut running) => {
@@ -1436,6 +1524,178 @@ mod tests {
             assert_eq!(handshakes.load(Ordering::SeqCst), usize::from(first_fails), "nothing began after the cancel");
         }
     }
+
+    // ---- the stream's bounds, against a scripted stream (`await_stream`) ----
+
+    use super::{await_stream, Bounds, Chunk, EdgeSynth, Milestones};
+
+    #[derive(Clone, Copy)]
+    enum Step {
+        Audio,
+        Meta,
+        Done,
+        Fail,
+        /// The worker ends without a word, as one that saw the cancel flag first does.
+        Vanish,
+    }
+
+    #[derive(Debug, PartialEq)]
+    enum Came {
+        Ok { bytes: usize, first_audio_ms: u64 },
+        Failed(String),
+        Stalled(String),
+        Cancelled,
+    }
+
+    fn bounds(first_audio: u64, idle: u64, total: u64) -> Bounds {
+        Bounds { first_audio: Duration::from_millis(first_audio), idle: Duration::from_millis(idle), total: Duration::from_millis(total) }
+    }
+
+    /// Waits on a stream that delivers `script` (ms from the start, what arrives), with `turn_start` noted by the
+    /// worker and a cancel raised at those moments when given. The scripted worker stops at the first step it
+    /// cannot deliver, as the real one does. Returns what the wait came to, when, and what it noted.
+    fn wait_on(script: &[(u64, Step)], b: Bounds, turn_start: Option<u64>, cancel_at: Option<u64>) -> (Came, Duration, Arc<Milestones>) {
+        let (tx, rx) = std::sync::mpsc::channel::<Chunk<u32>>();
+        let seen = Arc::new(Milestones::default());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let t0 = Instant::now();
+        let at = move |ms: u64| std::thread::sleep((t0 + Duration::from_millis(ms)).saturating_duration_since(Instant::now()));
+        if let Some(ms) = turn_start {
+            let seen = seen.clone();
+            std::thread::spawn(move || {
+                at(ms);
+                let _ = seen.turn_start.set(Instant::now());
+            });
+        }
+        if let Some(ms) = cancel_at {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                at(ms);
+                cancel.store(true, Ordering::SeqCst);
+            });
+        }
+        let script = script.to_vec();
+        std::thread::spawn(move || {
+            for (ms, step) in script {
+                at(ms);
+                let sent = match step {
+                    Step::Audio => tx.send(Chunk::Audio(vec![0; 100])),
+                    Step::Meta => tx.send(Chunk::Meta(Vec::new())),
+                    Step::Done => tx.send(Chunk::Done(7)),
+                    Step::Fail => tx.send(Chunk::Err("edge synth: scripted".into())),
+                    Step::Vanish => return,
+                };
+                if sent.is_err() || matches!(step, Step::Done | Step::Fail) {
+                    return;
+                }
+            }
+            // An exhausted script keeps its channel open: the service has gone quiet, not away.
+            std::thread::sleep(Duration::from_secs(5));
+            drop(tx);
+        });
+        let came = match await_stream(rx, &b, &cancel, &AtomicBool::new(false), &seen) {
+            EdgeSynth::Ok(audio, 7) => Came::Ok { bytes: audio.audio_bytes.len(), first_audio_ms: audio.first_audio_ms },
+            EdgeSynth::Ok(_, other) => panic!("handed back {other}"),
+            EdgeSynth::Failed(e) => Came::Failed(e),
+            EdgeSynth::Stalled(why) => Came::Stalled(why),
+            EdgeSynth::Cancelled => Came::Cancelled,
+        };
+        (came, t0.elapsed(), seen)
+    }
+
+    fn within(elapsed: Duration, from_ms: u64, to_ms: u64) -> bool {
+        elapsed >= Duration::from_millis(from_ms) && elapsed < Duration::from_millis(to_ms)
+    }
+
+    /// What a wait came to, without the first-audio time (compared against a window instead).
+    fn shape(came: &Came) -> Came {
+        match came {
+            Came::Ok { bytes, .. } => Came::Ok { bytes: *bytes, first_audio_ms: 0 },
+            Came::Failed(e) => Came::Failed(e.clone()),
+            Came::Stalled(why) => Came::Stalled(why.clone()),
+            Came::Cancelled => Came::Cancelled,
+        }
+    }
+
+    /// Each bound, as it has always behaved: these pin the behaviour the diagnostics must not change.
+    #[test]
+    fn each_stream_bound_ends_the_wait_with_its_own_reason_at_its_own_time() {
+        use Step::*;
+        let b = || bounds(300, 200, 450);
+        let (came, t, _) = wait_on(&[(50, Audio), (60, Meta), (120, Audio), (150, Done)], b(), None, None);
+        assert!(matches!(came, Came::Ok { bytes: 200, first_audio_ms } if (40..200).contains(&first_audio_ms)), "{came:?}");
+        assert!(within(t, 150, 300), "{t:?}");
+
+        let (came, t, _) = wait_on(&[], b(), None, None);
+        assert_eq!(came, Came::Stalled("edge synth stalled: no audio".into()));
+        assert!(within(t, 300, 450), "{t:?}");
+
+        let (came, t, _) = wait_on(&[(50, Audio)], b(), None, None);
+        assert_eq!(came, Came::Stalled("edge synth stalled: stream idle".into()));
+        assert!(within(t, 250, 400), "{t:?}");
+
+        let steady: Vec<_> = (1..=12).map(|i| (i * 50, Audio)).collect();
+        let (came, t, _) = wait_on(&steady, b(), None, None);
+        assert_eq!(came, Came::Stalled("edge synth stalled: over budget".into()));
+        assert!(within(t, 450, 600), "{t:?}");
+
+        let (came, _, _) = wait_on(&[(100, Fail)], b(), None, None);
+        assert_eq!(came, Came::Failed("edge synth: scripted".into()));
+
+        let (came, t, _) = wait_on(&[], b(), None, Some(100));
+        assert_eq!(came, Came::Cancelled);
+        assert!(within(t, 100, 250), "{t:?}");
+
+        let (came, _, _) = wait_on(&[(100, Vanish)], b(), None, None);
+        assert_eq!(came, Came::Failed("edge synth: worker ended".into()));
+        let (came, _, _) = wait_on(&[(150, Vanish)], b(), None, Some(100));
+        assert_eq!(came, Came::Cancelled, "a worker that left on the cancel is a cancel");
+    }
+
+    /// The milestones are noted where they happened and change nothing: every script ends the same way, inside the
+    /// same bound's window, with or without a `turn.start`. (They cannot move the wait's wake-ups at all — no message
+    /// is sent for them — so the windows are only as wide as a loaded machine needs.)
+    #[test]
+    fn a_noted_turn_start_changes_no_wait() {
+        use Step::*;
+        let b = || bounds(300, 200, 450);
+        let steady: Vec<_> = (1..=12).map(|i| (i * 50, Audio)).collect();
+        let scripts: [(&[(u64, Step)], Option<u64>, (u64, u64)); 6] = [
+            (&[(50, Audio), (60, Meta), (120, Audio), (150, Done)], None, (150, 300)),
+            (&[], None, (300, 450)),
+            (&[(50, Audio)], None, (250, 400)),
+            (&steady[..], None, (450, 600)),
+            (&[(100, Fail)], None, (100, 250)),
+            (&[], Some(150), (150, 300)),
+        ];
+        for (i, (script, cancel_at, (from, to))) in scripts.iter().enumerate() {
+            let (plain, t_plain, seen_plain) = wait_on(script, b(), None, *cancel_at);
+            let (noted, t_noted, seen) = wait_on(script, b(), Some(20), *cancel_at);
+            assert_eq!(shape(&noted), shape(&plain), "script {i}");
+            if let (Came::Ok { first_audio_ms: a, .. }, Came::Ok { first_audio_ms: b, .. }) = (&plain, &noted) {
+                assert!((40..200).contains(a) && (40..200).contains(b), "script {i}: first audio {a} vs {b} ms");
+            }
+            assert!(within(t_plain, *from, *to) && within(t_noted, *from, *to), "script {i}: {t_plain:?} vs {t_noted:?}");
+            assert!(seen_plain.turn_start.get().is_none() && seen.turn_start.get().is_some(), "script {i}");
+            // The first audio is noted by the wait itself, at the moment it came.
+            assert_eq!(seen.first_audio.get().is_some(), script.iter().any(|&(_, s)| matches!(s, Audio)), "script {i}");
+        }
+    }
+
+    /// What reaches the call's record: the moments as they happened, and nothing the worker reaches after the call.
+    #[test]
+    fn the_record_takes_the_moments_the_call_reached_and_nothing_after() {
+        let started = Instant::now();
+        let mut probe = super::edge_calls::Probe::begin(Some(3), "", None, None);
+        let seen = Milestones::default();
+        let _ = seen.sent.set(started + Duration::from_millis(5));
+        let _ = seen.turn_start.set(started + Duration::from_millis(190));
+        seen.note_into(&mut probe);
+        let _ = seen.first_audio.set(started + Duration::from_millis(900)); // after the call: not the call's
+        let r = probe.noted();
+        assert!(matches!(r.sent_ms, Some(4..=6)) && matches!(r.turn_start_ms, Some(189..=191)), "{r:?}");
+        assert_eq!(r.first_audio_ms, None);
+    }
 }
 
 /// Live-service tests. They need the network and the real Edge endpoint, so they are `#[ignore]` and
@@ -1527,7 +1787,7 @@ mod live_edge {
         use tauri::ipc::IpcResponse;
         // the app installs the provider at startup (lib.rs); the test binary has to do the same
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        edge_synthesize(e, VOICE.into(), text.into(), budget, None).map(|r| match r.body() {
+        edge_synthesize(e, VOICE.into(), text.into(), budget, None, None).map(|r| match r.body() {
             Ok(tauri::ipc::InvokeResponseBody::Raw(b)) => b.len(),
             _ => 0,
         })
@@ -1707,7 +1967,7 @@ mod live_edge {
         warm(&e);
         let text = nonce(&"The cap bounds silence; a stream that has begun keeps its whole budget. ".repeat(6));
         let t0 = Instant::now();
-        let r = edge_synthesize(&e, VOICE.into(), text.clone(), Some(12_000), Some(3_000));
+        let r = edge_synthesize(&e, VOICE.into(), text.clone(), Some(12_000), Some(3_000), None);
         let took = t0.elapsed();
         match r {
             Ok(resp) => {
@@ -1724,7 +1984,7 @@ mod live_edge {
         }
         // and the cap never outlives the budget: a 12 s cap on a 3 s budget is a 3 s call
         let t1 = Instant::now();
-        let _ = edge_synthesize(&e, VOICE.into(), nonce(&"x ".repeat(2_000)), Some(3_000), Some(12_000));
+        let _ = edge_synthesize(&e, VOICE.into(), nonce(&"x ".repeat(2_000)), Some(3_000), Some(12_000), None);
         assert!(t1.elapsed() <= Duration::from_millis(3_400), "took {:?} for a 3 s budget", t1.elapsed());
     }
 
@@ -1739,7 +1999,7 @@ mod live_edge {
         assert!(!e.streaming.load(Ordering::SeqCst), "idle: not streaming");
         let long = nonce(&"A stream that has begun is left to finish; the flag says so while it runs. ".repeat(6));
         let e2 = e.clone();
-        let worker = std::thread::spawn(move || edge_synthesize(&e2, VOICE.into(), long, None, None).is_ok());
+        let worker = std::thread::spawn(move || edge_synthesize(&e2, VOICE.into(), long, None, None, None).is_ok());
         let t0 = Instant::now();
         let mut seen = false;
         while t0.elapsed() < Duration::from_secs(20) && !worker.is_finished() {
@@ -1773,7 +2033,7 @@ mod live_edge {
         let short = synth(&e, &nonce(&"two ".repeat(200)), Some(1_000));
         assert!(lock_recover(&e.cancel).is_none(), "retired after {short:?}");
         // an unknown voice: the earliest early return there is
-        let unknown = edge_synthesize(&e, "no-such-voice".into(), "text".into(), None, None);
+        let unknown = edge_synthesize(&e, "no-such-voice".into(), "text".into(), None, None, None);
         assert!(unknown.is_err());
         assert!(lock_recover(&e.cancel).is_none(), "retired after an unknown voice");
         // and a success

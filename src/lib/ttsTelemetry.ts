@@ -29,7 +29,7 @@
 // stalled: no audio", a socket code) and never from the book. The voice id and the playback speed are
 // recorded because a latency number means nothing without them.
 import { useTts, cursorEpoch } from "./tts";
-import { settingsGet, settingsSet, ttsRouteLog, type RouteTry } from "./ipc";
+import { settingsGet, settingsSet, ttsCallLog, ttsRouteLog, type CallRecord, type RouteTry } from "./ipc";
 
 /** The key this instrument owns. New name, new shape — never mixed with v3's outcome records. */
 const KEY = "tts_resilience_v1";
@@ -38,6 +38,13 @@ const KEEP_SESSIONS = 200;
 const KEEP_DISPATCHES = 800;
 const KEEP_EVENTS = 400;
 const KEEP_ROUTES = 800;
+/**
+ * The engine's per-call records (`tts_call_log`) are the largest entries per sentence, so they are kept per
+ * session up to this many, and only for the newest sessions: measured on two real installations, the whole row
+ * is 5–8 MB across 200 sessions, and a session's calls add about a quarter to that session.
+ */
+const KEEP_CALLS = 400;
+const KEEP_CALL_SESSIONS = 20;
 /** CRASH SAFETY: the session in progress, on its own small key (see `snapshotLive`). */
 const LIVE_KEY = "tts_resilience_live";
 
@@ -67,6 +74,8 @@ export interface DispatchRecord {
   kind: string | null;
   /** the engine's own words, truncated. Never book text. */
   detail: string | null;
+  /** the dispatch's number, which the engine's record of the call carries too (`calls`); a counter, never text */
+  diag?: number;
 }
 
 /** A moment the listener or the system marked. Timeline, not aggregate. */
@@ -163,6 +172,10 @@ export interface ResilienceSession {
   /** SESSION DIAGNOSTICS: every route the engine tried during this session, as it answered (`tts_route_log`). */
   routes?: RouteTry[];
   routesDropped?: number;
+  /** SESSION DIAGNOSTICS: what each synthesis call of this session went through (`tts_call_log`), joined to
+   *  `dispatches` by `diag`. Kept for the newest `KEEP_CALL_SESSIONS` sessions only. */
+  calls?: CallRecord[];
+  callsDropped?: number;
 }
 
 // ---- in-flight state ----------------------------------------------------------------------------
@@ -197,6 +210,8 @@ let lastUnderruns = 0;
 let dirty = false;
 /** The last `tts_route_log` sequence number filed. */
 let routeSeq = 0;
+/** The last `tts_call_log` sequence number filed. */
+let callSeq = 0;
 /** A snapshot of the session in progress is on `LIVE_KEY` and must be cleared once the session is filed. */
 let liveWritten = false;
 let events = 0;
@@ -424,6 +439,29 @@ async function collectRoutes(): Promise<void> {
 }
 
 /**
+ * SESSION DIAGNOSTICS: the engine's record of each synthesis call that ended since the last read, filed under the
+ * session it began in, exactly as `collectRoutes` files the routes. Same places, same guarantee.
+ */
+async function collectCalls(): Promise<void> {
+  let got: CallRecord[];
+  try { got = await ttsCallLog(callSeq); } catch (e) { faults++; lastFault = String(e); return; }
+  for (const c of got) {
+    if (c.seq <= callSeq) continue;
+    callSeq = c.seq;
+    const owner = [cur, ...[...history].reverse()].find((s) => s && s.startedAt <= c.at && c.at <= (s.endedAt ?? Infinity));
+    if (!owner) continue;
+    const list = (owner.calls ??= []);
+    if (list.length >= KEEP_CALLS) { owner.callsDropped = (owner.callsDropped ?? 0) + 1; continue; }
+    list.push(c);
+  }
+}
+
+/** The per-call records of sessions older than the newest `KEEP_CALL_SESSIONS` are let go. */
+function pruneCalls(): void {
+  for (const s of history.slice(0, Math.max(0, history.length - KEEP_CALL_SESSIONS))) delete s.calls;
+}
+
+/**
  * CRASH SAFETY. The session in progress is written to its own small key whenever nothing is sounding — the
  * listener is waiting, paused, or looking at an error — so a killed or crashed process cannot take the evidence
  * of a problem with it: the moments worth recording are exactly the moments nothing sounds. GUARANTEE 1 is
@@ -433,6 +471,7 @@ async function snapshotLive(): Promise<void> {
   if (!cur || sounding()) return;
   try {
     await collectRoutes();
+    await collectCalls();
     if (!cur || sounding()) return;
     const snap: ResilienceSession = { ...cur, unitOutcomes: [...units.values()].map((u) => ({ ...u })), meta: { events, faults, lastFault, version: 1 } };
     await settingsSet(LIVE_KEY, JSON.stringify(snap));
@@ -448,7 +487,9 @@ async function flush(force = false): Promise<void> {
   try {
     await load();
     await collectRoutes();
+    await collectCalls();
     if (!force && sounding()) { dirty = true; return; }
+    pruneCalls();
     await settingsSet(KEY, JSON.stringify(history));
     if (!cur && liveWritten) { await settingsSet(LIVE_KEY, ""); liveWritten = false; }
   } catch (e) { faults++; lastFault = String(e); dirty = true; }

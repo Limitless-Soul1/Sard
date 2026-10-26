@@ -54,9 +54,21 @@ export const ttsCancelSynth = (): Promise<boolean> => invoke<boolean>("tts_cance
 /** Whether the synthesis in flight has produced audio yet — see RULE 2a in `ttsScheduler.ts`. */
 export const ttsSynthStreaming = (): Promise<boolean> => invoke<boolean>("tts_synth_streaming");
 /** One route the synthesis connection tried, as it answered (session diagnostics; no URL, token or body). */
-export interface RouteTry { seq: number; at: number; route: string; outcome: string; status: number | null; ms: number; waitedOn: boolean }
+export interface RouteTry { seq: number; at: number; route: string; outcome: string; status: number | null; ms: number; waitedOn: boolean; diag?: number }
 /** The routes tried after sequence number `since` — read by the read-aloud telemetry while nothing sounds. */
 export const ttsRouteLog = (since: number): Promise<RouteTry[]> => invoke<RouteTry[]>("tts_route_log", { since });
+/**
+ * One synthesis call, as it went (session diagnostics; numbers and names only, never text). `diag` is the dispatch
+ * number the call was made for; the `…Ms` moments are milliseconds from the call's start. See `edge_calls.rs`.
+ */
+export interface CallRecord {
+  seq: number; diag?: number; at: number; waitedOn: boolean; budgetMs?: number; capMs?: number; prior: number;
+  fresh: boolean; idleMs?: number; route?: string;
+  connectMs?: number; connectedMs?: number; sentMs?: number; turnStartMs?: number; firstAudioMs?: number; windowMs?: number;
+  endMs: number; end: string; status?: number;
+}
+/** The synthesis calls that ended after sequence number `since` — read by the read-aloud telemetry while nothing sounds. */
+export const ttsCallLog = (since: number): Promise<CallRecord[]> => invoke<CallRecord[]>("tts_call_log", { since });
 /** The window's own system menu, at physical screen coordinates — see `WindowChrome.tsx`. */
 export const showWindowMenu = (x: number, y: number): Promise<number> => invoke<number>("show_window_menu", { x, y });
 /** Native fullscreen. Entering returns whether the window was maximized, which the exit hands back

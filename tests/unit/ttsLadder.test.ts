@@ -58,8 +58,8 @@ describe("one synthesis at a time — the Rust side's single-call assumption", (
     // `attemptSynth` wraps its call in `engine.run(..., { preempt: true })` — the listener's own synthesis,
     // which may pre-empt. `runPrepare` wraps its own in `engine.run(...)` without pre-emption, because a
     // background preparation must never displace a listener-facing call.
-    expect(src).toContain("engine.run(() => synthInvoke(i, ctx.budgetMs, ctx.firstAudioMs), { preempt: true })");
-    expect(src).toMatch(/const out = await engine\.run\(async \(\) => \{[\s\S]*?rawSynth\(curEngine, curVoice, engineTextFor\(text\), PREPARE_UNIT\)/);
+    expect(src).toContain("engine.run(() => synthInvoke(i, ctx.budgetMs, ctx.firstAudioMs, diag), { preempt: true })");
+    expect(src).toMatch(/const out = await engine\.run\(async \(\) => \{[\s\S]*?rawSynth\(curEngine, curVoice, engineTextFor\(text\), PREPARE_UNIT, undefined, undefined, diag\)/);
     // and the gate is the only thing that owns the turn
     expect(calls(/new EngineTurnstile\(\)/g)).toBe(1);
   });
@@ -102,14 +102,15 @@ describe("prepared audio can only ever answer the sentence it was made from", ()
   it("carries every input the produced bytes depend on: engine, voice, and the exact engine string", () => {
     expect(src).toMatch(/const prepKey = \(text: string\): string =>\s*`\$\{curEngine\}\|\$\{curVoice\}\|\$\{engineTextFor\(text\)\}`/);
     // and the request is built from the same three, so the key cannot describe a different call
-    expect(src).toContain("rawSynth(curEngine, curVoice, engineTextFor(text), i, budgetMs, firstAudioMs)");
+    // (`diag` is the dispatch's number for the diagnostics; the engine never sends it to the service.)
+    expect(src).toContain("rawSynth(curEngine, curVoice, engineTextFor(text), i, budgetMs, firstAudioMs, diag)");
     expect(calls(/function engineTextFor\(/g)).toBe(1);
   });
 
   it("does not key on speed, because speed is applied at playback and not at synthesis", () => {
     // RAWY-264: the same bytes serve every speed. If synthesis ever took the speed, this assertion is the
     // one that fails — and the key would have to gain it before prepared audio could be reused again.
-    expect(src).toMatch(/invoke<ArrayBuffer>\("tts_synthesize", \{ engine, id, text, budgetMs: budgetMs \?\? null, firstAudioMs: firstAudioMs \?\? null \}\)/);
+    expect(src).toMatch(/invoke<ArrayBuffer>\("tts_synthesize", \{ engine, id, text, budgetMs: budgetMs \?\? null, firstAudioMs: firstAudioMs \?\? null, diagId: diag \?\? null \}\)/);
     expect(src).not.toMatch(/prepKey[\s\S]{0,200}speed/);
   });
 

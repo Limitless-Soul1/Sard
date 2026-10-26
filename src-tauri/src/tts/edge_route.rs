@@ -42,6 +42,12 @@
 //!     as before.
 //!   * At most one handshake per route per attempt. A connection clears its route's record. Nothing persists:
 //!     each launch starts from the order.
+//!   * A SLOW FIRST HANDSHAKE IS NOT WAITED OUT ALONE. When the first route has not answered within
+//!     `HEDGE_AFTER`, the next route in the plan is started beside it, and the first handshake to connect wins
+//!     the attempt; the other is dropped unused when it finishes and records nothing, success or failure. Every
+//!     rule above still decides what a failure means and whether a failure moves the attempt on; only a handshake
+//!     that is still running is no longer the only one. Where the first route answers normally, the second is
+//!     never contacted (see `HEDGE_AFTER`).
 //!
 //! WHY THESE NUMBERS. One installation's recorded read-aloud sessions on the msedge host, 2026-10-12 to 10-23:
 //! 21,170 requests, 97 failed, 82 of them HTTP 429 at connect. The connection failures came in 57 runs — 34 of
@@ -64,7 +70,8 @@
 
 use std::collections::VecDeque;
 use std::net::TcpStream;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use msedge_tts::tts::stream::{msedge_tts_split_request, Receiver, Sender};
@@ -328,41 +335,110 @@ impl RouteBook {
     }
 }
 
-/// One connection attempt as its caller sees it: the route whose handshake is running, and whether the caller
-/// has stopped waiting. A handshake the caller gave up on is the caller's to record; the worker then records
-/// nothing and tries no other route.
+/// One connection attempt as its caller sees it: the routes whose handshakes are running, the route that won the
+/// attempt, and whether the caller has stopped waiting. All three change under ONE lock, so at most one
+/// handshake can ever win an attempt. A handshake the caller gave up on is the caller's to record (`end`); a
+/// handshake that finishes after the attempt was won or given up records nothing, and its connection is dropped
+/// unused where it finished.
+///
+/// An attempt made for a call can also see that call's cancel flag. It uses it for ONE thing: no handshake
+/// starts once the call is cancelled — not even the second route, whose start would otherwise fall between the
+/// listener's cancel and the moment the caller next looks (one wait slice). Everything else about a cancel is the
+/// caller's, as before: a handshake already running finishes as it always did.
 #[derive(Debug, Default)]
-pub(super) struct Attempt(Mutex<AttemptState>);
+pub(super) struct Attempt {
+    state: Mutex<AttemptState>,
+    cancel: Option<Arc<AtomicBool>>,
+}
 
 #[derive(Debug, Default)]
 struct AttemptState {
-    in_flight: Option<Route>,
+    in_flight: Vec<Route>,
+    winner: Option<Route>,
     over: bool,
 }
 
+/// Where a finished handshake stands with its attempt.
+#[derive(Debug, PartialEq, Eq)]
+enum Finish {
+    /// It connected first: the attempt is its.
+    Won,
+    /// It failed while the attempt was still open: its failure counts against its route.
+    Failed,
+    /// Another route had already won the attempt, or the caller had stopped waiting: dropped, nothing recorded.
+    Unused,
+}
+
 impl Attempt {
-    /// A handshake on `route` is about to start; false when the caller has already stopped waiting.
+    /// An attempt for a call whose cancel flag is `cancel`.
+    pub(super) fn for_call(cancel: Arc<AtomicBool>) -> Self {
+        Attempt { state: Mutex::default(), cancel: Some(cancel) }
+    }
+
+    /// A handshake on `route` is about to start; false once the call is cancelled, the caller has stopped
+    /// waiting, or the attempt is won.
     fn begin(&self, route: Route) -> bool {
-        let mut state = lock_recover(&self.0);
-        if state.over {
+        if self.cancel.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
             return false;
         }
-        state.in_flight = Some(route);
+        let mut state = lock_recover(&self.state);
+        if state.over || state.winner.is_some() {
+            return false;
+        }
+        state.in_flight.push(route);
         true
     }
 
-    /// The handshake has returned; false when the caller stopped waiting while it ran.
-    fn finish(&self) -> bool {
-        let mut state = lock_recover(&self.0);
-        state.in_flight = None;
-        !state.over
+    /// The handshake on `route` has returned, `connected` or not.
+    fn finish(&self, route: Route, connected: bool) -> Finish {
+        let mut state = lock_recover(&self.state);
+        state.in_flight.retain(|r| *r != route);
+        if state.over || state.winner.is_some() {
+            Finish::Unused
+        } else if connected {
+            state.winner = Some(route);
+            Finish::Won
+        } else {
+            Finish::Failed
+        }
     }
 
-    /// The caller stops waiting. Returns the route whose handshake was still running, if one was.
-    pub(super) fn end(&self) -> Option<Route> {
-        let mut state = lock_recover(&self.0);
+    /// Whether the caller has stopped waiting.
+    fn is_over(&self) -> bool {
+        lock_recover(&self.state).over
+    }
+
+    /// The caller stops waiting. Returns the routes whose handshakes were still running.
+    pub(super) fn end(&self) -> Vec<Route> {
+        let mut state = lock_recover(&self.state);
         state.over = true;
-        state.in_flight.take()
+        std::mem::take(&mut state.in_flight)
+    }
+}
+
+/// Record a handshake's failure and say whether it moves the attempt on to the next route in the plan. One
+/// decision for both ways of making an attempt, so they cannot drift apart.
+fn record_failure(book: &Mutex<RouteBook>, plan: &[Route], index: usize, route: Route, e: &AttemptError, waited_on: bool, now: Instant) -> bool {
+    let mut book = lock_recover(book);
+    let cooling = book.failed(route, e.failure, now);
+    if e.failure == Failure::RateLimited {
+        // A rate limit's pressure may be shared, so it moves on only in the one case the rules allow.
+        waited_on && index == 0 && plan.get(1).is_some_and(|&next| book.rate_limit_fallback(route, next, now))
+    } else {
+        // Otherwise only from a route this failure has shown to be the problem.
+        cooling
+    }
+}
+
+/// The report of a failed attempt: the routes in the order they answered, the status that of the last.
+fn attempt_failed(tried: &[String], status: Option<u16>) -> String {
+    if tried.is_empty() {
+        return "edge connect: abandoned".into();
+    }
+    let tried = tried.join(", ");
+    match status {
+        Some(status) => format!("edge connect: http {status}; {tried}"),
+        None => format!("edge connect: {tried}"),
     }
 }
 
@@ -371,9 +447,13 @@ pub(super) fn timed_out(book: &Mutex<RouteBook>, route: Route) {
     lock_recover(book).failed(route, Failure::TimedOut, Instant::now());
 }
 
-/// One connection attempt across the routes, by the rules at the top of this file. `waited_on` says the listener
-/// is waiting on it (a recovery-round call). `try_route` makes the connection on one route; the book is never
-/// locked while it runs.
+/// One connection attempt across the routes, one handshake after another, by the rules at the top of this file.
+/// `waited_on` says the listener is waiting on it (a recovery-round call). `try_route` makes the connection on
+/// one route; the book is never locked while it runs.
+///
+/// The production connect is `connect_hedged_via`; this sequential form is kept as the reference its rules are
+/// tested against (on a virtual clock, which the threaded form cannot use), and for the bounded-connect tests.
+#[cfg(test)]
 pub(super) fn connect_via<C>(
     book: &Mutex<RouteBook>,
     attempt: &Attempt,
@@ -389,7 +469,7 @@ pub(super) fn connect_via<C>(
             break;
         }
         let result = try_route(route);
-        if !attempt.finish() {
+        if attempt.finish(route, result.is_ok()) == Finish::Unused {
             // The caller gave up during this handshake and has recorded it; whatever came back goes unused.
             return Err(format!("edge connect: {} abandoned", route.name()));
         }
@@ -400,36 +480,111 @@ pub(super) fn connect_via<C>(
             }
             Err(e) => e,
         };
-        let moves_on = {
-            let mut book = lock_recover(book);
-            let cooling = book.failed(route, e.failure, now());
-            if e.failure == Failure::RateLimited {
-                // A rate limit's pressure may be shared, so it moves on only in the one case the rules allow.
-                waited_on && i == 0 && plan.get(1).is_some_and(|&next| book.rate_limit_fallback(route, next, now()))
-            } else {
-                // Otherwise only from a route this failure has shown to be the problem.
-                cooling
-            }
-        };
+        let moves_on = record_failure(book, &plan, i, route, &e, waited_on, now());
         tried.push(format!("{} {} ({})", route.name(), e.failure.name(), e.detail));
         status = e.status;
         if !moves_on {
             break;
         }
     }
-    if tried.is_empty() {
-        return Err("edge connect: abandoned".into());
+    Err(attempt_failed(&tried, status))
+}
+
+/// How long the first route's handshake runs alone before the next route is started beside it.
+///
+/// MEASURED. Of 273 handshakes the owner's installation made on msedge — 73 in real listening (2026-10-24/25) and
+/// 200 probed on 2026-10-26 — the slowest took 1.92 s (p95 0.80 s), so where msedge answers normally the second
+/// route is never contacted. On the affected installation (245 recorded, 2026-10-25) 60% took longer than 2 s,
+/// up to 42.8 s, and none ended between 2 and 3 s: a handshake not done by 2 s was not about to be.
+pub(super) const HEDGE_AFTER: Duration = Duration::from_secs(2);
+
+/// How often a waiting attempt looks whether its caller has stopped waiting, so it never outlives its caller by
+/// more than this.
+const ATTEMPT_POLL: Duration = Duration::from_millis(100);
+
+/// What a handshake running on its own thread reports to its attempt.
+enum Leg<C> {
+    Won(C),
+    Failed { route: Route, index: usize, error: AttemptError, moves_on: bool },
+}
+
+/// `connect_via`, with the next route in the plan started beside the first when the first has not answered
+/// within `hedge_after` (see THE RULES). Each handshake runs on its own thread, because a handshake cannot be
+/// interrupted; the first to connect wins under the attempt's lock and is the only connection returned. A
+/// handshake that finishes after that — or after the caller stopped waiting — is dropped on its own thread,
+/// unused, and records nothing. Failures are recorded and decided by `record_failure`, exactly as in
+/// `connect_via`; a failure that would end the attempt there ends it here once no other handshake is running.
+/// Returns within `ATTEMPT_POLL` of the caller giving up.
+pub(super) fn connect_hedged_via<C: Send + 'static>(
+    book: &Arc<Mutex<RouteBook>>,
+    attempt: &Arc<Attempt>,
+    waited_on: bool,
+    hedge_after: Duration,
+    try_route: Arc<dyn Fn(Route) -> Result<C, AttemptError> + Send + Sync>,
+) -> Result<C, String> {
+    let plan = lock_recover(book).plan(Instant::now());
+    let (tx, rx) = mpsc::channel::<Leg<C>>();
+    let mut started = vec![false; plan.len()];
+    let start = |index: usize, started: &mut Vec<bool>| -> bool {
+        let route = plan[index];
+        if started[index] || !attempt.begin(route) {
+            return false;
+        }
+        started[index] = true;
+        let (book, attempt, tx, try_route, plan) = (book.clone(), attempt.clone(), tx.clone(), try_route.clone(), plan.clone());
+        std::thread::spawn(move || {
+            let result = try_route(route);
+            match (attempt.finish(route, result.is_ok()), result) {
+                (Finish::Won, Ok(client)) => {
+                    lock_recover(&book).succeeded(route);
+                    let _ = tx.send(Leg::Won(client));
+                }
+                (Finish::Failed, Err(error)) => {
+                    let moves_on = record_failure(&book, &plan, index, route, &error, waited_on, Instant::now());
+                    let _ = tx.send(Leg::Failed { route, index, error, moves_on });
+                }
+                // Unused: the attempt was already won, or the caller left. Dropped here, with its socket.
+                _ => {}
+            }
+        });
+        true
+    };
+    if !start(0, &mut started) {
+        return Err(attempt_failed(&[], None));
     }
-    let tried = tried.join(", ");
-    Err(match status {
-        Some(status) => format!("edge connect: http {status}; {tried}"),
-        None => format!("edge connect: {tried}"),
-    })
+    let begun = Instant::now();
+    let mut running = 1usize;
+    let mut tried = Vec::with_capacity(plan.len());
+    loop {
+        let hedge_due = plan.len() > 1 && !started[1];
+        let wait = if hedge_due { hedge_after.saturating_sub(begun.elapsed()).min(ATTEMPT_POLL) } else { ATTEMPT_POLL };
+        match rx.recv_timeout(wait) {
+            Ok(Leg::Won(client)) => return Ok(client),
+            Ok(Leg::Failed { route, index, error, moves_on }) => {
+                running -= 1;
+                tried.push(format!("{} {} ({})", route.name(), error.failure.name(), error.detail));
+                if moves_on && index + 1 < plan.len() && start(index + 1, &mut started) {
+                    running += 1;
+                } else if running == 0 {
+                    // This was the last handshake to answer, so its status is the report's.
+                    return Err(attempt_failed(&tried, error.status));
+                }
+            }
+            Err(_) => {
+                if attempt.is_over() {
+                    return Err(attempt_failed(&[], None));
+                }
+                if hedge_due && begun.elapsed() >= hedge_after && start(1, &mut started) {
+                    running += 1;
+                }
+            }
+        }
+    }
 }
 
 /// Open the split synthesis client on the first route that accepts it.
-pub(super) fn connect(book: &Mutex<RouteBook>, attempt: &Attempt, waited_on: bool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
-    connect_via(book, attempt, Instant::now, waited_on, |route| {
+pub(super) fn connect(book: &Arc<Mutex<RouteBook>>, attempt: &Arc<Attempt>, waited_on: bool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
+    connect_hedged_via(book, attempt, waited_on, HEDGE_AFTER, Arc::new(move |route| {
         let unix_secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let connection_id = uuid::Uuid::new_v4().simple().to_string();
         let request = request_for(route, unix_secs, &connection_id).map_err(|e| attempt_error(&e.into()))?;
@@ -437,7 +592,7 @@ pub(super) fn connect(book: &Mutex<RouteBook>, attempt: &Attempt, waited_on: boo
         let result = msedge_tts_split_request(request).map_err(|e| attempt_error(&e));
         record_try(route, result.as_ref().map(|_| ()), started.elapsed().as_millis() as u64, waited_on);
         result
-    })
+    }))
 }
 
 // ---- session diagnostics ----------------------------------------------------------------------------------
@@ -1101,7 +1256,7 @@ mod tests {
         let (book, clock) = (Mutex::new(RouteBook::default()), Clock::new());
         let attempt = Attempt::default();
         let mut tried = Vec::new();
-        let mut ended = None;
+        let mut ended = Vec::new();
         let result: Result<(), String> = connect_via(&book, &attempt, || clock.now(), false, |route| {
             tried.push(route);
             ended = attempt.end(); // the caller's budget runs out while this handshake is running
@@ -1109,7 +1264,7 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(tried, vec![FIRST], "no further route once the caller has gone");
-        assert_eq!(ended, Some(FIRST), "the caller learns which handshake it abandoned");
+        assert_eq!(ended, vec![FIRST], "the caller learns which handshake it abandoned");
         assert_eq!(lock_recover(&book).plan(clock.now()), vec![FIRST, SECOND], "the worker recorded nothing");
         // A later attempt object is unaffected.
         assert_eq!(attempt_at(&book, &clock, |_| Ok(())), (vec![FIRST], Ok(())));
@@ -1134,6 +1289,307 @@ mod tests {
                         assert_eq!(if last == FIRST { first } else { second }, None);
                     }
                     clock.advance(backoff(n.min(4)));
+                }
+            }
+        }
+    }
+}
+
+/// The hedged attempt on real threads: scripted handshakes whose order of completion each case controls. The
+/// connection a scripted handshake hands back counts itself, so a case can tell the one connection returned from
+/// the ones dropped unused — and that none is left behind.
+#[cfg(test)]
+mod hedged {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Barrier;
+
+    const FIRST: Route = ROUTES[0];
+    const SECOND: Route = ROUTES[1];
+    const HEDGE: Duration = Duration::from_millis(120);
+
+    struct Conn {
+        route: Route,
+        live: Arc<AtomicUsize>,
+    }
+    impl Drop for Conn {
+        fn drop(&mut self) {
+            self.live.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// What one route does in a case: answer after `after` (or once `gate` opens), connecting or failing.
+    #[derive(Clone)]
+    struct Script {
+        after: Duration,
+        failure: Option<Failure>,
+        gate: Option<Arc<Barrier>>,
+    }
+    fn ok(ms: u64) -> Script {
+        Script { after: Duration::from_millis(ms), failure: None, gate: None }
+    }
+    fn fail(ms: u64, failure: Failure) -> Script {
+        Script { after: Duration::from_millis(ms), failure: Some(failure), gate: None }
+    }
+    fn error(failure: Failure) -> AttemptError {
+        let (status, detail) = match failure {
+            Failure::Incompatible => (Some(200), "http 200"),
+            Failure::Rejected => (Some(403), "http 403"),
+            Failure::RateLimited => (Some(429), "http 429"),
+            Failure::ServerError => (Some(503), "http 503"),
+            Failure::Network => (None, "io TimedOut os 10060"),
+            Failure::TimedOut => (None, "timed out"),
+        };
+        AttemptError { failure, status, detail: detail.into() }
+    }
+
+    struct Run {
+        result: Result<Route, String>,
+        took: Duration,
+        contacted: Arc<Mutex<Vec<Route>>>,
+        live: Arc<AtomicUsize>,
+    }
+    impl Run {
+        fn contacted(&self) -> Vec<Route> {
+            lock_recover(&self.contacted).clone()
+        }
+    }
+
+    fn try_route_for(first: Script, second: Script, contacted: Arc<Mutex<Vec<Route>>>, live: Arc<AtomicUsize>) -> Arc<dyn Fn(Route) -> Result<Conn, AttemptError> + Send + Sync> {
+        Arc::new(move |route| {
+            lock_recover(&contacted).push(route);
+            let s = if route == FIRST { first.clone() } else { second.clone() };
+            match &s.gate {
+                Some(gate) => {
+                    gate.wait();
+                }
+                None => std::thread::sleep(s.after),
+            }
+            match s.failure {
+                None => {
+                    live.fetch_add(1, Ordering::SeqCst);
+                    Ok(Conn { route, live: live.clone() })
+                }
+                Some(f) => Err(error(f)),
+            }
+        })
+    }
+
+    fn run_with(book: &Arc<Mutex<RouteBook>>, attempt: &Arc<Attempt>, waited_on: bool, hedge: Duration, first: Script, second: Script) -> Run {
+        let (contacted, live) = (Arc::new(Mutex::new(Vec::new())), Arc::new(AtomicUsize::new(0)));
+        let try_route = try_route_for(first, second, contacted.clone(), live.clone());
+        let t = Instant::now();
+        // The connection returned is read and dropped at once; only connections dropped unused remain to count.
+        let result = connect_hedged_via(book, attempt, waited_on, hedge, try_route).map(|conn| conn.route);
+        Run { result, took: t.elapsed(), contacted, live }
+    }
+
+    fn run(book: &Arc<Mutex<RouteBook>>, waited_on: bool, first: Script, second: Script) -> Run {
+        run_with(book, &Arc::new(Attempt::default()), waited_on, HEDGE, first, second)
+    }
+
+    fn fresh_book() -> Arc<Mutex<RouteBook>> {
+        Arc::new(Mutex::new(RouteBook::default()))
+    }
+
+    /// Let every scripted handshake still running finish.
+    fn settle(ms: u64) {
+        std::thread::sleep(Duration::from_millis(ms));
+    }
+
+    #[test]
+    fn a_first_route_that_answers_in_time_is_the_only_one_ever_contacted() {
+        let book = fresh_book();
+        let r = run(&book, false, ok(10), ok(10));
+        assert_eq!(r.result, Ok(FIRST));
+        settle(300);
+        assert_eq!(r.contacted(), vec![FIRST], "the second route is never contacted where the first answers in time");
+        assert_eq!(r.live.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_slow_first_route_brings_in_the_second_and_the_first_to_connect_wins() {
+        let book = fresh_book();
+        lock_recover(&book).failed(FIRST, Failure::Network, Instant::now());
+        let r = run(&book, false, ok(700), ok(20));
+        assert_eq!(r.result, Ok(SECOND));
+        assert!(r.took >= HEDGE && r.took < HEDGE + Duration::from_millis(250), "the second route began at the hedge: {:?}", r.took);
+        assert_eq!(r.contacted(), vec![FIRST, SECOND]);
+        settle(900);
+        assert_eq!(r.live.load(Ordering::SeqCst), 0, "the first route's late connection was dropped, not left open");
+        let b = lock_recover(&book);
+        assert_eq!(b.routes[FIRST.index()].transient, 1, "a late success that lost the attempt does not clear its route's record");
+        assert_eq!(b.routes[SECOND.index()].last_failure, None);
+    }
+
+    #[test]
+    fn the_first_route_still_wins_when_it_connects_before_the_second() {
+        let book = fresh_book();
+        let r = run(&book, false, ok(170), ok(400));
+        assert_eq!(r.result, Ok(FIRST));
+        assert_eq!(r.contacted(), vec![FIRST, SECOND]);
+        settle(600);
+        assert_eq!(r.live.load(Ordering::SeqCst), 0, "the second route's connection was dropped unused");
+        assert_eq!(lock_recover(&book).routes[SECOND.index()].last_failure, None, "the losing route recorded nothing");
+    }
+
+    #[test]
+    fn the_second_route_is_not_started_before_the_hedge_delay() {
+        // The first route answers after two of the attempt's polls but before the hedge delay: the attempt woke
+        // twice and must not have taken either wake-up for the hedge.
+        let book = fresh_book();
+        let r = run_with(&book, &Arc::new(Attempt::default()), false, Duration::from_millis(300), ok(250), ok(10));
+        assert_eq!(r.result, Ok(FIRST));
+        settle(400);
+        assert_eq!(r.contacted(), vec![FIRST]);
+    }
+
+    #[test]
+    fn a_route_that_fails_after_the_attempt_was_won_records_nothing() {
+        let book = fresh_book();
+        let r = run(&book, false, ok(200), fail(150, Failure::ServerError)); // the second fails at ~270 ms
+        assert_eq!(r.result, Ok(FIRST));
+        settle(300);
+        assert_eq!(r.contacted(), vec![FIRST, SECOND]);
+        assert_eq!(lock_recover(&book).routes[SECOND.index()].last_failure, None, "a failure after the attempt was won says nothing");
+    }
+
+    #[test]
+    fn a_first_route_failing_after_the_second_began_leaves_the_attempt_to_the_second() {
+        let book = fresh_book();
+        let r = run(&book, false, fail(300, Failure::RateLimited), ok(250));
+        assert_eq!(r.result, Ok(SECOND));
+        let b = lock_recover(&book);
+        assert_eq!(b.routes[FIRST.index()].rate_limited, 1, "a failure while the attempt was still open counts against its route");
+    }
+
+    #[test]
+    fn both_routes_failing_are_reported_in_the_order_they_answered() {
+        let book = fresh_book();
+        let r = run(&book, false, fail(400, Failure::ServerError), fail(40, Failure::RateLimited));
+        assert_eq!(
+            r.result,
+            Err(format!("edge connect: http 503; {} rate-limited (http 429), {} server-error (http 503)", SECOND.name(), FIRST.name())),
+            "the status is the last answer's, as it was for a single route"
+        );
+    }
+
+    #[test]
+    fn two_connections_at_the_same_moment_still_give_one_winner() {
+        for _ in 0..300 {
+            let book = fresh_book();
+            {
+                let mut b = lock_recover(&book);
+                let now = Instant::now();
+                b.failed(FIRST, Failure::Network, now);
+                b.failed(SECOND, Failure::Network, now);
+            }
+            let gate = Arc::new(Barrier::new(2));
+            let both = Script { after: Duration::ZERO, failure: None, gate: Some(gate) };
+            let r = run_with(&book, &Arc::new(Attempt::default()), false, Duration::ZERO, both.clone(), both);
+            let winner = r.result.clone().expect("one of the two connected");
+            settle(5);
+            assert_eq!(r.live.load(Ordering::SeqCst), 0, "the other connection was dropped");
+            let b = lock_recover(&book);
+            let cleared: Vec<Route> = ROUTES.into_iter().filter(|r| b.routes[r.index()].transient == 0).collect();
+            assert_eq!(cleared, vec![winner], "exactly the winner's record was cleared");
+        }
+    }
+
+    #[test]
+    fn a_refusal_before_the_hedge_moves_on_at_once_as_before() {
+        let book = fresh_book();
+        let r = run(&book, false, fail(10, Failure::Incompatible), ok(10));
+        assert_eq!(r.result, Ok(SECOND));
+        assert!(r.took < HEDGE, "a refusal moves on immediately, not at the hedge: {:?}", r.took);
+    }
+
+    #[test]
+    fn a_rate_limit_before_the_hedge_still_ends_a_background_attempt() {
+        let book = fresh_book();
+        let r = run(&book, false, fail(10, Failure::RateLimited), ok(10));
+        assert_eq!(r.result, Err(format!("edge connect: http 429; {} rate-limited (http 429)", FIRST.name())));
+        settle(300);
+        assert_eq!(r.contacted(), vec![FIRST], "a 429 never presses another route, and the hedge did not fire after the attempt ended");
+    }
+
+    #[test]
+    fn a_waited_on_attempt_after_three_rate_limits_still_moves_on_at_once() {
+        let book = fresh_book();
+        for _ in 0..2 {
+            lock_recover(&book).failed(FIRST, Failure::RateLimited, Instant::now());
+        }
+        let r = run(&book, true, fail(10, Failure::RateLimited), ok(10));
+        assert_eq!(r.result, Ok(SECOND));
+        assert!(r.took < HEDGE, "{:?}", r.took);
+    }
+
+    #[test]
+    fn a_plan_of_one_route_is_never_hedged() {
+        let book = fresh_book();
+        lock_recover(&book).failed(SECOND, Failure::Incompatible, Instant::now()); // cooling: the plan is [FIRST]
+        let r = run(&book, false, ok(300), ok(10));
+        assert_eq!(r.result, Ok(FIRST));
+        assert_eq!(r.contacted(), vec![FIRST]);
+    }
+
+    #[test]
+    fn an_attempt_whose_caller_gave_up_ends_soon_and_records_nothing() {
+        let book = fresh_book();
+        let attempt = Arc::new(Attempt::default());
+        let a = attempt.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            let _ = a.end();
+        });
+        let r = run_with(&book, &attempt, false, HEDGE, ok(700), ok(700));
+        assert!(r.result.is_err());
+        assert!(r.took < Duration::from_millis(200) + ATTEMPT_POLL + Duration::from_millis(100), "{:?}", r.took);
+        settle(900);
+        assert_eq!(r.live.load(Ordering::SeqCst), 0, "both late connections were dropped");
+        let b = lock_recover(&book);
+        for route in ROUTES {
+            assert_eq!((b.routes[route.index()].transient, b.routes[route.index()].last_failure), (0, None), "{route:?}: nothing recorded by the attempt itself");
+        }
+    }
+
+    /// Where every handshake answers before the hedge, the hedged attempt is the sequential one: the same routes
+    /// contacted, the same result and the same record, for every pair of answers and either kind of caller.
+    #[test]
+    fn with_answers_before_the_hedge_it_is_exactly_the_sequential_attempt() {
+        let answers = [None, Some(Failure::Incompatible), Some(Failure::Rejected), Some(Failure::RateLimited), Some(Failure::ServerError), Some(Failure::Network)];
+        for waited_on in [false, true] {
+            for primed_429s in [0, 2] {
+                for first in answers {
+                    for second in answers {
+                        let prime = |b: &Mutex<RouteBook>| {
+                            for _ in 0..primed_429s {
+                                lock_recover(b).failed(FIRST, Failure::RateLimited, Instant::now());
+                            }
+                        };
+                        let sequential = Mutex::new(RouteBook::default());
+                        prime(&sequential);
+                        let mut seq_tried = Vec::new();
+                        let seq = connect_via(&sequential, &Attempt::default(), Instant::now, waited_on, |route| {
+                            seq_tried.push(route);
+                            match if route == FIRST { first } else { second } {
+                                None => Ok(route),
+                                Some(f) => Err(error(f)),
+                            }
+                        });
+                        let hedged_book = fresh_book();
+                        prime(&hedged_book);
+                        let script = |f: Option<Failure>| Script { after: Duration::from_millis(2), failure: f, gate: None };
+                        let r = run(&hedged_book, waited_on, script(first), script(second));
+                        let case = format!("waited_on {waited_on}, primed {primed_429s}, answers {first:?}/{second:?}");
+                        assert_eq!(r.result, seq, "{case}");
+                        assert_eq!(r.contacted(), seq_tried, "{case}");
+                        let (a, b) = (lock_recover(&sequential), lock_recover(&hedged_book));
+                        for route in ROUTES {
+                            let (x, y) = (&a.routes[route.index()], &b.routes[route.index()]);
+                            assert_eq!((x.strikes, x.transient, x.rate_limited, x.cooling_until.is_some()), (y.strikes, y.transient, y.rate_limited, y.cooling_until.is_some()), "{case}: {route:?}");
+                        }
+                    }
                 }
             }
         }
@@ -1357,12 +1813,12 @@ mod live {
     #[ignore]
     fn live_connect_in_a_row() {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        let book = Mutex::new(RouteBook::default());
+        let book = Arc::new(Mutex::new(RouteBook::default()));
         for i in 0..3 {
             let mut connected = false;
             for attempt in 1..=3 {
                 let t = Instant::now();
-                match connect(&book, &Attempt::default(), false) {
+                match connect(&book, &Arc::new(Attempt::default()), false) {
                     Ok(_) => {
                         println!("connect {i}: ok in {} ms (try {attempt})", t.elapsed().as_millis());
                         connected = true;
@@ -1370,7 +1826,8 @@ mod live {
                     }
                     Err(e) => {
                         println!("connect {i}: try {attempt} failed in {} ms: {e}", t.elapsed().as_millis());
-                        assert!(!e.contains("rate-limited") || !e.contains(','), "a rate limit contacted a second route: {e}");
+                        // A second route is contacted only by the slow-handshake rule, never by a 429 itself.
+                        assert!(!e.contains("rate-limited") || !e.contains(',') || t.elapsed() >= HEDGE_AFTER, "a rate limit contacted a second route: {e}");
                         std::thread::sleep(Duration::from_secs(3));
                     }
                 }

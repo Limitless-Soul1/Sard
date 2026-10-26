@@ -456,28 +456,31 @@ fn http_status(e: &msedge_tts::error::Error) -> Option<u16> {
 /// The worker opens the connection on the first route that accepts it (`edge_route::connect`, at most one
 /// handshake per route), all inside the same budget. `waited_on` — the call carries a listener's budget — is
 /// the one thing the routes are told about the caller (see the rate-limit rule in `edge_route`).
-fn connect_bounded(routes: Arc<Mutex<edge_route::RouteBook>>, budget: Duration, cancel: &AtomicBool, waited_on: bool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
+fn connect_bounded(routes: Arc<Mutex<edge_route::RouteBook>>, budget: Duration, cancel: &Arc<AtomicBool>, waited_on: bool) -> Result<(Sender<TcpStream>, Receiver<TcpStream>), String> {
     connect_bounded_with(routes, budget, cancel, move |book, attempt| edge_route::connect(book, attempt, waited_on))
 }
 
 /// `connect_bounded` with the connection supplied, so its bounds can be tested without a network. The result
-/// is exactly what the wait returns; the only addition is what the routes learn from a handshake this call
-/// stopped waiting for — out of budget, a transient failure of its route; cancelled by the listener, nothing.
+/// is exactly what the wait returns; the only addition is what the routes learn from the handshakes this call
+/// stopped waiting for — out of budget, a transient failure of each route still running; cancelled by the
+/// listener, nothing. A call that connected records nothing here either: a second route still running beside
+/// the winner lost the attempt, which says nothing about it.
 fn connect_bounded_with<C: Send + 'static>(
     routes: Arc<Mutex<edge_route::RouteBook>>,
     budget: Duration,
-    cancel: &AtomicBool,
-    connect: impl FnOnce(&Mutex<edge_route::RouteBook>, &edge_route::Attempt) -> Result<C, String> + Send + 'static,
+    cancel: &Arc<AtomicBool>,
+    connect: impl FnOnce(&Arc<Mutex<edge_route::RouteBook>>, &Arc<edge_route::Attempt>) -> Result<C, String> + Send + 'static,
 ) -> Result<C, String> {
-    let attempt = Arc::new(edge_route::Attempt::default());
+    let attempt = Arc::new(edge_route::Attempt::for_call(cancel.clone()));
     let (tx, rx) = std::sync::mpsc::channel();
     let (worker_routes, worker_attempt) = (routes.clone(), attempt.clone());
     std::thread::spawn(move || {
         let _ = tx.send(connect(&worker_routes, &worker_attempt));
     });
     let result = wait_bounded(rx, budget, cancel, "edge connect timed out");
-    if let Some(route) = attempt.end() {
-        if !cancel.load(Ordering::SeqCst) {
+    let still_running = attempt.end();
+    if result.is_err() && !cancel.load(Ordering::SeqCst) {
+        for route in still_running {
             edge_route::timed_out(&routes, route);
         }
     }
@@ -1221,7 +1224,7 @@ mod tests {
     use std::time::Instant;
 
     /// A connection whose handshakes each take `ms` and then answer `failure` (or connect, for `None`).
-    fn slow_connect(ms: u64, failure: Option<Failure>, handshakes: Arc<AtomicUsize>) -> impl FnOnce(&Mutex<RouteBook>, &edge_route::Attempt) -> Result<(), String> + Send + 'static {
+    fn slow_connect(ms: u64, failure: Option<Failure>, handshakes: Arc<AtomicUsize>) -> impl FnOnce(&Arc<Mutex<RouteBook>>, &Arc<edge_route::Attempt>) -> Result<(), String> + Send + 'static {
         move |book, attempt| {
             edge_route::connect_via(book, attempt, Instant::now, false, |_| {
                 handshakes.fetch_add(1, Ordering::SeqCst);
@@ -1240,7 +1243,7 @@ mod tests {
         let handshakes = Arc::new(AtomicUsize::new(0));
         let t0 = Instant::now();
         // The handshake would end in a refusal — but only after the caller has stopped waiting.
-        let r = super::connect_bounded_with(routes.clone(), Duration::from_millis(300), &AtomicBool::new(false), slow_connect(900, Some(Failure::Incompatible), handshakes.clone()));
+        let r = super::connect_bounded_with(routes.clone(), Duration::from_millis(300), &Arc::new(AtomicBool::new(false)), slow_connect(900, Some(Failure::Incompatible), handshakes.clone()));
         assert_eq!(r.unwrap_err(), "edge connect timed out", "the same error the caller has always returned");
         assert!(t0.elapsed() < Duration::from_millis(800), "returned inside its budget: {:?}", t0.elapsed());
         assert_eq!(routes.lock().unwrap().transient_failures(ROUTES[0]), 1);
@@ -1277,7 +1280,7 @@ mod tests {
         let handshakes = Arc::new(AtomicUsize::new(0));
         let h = handshakes.clone();
         let t0 = Instant::now();
-        let r = super::connect_bounded_with(routes.clone(), Duration::from_millis(400), &AtomicBool::new(false), move |book, attempt| {
+        let r = super::connect_bounded_with(routes.clone(), Duration::from_millis(400), &Arc::new(AtomicBool::new(false)), move |book, attempt| {
             edge_route::connect_via(book, attempt, Instant::now, true, |route| {
                 h.fetch_add(1, Ordering::SeqCst);
                 if route == ROUTES[0] {
@@ -1299,12 +1302,103 @@ mod tests {
     #[test]
     fn a_connect_that_answers_in_time_returns_exactly_its_own_result() {
         let routes = Arc::new(Mutex::new(RouteBook::default()));
-        let ok = super::connect_bounded_with(routes.clone(), Duration::from_secs(5), &AtomicBool::new(false), slow_connect(20, None, Arc::new(AtomicUsize::new(0))));
+        let ok = super::connect_bounded_with(routes.clone(), Duration::from_secs(5), &Arc::new(AtomicBool::new(false)), slow_connect(20, None, Arc::new(AtomicUsize::new(0))));
         assert_eq!(ok, Ok(()));
-        let failed = super::connect_bounded_with(routes.clone(), Duration::from_secs(5), &AtomicBool::new(false), slow_connect(20, Some(Failure::ServerError), Arc::new(AtomicUsize::new(0))));
+        let failed = super::connect_bounded_with(routes.clone(), Duration::from_secs(5), &Arc::new(AtomicBool::new(false)), slow_connect(20, Some(Failure::ServerError), Arc::new(AtomicUsize::new(0))));
         assert_eq!(failed.unwrap_err(), format!("edge connect: http 200; {} server-error (http 200)", ROUTES[0].name()));
         // One transient failure, recorded once by the worker — the caller adds nothing.
         assert_eq!(routes.lock().unwrap().transient_failures(ROUTES[0]), 1);
+    }
+
+    // ---- the bounded connect over the hedged attempt (the production shape) ----
+
+    /// A connection that counts itself, so a case can tell that none is left behind.
+    struct Conn(Arc<AtomicUsize>);
+    impl Drop for Conn {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// The production connect's shape with scripted handshakes: each route answers after its own delay, connecting
+    /// or failing; the second route is started beside the first after `hedge`.
+    fn hedged_connect(
+        hedge: Duration,
+        first: (u64, Option<Failure>),
+        second: (u64, Option<Failure>),
+        live: Arc<AtomicUsize>,
+        handshakes: Arc<AtomicUsize>,
+    ) -> impl FnOnce(&Arc<Mutex<RouteBook>>, &Arc<edge_route::Attempt>) -> Result<Conn, String> + Send + 'static {
+        move |book, attempt| {
+            edge_route::connect_hedged_via(book, attempt, false, hedge, Arc::new(move |route| {
+                handshakes.fetch_add(1, Ordering::SeqCst);
+                let (ms, failure) = if route == ROUTES[0] { first } else { second };
+                std::thread::sleep(Duration::from_millis(ms));
+                match failure {
+                    None => {
+                        live.fetch_add(1, Ordering::SeqCst);
+                        Ok(Conn(live.clone()))
+                    }
+                    Some(failure) => Err(AttemptError { failure, status: Some(503), detail: "http 503".into() }),
+                }
+            }))
+        }
+    }
+
+    #[test]
+    fn a_hedged_connect_that_outlasts_its_budget_charges_each_route_still_running_once() {
+        let routes = Arc::new(Mutex::new(RouteBook::default()));
+        let (live, handshakes) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let t0 = Instant::now();
+        let r = super::connect_bounded_with(routes.clone(), Duration::from_millis(300), &Arc::new(AtomicBool::new(false)), hedged_connect(Duration::from_millis(50), (900, None), (900, None), live.clone(), handshakes.clone()));
+        assert_eq!(r.err(), Some("edge connect timed out".to_string()), "the same error the caller has always returned");
+        assert!(t0.elapsed() < Duration::from_millis(800), "returned inside its budget: {:?}", t0.elapsed());
+        let charged = |routes: &Mutex<RouteBook>| {
+            let book = routes.lock().unwrap();
+            (book.transient_failures(ROUTES[0]), book.transient_failures(ROUTES[1]))
+        };
+        assert_eq!(charged(&routes), (1, 1));
+        std::thread::sleep(Duration::from_millis(1_200));
+        assert_eq!(handshakes.load(Ordering::SeqCst), 2, "one handshake per route, nothing more");
+        assert_eq!(live.load(Ordering::SeqCst), 0, "both late connections were dropped unused");
+        assert_eq!(charged(&routes), (1, 1), "the late successes recorded nothing");
+    }
+
+    #[test]
+    fn a_connected_call_charges_nothing_to_the_route_that_lost() {
+        let routes = Arc::new(Mutex::new(RouteBook::default()));
+        let (live, handshakes) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let r = super::connect_bounded_with(routes.clone(), Duration::from_secs(5), &Arc::new(AtomicBool::new(false)), hedged_connect(Duration::from_millis(50), (600, None), (20, None), live.clone(), handshakes.clone()));
+        assert!(r.is_ok());
+        drop(r);
+        assert_eq!(routes.lock().unwrap().transient_failures(ROUTES[0]), 0, "still running when the call connected, and not counted against");
+        std::thread::sleep(Duration::from_millis(800));
+        assert_eq!(live.load(Ordering::SeqCst), 0, "the losing connection was dropped when it finished");
+        assert_eq!(routes.lock().unwrap().transient_failures(ROUTES[0]), 0);
+    }
+
+    #[test]
+    fn a_hedged_connect_cancelled_before_or_after_the_second_route_began_records_nothing() {
+        for cancel_at in [20u64, 150] {
+            let routes = Arc::new(Mutex::new(RouteBook::default()));
+            let (live, handshakes) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+            let cancel = Arc::new(AtomicBool::new(false));
+            let c = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(cancel_at));
+                c.store(true, Ordering::SeqCst);
+            });
+            let t0 = Instant::now();
+            let r = super::connect_bounded_with(routes.clone(), Duration::from_secs(5), &cancel, hedged_connect(Duration::from_millis(80), (700, None), (700, None), live.clone(), handshakes.clone()));
+            assert_eq!(r.err(), Some("edge synth cancelled".to_string()), "cancel at {cancel_at} ms");
+            assert!(t0.elapsed() < Duration::from_millis(cancel_at + 200), "the cancel is honoured within a slice: {:?}", t0.elapsed());
+            std::thread::sleep(Duration::from_millis(900));
+            assert_eq!(handshakes.load(Ordering::SeqCst), if cancel_at < 80 { 1 } else { 2 }, "no route is started after the cancel");
+            assert_eq!(live.load(Ordering::SeqCst), 0, "no connection is left open");
+            for route in ROUTES {
+                assert_eq!(routes.lock().unwrap().transient_failures(route), 0, "a cancel says nothing about {route:?}");
+            }
+        }
     }
 }
 

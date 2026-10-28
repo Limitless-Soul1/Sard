@@ -376,6 +376,31 @@ a version number.)
                            the end-of-book navigation probe in the private harness
                          Must report NOT locked, and `total uncaught: 0`.
 
+ 13. paginator.js:212  — RENDER ONLY A LOADED VIEW. `View#loaded` (+ a `loaded` getter) and a guard in
+     paginator.js:273    `Paginator.render()`: `if (!this.#view?.loaded) return` where upstream tests only
+     paginator.js:800    `if (!this.#view) return`.
+                         WHY: `#display()` assigns `this.#view` in `#createView()` and only then awaits
+                         `View.load()`, so for the whole of a section load the view exists and its
+                         iframe holds about:blank. The container's ResizeObserver delivers at the next
+                         rendering opportunity — on a first open, inside that window whenever the open
+                         reached `#createView` without a frame in between. `render()` then columnized
+                         about:blank; `expand()` measured an empty range, computed 0 pages and wrote
+                         `width: 0px` on the iframe; the real section loaded into that frame and its
+                         own `expand()` forced a layout at zero width before correcting it.
+                         MEASURED (Blink, a long Arabic chapter): that forced layout took 3.2–3.8 s —
+                         one trace shows 47,551 FontCache::FallbackFontForCharacter calls inside it —
+                         against 100–150 ms when the race fell the other way. First page after ~3.5 s
+                         in roughly one open out of three; ~350 ms otherwise. Fingerprint in the event
+                         stream: two `relocate` events BEFORE `load`, on about:blank. After the patch:
+                         0 slow opens in 32.
+                         SKIPPING IS CORRECT, not merely safe: `load()` runs its own `beforeRender` +
+                         `render` once the document is there, measuring the container at that moment,
+                         so a resize during the load is already accounted for.
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: opens are intermittently slow by
+                         seconds, with nothing in the console to say why.
+                         Regression test: tests/unit/paginatorRenderBeforeLoad.test.ts (source shape;
+                         the behaviour is proven by measurement, as with patch 12).
+
   NOTE ON NUMBERING: entries 1-8 above predate this one and their numbers do not all match the
   `SARD LOCAL PATCH n` markers in the sources (the stylesheet-sanitiser hook is marked 5 in epub.js
   but listed as 6 here, and the turn-coalescing entry is listed as 5 out of order at the end). That

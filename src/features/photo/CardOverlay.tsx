@@ -27,7 +27,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { isText, MIN_SIZE, type ResizeGrip } from "./elements";
-import type { CardElement, Composition, PresetPart, Rect, TextElement } from "./composition";
+import { fontFeatures, type CardElement, type Composition, type PresetPart, type Rect, type TextElement } from "./composition";
 
 /**
  * THE INLINE EDITOR — a text box wearing the element's own type.
@@ -60,7 +60,7 @@ function InlineText({
     // `scrollHeight` with no padding is the height the wrapped text actually needs.
     const pad = Math.max(0, (ta.clientHeight - ta.scrollHeight) / 2);
     ta.style.paddingBlockStart = pad + "px";
-  }, [el.text, el.style.size, el.style.lineHeight, el.style.family, autoFrac, width]);
+  }, [el.text, el.style.size, el.style.lineHeight, el.style.family, el.style.alternates, autoFrac, width]);
   return (
     <textarea
       ref={ref}
@@ -79,6 +79,7 @@ function InlineText({
         fontSize: (el.style.size ?? autoFrac) * width,
         lineHeight: el.style.lineHeight ?? 1.6,
         letterSpacing: el.style.letterSpacing ? `${el.style.letterSpacing}em` : undefined,
+        fontFeatureSettings: fontFeatures(el.style),
         textAlign: el.style.align ?? "start",
         color: el.style.color ?? undefined,
         opacity: el.style.opacity ?? 1,
@@ -392,6 +393,7 @@ export function CardOverlay({
                   fontSize: (el.style.size ?? autoFrac ?? 0.03) * width,
                   fontWeight: el.style.weight ?? 400,
                   letterSpacing: el.style.letterSpacing ? `${el.style.letterSpacing}em` : undefined,
+                  fontFeatureSettings: fontFeatures(el.style),
                 }} dir={el.style.dir === "auto" ? undefined : el.style.dir}>
                   {emptyLabel?.(el) ?? ""}
                 </i>

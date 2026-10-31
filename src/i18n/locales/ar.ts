@@ -638,6 +638,8 @@ export const ar: Record<TKey, string> = {
   "photo.el.size": "الحجم",
   "photo.el.lineHeight": "تباعد الأسطر",
   "photo.el.tracking": "تباعد الحروف",
+  "photo.el.alternates": "حروف مرسلة",
+  "photo.el.alternatesNote": "إن كان الخط يوفّرها",
   "photo.el.opacity": "الشفافية",
   "photo.el.weight": "الوزن",
   "photo.el.align": "المحاذاة",

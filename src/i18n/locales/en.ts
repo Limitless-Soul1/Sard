@@ -642,6 +642,8 @@ export const en = {
   "photo.el.size": "Size",
   "photo.el.lineHeight": "Line height",
   "photo.el.tracking": "Letter spacing",
+  "photo.el.alternates": "Stylistic alternates",
+  "photo.el.alternatesNote": "Where the font has them",
   "photo.el.opacity": "Opacity",
   "photo.el.weight": "Weight",
   "photo.el.align": "Align",

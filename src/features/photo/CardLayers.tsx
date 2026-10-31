@@ -22,7 +22,7 @@ import { useLayoutEffect, useRef } from "react";
 
 import { isImage, isText } from "./elements";
 import { backingStyle, strokeStyle, type BackingStyle, type StrokeStyle } from "./legibility";
-import type { CardElement, Composition, Ground, ImageElement, TextElement } from "./composition";
+import { fontFeatures, type CardElement, type Composition, type Ground, type ImageElement, type TextElement } from "./composition";
 
 /** Turn a managed image id into something the webview can load, or null if it is not resolvable. */
 export type AssetUrl = (assetId: string) => string | null;
@@ -130,6 +130,9 @@ function FitText({
     }
     el.style.fontSize = `${lo}px`;
   }, [text, auto, style.size, style.lineHeight, style.letterSpacing, style.weight, style.family, cardW,
+      // The alternates are other letterforms with other widths — a long final tail can lengthen a
+      // line by a third — so asking for them changes what fits.
+      style.alternates,
       // Only the two that can change the BOX are dependencies. A treatment's colours, radii and
       // shadows cannot move a line, so re-running the fit for them would be work with no answer.
       backing?.inlineSize, backing?.inner, onNeedsRoom]);
@@ -145,6 +148,7 @@ function FitText({
         fontWeight: style.weight ?? 400,
         lineHeight: style.lineHeight ?? 1.6,
         letterSpacing: style.letterSpacing ? `${style.letterSpacing}em` : undefined,
+        fontFeatureSettings: fontFeatures(style),
         textAlign: style.align ?? "start",
         whiteSpace: "pre-wrap",
         overflowWrap: "break-word",

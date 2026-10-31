@@ -362,6 +362,25 @@ export function Inspector({
               min={-8} max={60} softMin={-4} softMax={20}
               step={0.5} unit="px" precision={1} width={42}
             />
+            {/* «حروف مرسلة» — THE FACE'S OWN ALTERNATE LETTERFORMS (OpenType `salt`). One switch rather
+                than a list of the font's sets: the reader asks for the alternates and the face decides
+                which letters have them, so a face without any draws exactly as before — which is what
+                the second line says. */}
+            <div className={`pcx-stamp${selected.style.alternates ? " on" : ""}`}>
+              <span className="pcx-stamp-txt">
+                <b>{t("photo.el.alternates")}</b>
+                <i>{t("photo.el.alternatesNote")}</i>
+              </span>
+              <button
+                className="pcx-switch"
+                role="switch"
+                aria-checked={!!selected.style.alternates}
+                aria-label={t("photo.el.alternates")}
+                onClick={() => onStyle({ alternates: !selected.style.alternates })}
+              >
+                <span className="pcx-switch-knob" aria-hidden />
+              </button>
+            </div>
             <SliderField
               label={t("photo.el.opacity")}
               value={Math.round((selected.style.opacity ?? 1) * 100)}

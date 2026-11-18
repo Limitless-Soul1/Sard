@@ -65,8 +65,10 @@ pub const SCHEME: &str = "sardhost";
 ///   `@font-face { src: url(convertFileSrc(...)) }` and `FoliateController::writeFonts` writes that
 ///   sheet into each content document. Without `asset:` every custom font silently disappears.
 /// - `media-src blob:` — exactly the application's value, no wider.
-/// - `frame-src 'self' blob:` — the paginator CREATES the section iframe from this document. Omit
-///   this and the reader has no iframe to render into at all.
+/// - `frame-src 'self' blob: sardhost:` — the paginator CREATES the section iframe from this document.
+///   Omit this and the reader has no iframe to render into at all. `sardhost:` is present here to
+///   mirror the application policy below: the APPLICATION must name the scheme explicitly before it
+///   is allowed to embed this origin at all (see `app_frame_src_admits_the_reader_host`).
 ///
 /// `connect-src 'self' blob:` is required rather than `'none'`: pdf.js fetches its own stylesheets
 /// (`pdf.js:10,13` call `fetchText(pdfjsPath(...))`), so a blanket refusal would break the PDF path.
@@ -90,7 +92,7 @@ const CSP: &str = "default-src 'none'; \
                    img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; \
                    font-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; \
                    media-src blob:; \
-                   frame-src 'self' blob:; \
+                   frame-src 'self' blob: sardhost:; \
                    connect-src 'self' blob:";
 
 /// Map a request path onto a bundle path, or refuse.
@@ -414,6 +416,23 @@ mod tests {
             let h = host.get(kind).unwrap_or_else(|| panic!("host CSP declares {kind}"));
             assert_eq!(h, a, "{kind} must match the application policy exactly");
         }
+    }
+
+    /// Why the APPLICATION must name `sardhost:` in its own `frame-src`.
+    ///
+    /// MEASURED on WebKitGTK 2.52.6: with only `frame-src 'self' blob:`, a `sardhost://localhost/`
+    /// iframe is refused by CSP before the scheme handler is called — no host document, no bundle,
+    /// no handshake, only the reader container at 0%. `frame-src *` does not admit custom schemes
+    /// either; the scheme has to be named. The host's mirror of this directive is kept in step by
+    /// `content_directives_mirror_the_application_policy`.
+    #[test]
+    fn app_frame_src_admits_the_reader_host() {
+        let app = directives(&app_csp());
+        let frame = app.get("frame-src").expect("app CSP declares frame-src");
+        assert!(
+            frame.split_whitespace().any(|t| t == "sardhost:"),
+            "the application must be allowed to embed the reader host"
+        );
     }
 
     /// Proof that the guard above can actually fail.

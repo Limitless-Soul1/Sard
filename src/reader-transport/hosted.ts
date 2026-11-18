@@ -19,6 +19,28 @@ import type { FoliateController } from "../reader-engine/FoliateController";
 import { CROSSING } from "./surface";
 import type { Mirror, Push, Reply, Request, RequestBody } from "./protocol";
 
+/**
+ * Events whose first argument is anchored to the HOST document's viewport.
+ *
+ * The engine's `rectInParent` already adds the SECTION iframe's offset inside the host. The host is
+ * itself an iframe in the application, and the toolbar it feeds is `position: fixed` in the
+ * APPLICATION's viewport, so the outer frame's offset has to be added too. This side owns that:
+ * the host origin deliberately cannot reach `parent`, so it cannot measure its own placement.
+ */
+const HOST_VIEWPORT_EVENTS = new Set(["onSelection", "onShowAnnotation", "onReferenceHit"]);
+
+type HostRect = { left: number; top: number; bottom: number; width: number; height: number };
+
+/** Add the host frame's application-viewport offset to a rect measured inside the host. */
+export function rectInApp(rect: HostRect, frame: { left: number; top: number }): HostRect {
+  return {
+    ...rect,
+    left: rect.left + frame.left,
+    top: rect.top + frame.top,
+    bottom: rect.bottom + frame.top,
+  };
+}
+
 const EMPTY_MIRROR: Mirror = {
   currentSectionIndex: 0,
   atChapterStart: true,
@@ -110,7 +132,16 @@ export class HostedReader {
   private receive(msg: Reply | Push): void {
     if ("kind" in msg) {
       if (msg.kind === "state") this.mirror = msg.mirror;
-      else if (msg.kind === "event") this.handlers.get(msg.name)?.(...msg.args);
+      else if (msg.kind === "event") {
+        let args = msg.args;
+        if (HOST_VIEWPORT_EVENTS.has(msg.name) && this.frame) {
+          const first = args[0] as { rect?: HostRect } | null | undefined;
+          if (first && typeof first === "object" && first.rect) {
+            args = [{ ...first, rect: rectInApp(first.rect, this.frame.getBoundingClientRect()) }, ...args.slice(1)];
+          }
+        }
+        this.handlers.get(msg.name)?.(...args);
+      }
       return;
     }
     const p = this.pending.get(msg.id);

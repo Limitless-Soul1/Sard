@@ -208,6 +208,9 @@ export function Reader({
   if (!ctrlRef.current && !needsReaderHost()) ctrlRef.current = new FoliateController();
   const hostedRef = useRef<Promise<FoliateController> | null>(null);
   if (!ctrlRef.current && !hostedRef.current) hostedRef.current = createReader();
+  // The hosted controller is a promise, not an object, on the first render. Children such as
+  // AnnotationLayer must wait for it before registering callbacks against `ctrlRef.current`.
+  const [ctrlReady, setCtrlReady] = useState(!needsReaderHost());
   // A dev/debug surface reachable from DevTools without shipping any UI — the same convention as
   // `window.__sardTtsStats`. Lets the TTS-tracking probe measure the REAL pipeline instead of a
   // re-implementation of it that could drift.
@@ -959,6 +962,7 @@ export function Reader({
       // during the first render and this resolves to it without awaiting anything.
       if (!ctrlRef.current && hostedRef.current) ctrlRef.current = await hostedRef.current;
       if (stale()) return;
+      setCtrlReady(true);
       const ctrl = ctrlRef.current!;
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
         // WP-4F: `location`/`pageLabel` are foliate's own position data, which used to be dropped here.
@@ -3703,7 +3707,7 @@ export function Reader({
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
-      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} readingTheme={readingTheme} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
+      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} readingTheme={readingTheme} ready={ctrlReady} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
       {(!isPdf || pdfCanListen) && (
         <TtsPlayer

@@ -853,12 +853,18 @@ function NoteEditorModal({
 
 export function AnnotationLayer({
   ctrlRef,
+  ready = true,
   readingTheme,
   onPhotoCard,
   onAddToCard,
   onListen,
 }: {
   ctrlRef: RefObject<FoliateController | null>;
+  /**
+   * Whether `ctrlRef.current` exists yet. On WebKit the controller is the reader host, resolved
+   * asynchronously from a promise; a child mounting before that has nothing to subscribe to.
+   */
+  ready?: boolean;
   /**
    * The palette this book is READ in — the very object the Reader hands `ctrl.applyTheme`, so the
    * swatches below and the mark the controller paints are the one palette rather than two.
@@ -876,8 +882,12 @@ export function AnnotationLayer({
   useAnnotations((s) => s.highlights);
   useAnnotations((s) => s.notes);
 
-  // Wire the controller's selection + click callbacks once (the controller instance is stable).
+  // Wire the controller's selection + click callbacks once the controller EXISTS. On the hosted path
+  // this child mounts before `Reader.tsx` has awaited the host and filled `ctrlRef`; with `[]` deps
+  // the registration used to happen against null and never happen again, so no selection ever
+  // reached this toolbar on WebKit.
   useEffect(() => {
+    if (!ready) return;
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
     ctrl.onSelection((s) => {
@@ -892,7 +902,7 @@ export function AnnotationLayer({
       ctrl.clearSelection();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ready]);
 
   // Dismiss on a click anywhere in the parent chrome, or on Esc (toolbars stop propagation). RAWY-122:
   // ALSO clear the REAL text selection — not just the React popover — so a lingering browser selection

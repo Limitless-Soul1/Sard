@@ -91,7 +91,9 @@ describe("paged mode must not make <body> a scroll container", () => {
     // Assert each difference is really there before stripping it, so this cannot pass vacuously.
     expect(p).toMatch(/html\s*\{[^}]*overflow:\s*hidden/i);
     expect(s).toMatch(/body\s*\{\s*padding-inline:\s*\d/);
-    expect(p).not.toMatch(/body\s*\{\s*padding-inline:/);
+    // Paged flow pins the body's padding at 0 (the margin is the host inset there), so a book's own
+    // sheet cannot add one — readingMarginOwner.test.ts.
+    expect(p).toMatch(/body\s*\{\s*padding-inline:\s*0px\s*!important;\s*\}/);
     const strip = (css: string) =>
       css
         .replace(/html\s*\{[^}]*\}/g, "")

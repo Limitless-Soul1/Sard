@@ -26,12 +26,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildReadingCss, ARABIC_DEFAULTS, LATIN_DEFAULTS } from "../../src/reader-engine/injectedCss";
+import { sanitiseBookCss } from "../../src/reader-engine/cssSanitiser";
 
 const globalCss = readFileSync(resolve(__dirname, "../../src/styles/global.css"), "utf8");
 
 /** The `padding-inline` the injected sheet gives the book's own `body`, in px, or null for none. */
 const bodyPaddingInline = (css: string): number | null => {
-  const m = css.match(/body\s*\{\s*padding-inline:\s*(\d+(?:\.\d+)?)px;?\s*\}/);
+  const m = css.match(/body\s*\{\s*padding-inline:\s*(\d+(?:\.\d+)?)px(?:\s*!important)?;?\s*\}/);
   return m ? Number(m[1]) : null;
 };
 
@@ -53,9 +54,27 @@ describe("the reading margin belongs to the book in scrolled flow", () => {
     expect(bodyPaddingInline(css)).toBe(0);
   });
 
-  it("leaves PAGED flow alone — there the host inset is also the column geometry", () => {
+  it("puts no margin on the body in PAGED flow — there the host inset is also the column geometry", () => {
+    // Pinned at 0 rather than left unset, so a book's own sheet cannot add one (see below).
     const css = buildReadingCss({ ...ARABIC_DEFAULTS, marginPx: 56, flowMode: "paged" });
-    expect(bodyPaddingInline(css)).toBeNull();
+    expect(bodyPaddingInline(css)).toBe(0);
+  });
+
+  it("a book's own sheet cannot take the margin away, whatever selector reaches the body", () => {
+    // MEASURED: two Calibre-made books put `class="calibre"` on <body> and say
+    // `.calibre { padding-left: 0; padding-right: 0 }`. The sanitiser cannot see which class lands on
+    // the body, and a class outranks a plain `body` rule — so the scrolled margin went from 56px to 0
+    // and the lines were cut off at the frame's edge. The reader's padding is !important, which no
+    // sanitised book rule can carry, so the class keeps its other declarations and loses this one.
+    for (const flowMode of ["scrolled", "paged"] as const) {
+      const css = buildReadingCss({ ...ARABIC_DEFAULTS, marginPx: 56, flowMode });
+      expect(css).toMatch(/body\s*\{\s*padding-inline:\s*\d+px\s*!important;\s*\}/);
+      const guard = css.match(/:root:root body:not\(#__sard_never__\)\s*\{([^}]*)\}/)?.[1] ?? "";
+      for (const d of ["padding-block: 0 !important", "border: 0 none !important", "opacity: 1 !important", "width: auto !important", "min-width: 0 !important", "display: block !important"]) {
+        expect(guard, `${flowMode}: ${d}`).toContain(d);
+      }
+    }
+    expect(sanitiseBookCss(".calibre { padding-left: 0 !important; padding-right: 0 }", "sanitised")).not.toContain("!important");
   });
 
   it("puts the padding on body, not html, where foliate's inline !important would beat it", () => {

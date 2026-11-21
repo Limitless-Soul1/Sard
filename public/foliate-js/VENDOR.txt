@@ -128,8 +128,9 @@ a version number.)
                          keeps the vendored diff at two lines and makes it trivially reversible:
                          DELETE THE TWO LINES and the file is upstream again. With no hook installed
                          the behaviour is byte-for-byte upstream, which is what stages 1-3 rely on.
-                         Sard installs the hook in FoliateController; the mode it applies is the
-                         `book_css` setting, which ships `off`.
+                         Sard installs the hook in FoliateController; the mode it applies is set
+                         by each open from the per-book `book_css:<id>` switch, which is on
+                         (`sanitised`) unless the reader turned it off for that book.
 
   7. epub.js:944,+956  — NCX CONTENTS ACCESSOR (RESILIENCE-1 / WP-6B).
                          One private field (`#sardNcxToc`) and one method (`getNCXToc()`) on the

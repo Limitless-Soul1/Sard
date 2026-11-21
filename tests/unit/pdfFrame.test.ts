@@ -149,8 +149,9 @@ describe("3 · a reading-mode switch hands the engine the same flags as an open"
     for (const k of ["overrideBookColor", "hideChapterTitles", "hideFirstLine", "pageOpacity: effectivePageOpacity()", "deskScrim: currentDeskScrim()"]) expect(fn).toContain(k);
   });
 
-  it("both places that open the book use it, and no hand-built three-field copy remains", () => {
-    expect(reader.match(/flags: currentBookFlags\(\),/g)?.length).toBe(2);
+  it("every place that opens the book uses it, and no hand-built three-field copy remains", () => {
+    // openBook, the Scroll/Pages switch, and the «تنسيق الكتاب» switch.
+    expect(reader.match(/flags: currentBookFlags\(\),/g)?.length).toBe(3);
     expect(reader).not.toMatch(/flags: \{\s*overrideBookColor: useTheme\.getState\(\)\.overrideBookColor,/);
   });
 });

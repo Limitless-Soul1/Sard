@@ -3,7 +3,6 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { pdfAttemptStarted, stageOk } from "@pdfDiag"; // DIAGNOSTIC BUILD ONLY
 import { setCloseFlush } from "../../lib/closeFlush"; // what this view needs saved before the window goes
 
-import { setBookCssMode } from "../../reader-engine/FoliateController";
 import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } from "../../reader-engine/FoliateController";
 // The reader for THIS platform: the same object as always on Windows, the hosted transport on
 // WebKit. This import is the only place the reader's construction differs.
@@ -15,7 +14,8 @@ import { useProfiles } from "../profiles/store";
 import { changesBetween, guardUnsaved } from "../profiles/session";
 import { parseSectionHref, sectionHref } from "../../reader-engine/sectionHref"; // WP-6A: generated-row hrefs
 import { positionReadout } from "../../reader-engine/position";
-import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 stage 3 // WP-4F: one place decides the readout
+import { bookCssMode, loadBookCss, saveBookCss, takesBookCss } from "./bookCss"; // «تنسيق الكتاب», per book
+import type { BookCssMode } from "../../reader-engine/cssSanitiser";
 // RAWY-291: PDF reading appearances + the zoom lattice.
 import {
   isPdfThemeId, PDF_THEME_KEY, pdfTheme, pdfZoomKey, pdfZoomAttr, parseStoredZoom,
@@ -393,6 +393,15 @@ export function Reader({
    */
   const speakSymbolsRef = useRef<boolean | null>(null);
   const [speakSymbolsOverride, setSpeakSymbolsOverride] = useState<boolean | null>(null);
+  /**
+   * «تنسيق الكتاب» for THIS book (`bookCss.ts`): its own formatting, or Sard's reading style.
+   *
+   * The ref is what every `ctrl.open()` hands the engine, so a reopen can never be a render behind a
+   * toggle just pressed; the state is what the drawer shows. Both start closed and are set by `openBook`
+   * before the first open.
+   */
+  const bookCssRef = useRef<BookCssMode>("off");
+  const [bookCssOn, setBookCssOn] = useState(false);
   // RAWY-250 (PART 0.4 / D66): per-chapter tracking for the SHARED end-signal. `atStart` = the chapter was
   // entered at its beginning (a mid-chapter jump must never mark it read); `endOnArrival` = its end-condition
   // was already true when we landed (a chapter shorter than one screen) — that one completes only when the
@@ -824,12 +833,14 @@ export function Reader({
       // any field the row lacks falls back to the Arabic baseline for an RTL book — on a fresh
       // install (no row) an Arabic book now opens at zoom 1.15 / line-height 1.9 / start, not Latin.
       // Both are resolved at the top of this function now - see the note there for why.
-      // RESILIENCE-1 / WP-7 (stage 3): tell the engine what this book's own stylesheet may contain,
-      // BEFORE `ctrl.open()` — the sanitiser hook runs while the book's resources are being loaded,
-      // so the mode has to be current by then. Ships `off`, so today this loads a setting whose value
-      // makes the sanitiser return an empty sheet.
-      setBookCssMode(await loadBookCssMode());
+      // «تنسيق الكتاب» (`bookCss.ts`): what this book's own stylesheet may contain. Read BEFORE
+      // `ctrl.open()`, which hands it to the engine — the sanitiser hook runs while the book's resources
+      // are being loaded, so the mode has to be known by then. On (sanitised) unless the reader turned it
+      // off for this book; a PDF has no stylesheet to filter and stays `off`.
+      const cssOn = !targetIsPdf && takesBookCss(target) && (await loadBookCss(target.id));
       if (stale()) return;
+      bookCssRef.current = bookCssMode(cssOn);
+      setBookCssOn(cssOn);
       // Guards the block below — ctrl.open, which would otherwise run on a null/superseded stage
       // and throw A's error onto B.
       if (stale()) return;
@@ -1111,6 +1122,7 @@ export function Reader({
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
         fxlMode: pdfModeRef.current, // PDF only: "scroll" (default) or "pages"
         revealLabels: makeRevealLabels(), // RAWY-70
+        bookCss: bookCssRef.current, // «تنسيق الكتاب»
       });
       // Superseded during the (async) open → don't publish ready/toc or bind the shared stores; the
       // newer open owns them now.
@@ -1961,6 +1973,7 @@ export function Reader({
         dir: initial.dir ?? undefined,
         flow: next.flowMode,
         revealLabels: makeRevealLabels(), // RAWY-70
+        bookCss: bookCssRef.current, // «تنسيق الكتاب» — the engine resets an unnamed mode to off
       }).then(() => useAnnotations.getState().load()).catch(console.error);
     } else {
       // RAWY-82 (#15): a slider drag fires many onChange ticks, and each applyStyle rebuilds the
@@ -2843,6 +2856,34 @@ export function Reader({
     settingsSet(speakSymbolsKey(bookRef.current), v === null ? "" : speakSymbolsAttr(v)).catch(() => {});
   };
 
+  /**
+   * «تنسيق الكتاب» switched for this book. The book's stylesheets were filtered as they loaded, so the
+   * change is shown by opening the view again at the CFI on screen — the same same-book reopen the
+   * Scroll/Pages switch uses (`update`), which keeps the per-book session and every saved row as they
+   * are. Written first, so a book closed straight after still reopens in the chosen formatting.
+   */
+  const setBookCss = (on: boolean) => {
+    const id = bookRef.current;
+    if (!id) return;
+    bookCssRef.current = bookCssMode(on);
+    setBookCssOn(on);
+    void saveBookCss(id, on).then(() => {
+      const st = useReader.getState();
+      if (bookRef.current !== id || !st.style) return; // another book took the view meanwhile
+      const draft = useAppearanceDraft.getState().current;
+      return ctrlRef.current?.open(convertFileSrc(initial.filePath), stageRef.current!, {
+        resumeCfi: st.cfi,
+        style: st.style,
+        theme: draft ? profileReadingTheme(draft.draft) : resolveTheme(bookThemeId),
+        flags: currentBookFlags(),
+        dir: initial.dir ?? undefined,
+        flow: st.style.flowMode,
+        revealLabels: makeRevealLabels(), // RAWY-70
+        bookCss: bookCssRef.current,
+      }).then(() => useAnnotations.getState().load());
+    }).catch(console.error);
+  };
+
   // RAWY-105: start read-aloud from the current chapter (top-bar Listen). Voice defaults by the BOOK's
   // direction (Arabic book → Arabic voice). RAWY-227: if a session is already reading THIS chapter, resume
   // it in place instead of restarting at the top; and when a saved cursor belongs to this chapter, CONTINUE
@@ -3699,6 +3740,8 @@ export function Reader({
         speakSymbolsOverride={speakSymbolsOverride}
         speakSymbolsAppearance={style?.ttsSpeakSymbols ?? ARABIC_DEFAULTS.ttsSpeakSymbols}
         onSpeakSymbols={setBookSpeakSymbols}
+        bookCss={!isPdf && takesBookCss(initial) ? bookCssOn : null}
+        onBookCss={setBookCss}
       />
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're

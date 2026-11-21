@@ -76,18 +76,17 @@ describe("WP-7 stage 2 — nothing is wired yet", () => {
     expect(imports.sort()).toEqual(["../lib/ipc", "./cssSanitiser"]);
   });
 
-  it("exactly ONE module reads the setting", async () => {
-    // Written at stage 2 as "no module reads it", and it FAILED at stage 3 — correctly, because
-    // stage 3 wires the Reader to it. That is the guard working, not a broken test: it detects any
-    // new consumer appearing. Updated to stage 3's invariant rather than deleted, because "who may
-    // read this" is exactly the thing worth keeping under control for a setting that governs whether
-    // third-party CSS reaches the page.
+  it("NO module reads the app-wide row any more", async () => {
+    // Written at stage 2 as "no module reads it", updated at stage 3 to "exactly the Reader", and back
+    // to none now: the decision is per book («تنسيق الكتاب», `features/reader/bookCss.ts`). Kept rather
+    // than deleted, because "who may read this" is exactly the thing worth keeping under control for a
+    // setting that governs whether third-party CSS reaches the page — a new consumer fails here.
     const { readFileSync, globSync } = await import("node:fs");
     const files = globSync("src/**/*.{ts,tsx}").filter((f: string) => !f.includes("bookCssSetting"));
     expect(files.length).toBeGreaterThan(50); // guard against a vacuous sweep
     const readers = files
       .filter((f: string) => /loadBookCssMode|BOOK_CSS_KEY/.test(readFileSync(f, "utf8")))
       .map((f: string) => f.replace(/\\/g, "/"));
-    expect(readers).toEqual(["src/features/reader/Reader.tsx"]);
+    expect(readers).toEqual([]);
   });
 });

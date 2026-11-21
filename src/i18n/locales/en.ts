@@ -147,6 +147,8 @@ export const en = {
   "type.alignStart": "Start",
   "type.alignCenter": "Center",
   "type.alignEnd": "End",
+  "type.bookCss": "Book's formatting",
+  "type.bookCssHint": "Shows this book in its own formatting: centring, headings and ornaments. Turn it off for Sard's style.",
   "type.diacritics": "Diacritics",
   "diacritics.show": "Show",
   "diacritics.hide": "Hide",

@@ -965,7 +965,19 @@ export function buildReadingCss(
        margin differs. Paged flow is untouched: there the host inset is also the column geometry.
        A fixed-layout book or a PDF never reaches this sheet at all — 'FixedLayout' has no 'setStyles',
        so 'renderer.setStyles?.()' no-ops and their margin stays the host inset it has always been. */
-    ${style.flowMode === "paged" ? "" : `body { padding-inline: ${Math.max(0, style.marginPx)}px; }`}
+    /* THE PAGE'S OWN BOX IS THE READER'S, WHATEVER SELECTOR A BOOK USES TO REACH IT. A book's own
+       stylesheet applies by default («تنسيق الكتاب»), and the sanitiser keeps box rules off 'html',
+       'body', ':root' and '*' — but it reads the sheet, not the document, so it cannot know that
+       '.calibre' is the class Calibre puts on <body>. MEASURED on two Calibre-made books: their
+       '.calibre { padding-left: 0; padding-right: 0 }' outranked a plain 'body { padding-inline }' and
+       took the scrolled margin from 56px to 0, so lines ran to the frame's edge and were cut off. So the
+       body's padding, frame, fading, width and display are pinned here with !important, which no book
+       rule can carry (the sanitiser drops it). Margin and max-width need nothing: the paginator pins
+       them inline with !important in both flows. Each value is the one the body has without a book
+       sheet, so a book shown in Sard's style lays out exactly as before. In paged flow the body carries
+       no margin (the host inset is the column geometry there), and 0 is pinned for the same reason. */
+    body { padding-inline: ${style.flowMode === "paged" ? 0 : Math.max(0, style.marginPx)}px !important; }
+    :root:root body${NEVER} { padding-block: 0 !important; border: 0 none !important; opacity: 1 !important; width: auto !important; min-width: 0 !important; display: block !important; }
     /* RAWY-260 / RAWY-281 — REFERENCES. The mark for a referenced word or phrase is NOT drawn here any
        more, and the reason is a hard capability limit rather than a preference. RAWY-260 drew it with the
        CSS Custom Highlight API (::highlight(sard-ref)), whose styleable property set is text-only —

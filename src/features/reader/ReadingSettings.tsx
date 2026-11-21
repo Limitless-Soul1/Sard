@@ -101,6 +101,9 @@ interface Props {
   speakSymbolsOverride?: boolean | null;
   speakSymbolsAppearance?: boolean;
   onSpeakSymbols?: (v: boolean | null) => void;
+  /** «تنسيق الكتاب» for this book, or null for a book whose formatting it cannot change (a PDF). */
+  bookCss?: boolean | null;
+  onBookCss?: (on: boolean) => void;
 }
 
 // Per-book text-colour presets, keyed by theme polarity (RAWY-40, Band I). The first is "Default"
@@ -888,6 +891,7 @@ export function ReadingSettings({
   style, update, isRtlBook, section = "typography", bookThemeId, appearanceThemeId, onPickTheme,
   bookAppearanceId = null, onPickBookAppearance, onPickReadingColour,
   speakSymbolsOverride = null, speakSymbolsAppearance = false, onSpeakSymbols,
+  bookCss = null, onBookCss,
 }: Props) {
   const { t, lang } = useI18n();
   // THE SCOPE SUFFIXES ARE GONE WITH THE SCOPE. They existed to say which of two models a control
@@ -989,6 +993,10 @@ export function ReadingSettings({
       <>
       {/* ---- TYPOGRAPHY (RAWY-216): letterforms + spacing only. Colour moved to the Colour tab and the
            read-aloud highlights to the Read-aloud tab — this tab used to carry all three. ---- */}
+      {/* «تنسيق الكتاب» — per book, and first: it decides whose formatting the rest of this tab adjusts. */}
+      {bookCss !== null && onBookCss && (
+        <ToggleRow label={t("type.bookCss")} hint={t("type.bookCssHint")} on={bookCss} onToggle={() => onBookCss(!bookCss)} />
+      )}
       <Section label={t("type.size")} value={localeDigits(`${Math.round(style.zoom * 100)}%`, lang)}>
         <Slider
           value={style.zoom}

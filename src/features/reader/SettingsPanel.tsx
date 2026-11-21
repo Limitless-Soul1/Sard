@@ -65,6 +65,9 @@ interface Props {
   speakSymbolsOverride?: boolean | null;
   speakSymbolsAppearance?: boolean;
   onSpeakSymbols?: (v: boolean | null) => void;
+  /** «تنسيق الكتاب» for this book, or null for a book whose formatting it cannot change (a PDF). */
+  bookCss?: boolean | null;
+  onBookCss?: (on: boolean) => void;
 }
 
 // The reading-settings drawer (RAWY-34, design band I). A right-edge drawer docked BETWEEN the
@@ -105,6 +108,8 @@ export function SettingsPanel({
   speakSymbolsOverride,
   speakSymbolsAppearance,
   onSpeakSymbols,
+  bookCss = null,
+  onBookCss,
 }: Props) {
   const { t, dir: uiDir } = useI18n();
   // RAWY-216: five CONCEPT tabs (was Text/Page/Theme, which mixed typography with colour and read-aloud).
@@ -311,6 +316,8 @@ export function SettingsPanel({
           speakSymbolsOverride={speakSymbolsOverride}
           speakSymbolsAppearance={speakSymbolsAppearance}
           onSpeakSymbols={onSpeakSymbols}
+          bookCss={bookCss}
+          onBookCss={onBookCss}
         />
       </div>
     </aside>

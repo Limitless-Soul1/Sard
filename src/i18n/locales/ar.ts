@@ -144,6 +144,8 @@ export const ar: Record<TKey, string> = {
   "type.alignStart": "بداية",
   "type.alignCenter": "وسط",
   "type.alignEnd": "نهاية",
+  "type.bookCss": "تنسيق الكتاب",
+  "type.bookCssHint": "يعرض هذا الكتاب بتنسيقه: التوسيط والعناوين والزخارف. أطفئه ليظهر بأسلوب سرد.",
   "type.diacritics": "التشكيل",
   "diacritics.show": "إظهار",
   "diacritics.hide": "إخفاء",

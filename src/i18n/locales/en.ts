@@ -1482,22 +1482,22 @@ export const en = {
   // chosen language and its direction. Shown once after updating to the version they describe, and
   // published by the release workflow as the update manifest's notes — see
   // `features/updater/whatsNew.ts`. Rewritten, in both locales, for every release.
-  "wn.readAloud.h": "Read aloud works again",
-  "wn.readAloud.b":
-    "Since 23 October, read aloud could not start: every sentence showed \"Edge unavailable\". "
-    + "Sard now sends the connection details Microsoft's voice service requires.",
-  "wn.secondServer.h": "A second voice server",
-  "wn.secondServer.b":
-    "If one of Microsoft's voice servers refuses Sard or stops answering, Sard moves to the other one "
-    + "on its own, and goes back to the first once it works again.",
-  "wn.busyServer.h": "When the service is busy",
-  "wn.busyServer.b":
-    "If Microsoft's voice service keeps answering that it is busy while you wait for a sentence, Sard "
-    + "asks its other voice server for that sentence.",
-  "wn.busyWait.h": "Waiting out a busy moment",
-  "wn.busyWait.b":
-    "When the voice service asks Sard to slow down, Sard now waits a few seconds and tries once more "
-    + "before it stops, instead of spending all its tries in the first two seconds.",
+  "wn.bookFormat.h": "Books keep their own formatting",
+  "wn.bookFormat.b":
+    "Books now open the way they were laid out: centred titles, heading sizes, dividers and frames, "
+    + "and centred poetry.",
+  "wn.yourSettings.h": "Your reading settings still apply",
+  "wn.yourSettings.b":
+    "Text size, fonts, line spacing, margins and colours still follow your settings. A book that sets "
+    + "its own base text size may look slightly larger or smaller than others at the same setting.",
+  "wn.plainStyle.h": "Sard's plain style for one book",
+  "wn.plainStyle.b":
+    "To read a book in Sard's plain style again, turn off \"Book's formatting\", the first option in "
+    + "the Text settings while that book is open. It applies to that book only.",
+  "wn.cardAlternates.h": "Stylistic alternates in photo cards",
+  "wn.cardAlternates.b":
+    "A text layer in a photo card can turn on Stylistic alternates, so a font that has alternate "
+    + "letterforms, such as Thmanyah's long final tails, uses them in the card and in the exported image.",
 
   "err.runtime.title": "Your Windows WebView2 needs updating",
   // Nobody is declared innocent here. What was established is that capabilities the rendering

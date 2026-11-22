@@ -3406,7 +3406,7 @@ dependencies = [
 
 [[package]]
 name = "sard"
-version = "1.4.2"
+version = "1.4.3"
 dependencies = [
  "discord-rich-presence",
  "image",

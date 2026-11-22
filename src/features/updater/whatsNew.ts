@@ -21,7 +21,7 @@ import type { TKey } from "../../i18n/locales/en";
 import { isArabicText } from "../../lib/typography";
 
 /** The version these notes describe: the release that contains them. */
-export const WHATS_NEW_VERSION = "1.4.2";
+export const WHATS_NEW_VERSION = "1.4.3";
 
 /** The settings row recording the version whose notes this installation has already been shown. */
 export const SEEN_KEY = "whats_new_seen_version";
@@ -40,10 +40,10 @@ export interface WhatsNewSection {
  * one is a compile error instead of an identifier printed into the dialog.
  */
 export const WHATS_NEW: readonly WhatsNewSection[] = [
-  { h: "wn.readAloud.h", b: "wn.readAloud.b" },
-  { h: "wn.secondServer.h", b: "wn.secondServer.b" },
-  { h: "wn.busyServer.h", b: "wn.busyServer.b" },
-  { h: "wn.busyWait.h", b: "wn.busyWait.b" },
+  { h: "wn.bookFormat.h", b: "wn.bookFormat.b" },
+  { h: "wn.yourSettings.h", b: "wn.yourSettings.b" },
+  { h: "wn.plainStyle.h", b: "wn.plainStyle.b" },
+  { h: "wn.cardAlternates.h", b: "wn.cardAlternates.b" },
 ];
 
 /** `1.2.10` is newer than `1.2.9`, which a string comparison gets wrong. Missing parts read as 0. */

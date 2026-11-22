@@ -117,6 +117,23 @@ export interface TextStyle {
   strokeWidth?: number;
   /** null/absent = derived from the words and the card — see `strokeColor` in `legibility`. */
   strokeColor?: string | null;
+  /**
+   * «حروف مرسلة» — THE TYPEFACE'S OWN ALTERNATE LETTERFORMS (OpenType `salt`), such as the long final
+   * tails a face like Thmanyah draws. A request to the font, not a drawing: a face without `salt`
+   * renders exactly as it would without it. Absent or false is the face's default forms, which is
+   * what every card saved before this carries. See `fontFeatures`.
+   */
+  alternates?: boolean;
+}
+
+/**
+ * The OpenType features a text element asks its typeface for, as CSS `font-feature-settings` — or
+ * undefined, which leaves the face drawing exactly as it does by default. One place, because the card
+ * (and so the exported image), the text being typed and the empty field's chip must all ask for the
+ * same letterforms.
+ */
+export function fontFeatures(style: TextStyle): string | undefined {
+  return style.alternates ? '"salt" 1' : undefined;
 }
 
 /**
@@ -544,6 +561,7 @@ const STYLE_KEYS = new Set<string>([
   "legibility", "legibilityStrength", "legibilitySoftness", "legibilityColor", "legibilityShape",
   "haloWidth",
   "strokeWidth", "strokeColor",
+  "alternates",
 ]);
 
 function parseRect(v: unknown): Rect {
@@ -593,6 +611,7 @@ function parseElement(v: unknown): CardElement | null {
     if (typeof s.haloWidth === "number") style.haloWidth = clamp(s.haloWidth, 0, HALO_WIDTH_MAX_EM);
     if (typeof s.strokeWidth === "number") style.strokeWidth = clamp(s.strokeWidth, 0, STROKE_MAX);
     if (s.strokeColor === null || typeof s.strokeColor === "string") style.strokeColor = s.strokeColor as string | null;
+    if (typeof s.alternates === "boolean") style.alternates = s.alternates;
     const el: TextElement = {
       id, kind, placement: parsePlacement(e.placement), style, text: str(e.text, ""),
     };

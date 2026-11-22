@@ -52,19 +52,47 @@ const KEEP = new Set([
   "font-variant-numeric",
   "letter-spacing", // relative only
   "vertical-align",
+  // THE BOOK'S LOOK — rules, frames, faded labels, boxes. Each is held to a shape that cannot leave the
+  // column or out-size the reader's text: see `cleanDeclaration`. None of them may style the page itself.
+  "opacity", // not below MIN_OPACITY: a book cannot make text vanish
+  "display", // the block/inline kinds only — see DISPLAY
+  "box-sizing",
+  "padding", "padding-top", "padding-bottom", "padding-left", "padding-right",
+  "padding-block", "padding-block-start", "padding-block-end",
+  "padding-inline", "padding-inline-start", "padding-inline-end",
+  "width", "min-width", "max-width", // a percentage of the column, never a length
+  "background", "background-color", // a plain colour only, never an image
+  "border-collapse",
+  "list-style-type",
+  ...borderProps(),
 ]);
+
+/** Every border longhand and shorthand: the four sides, the logical sides, and width/style/colour of each. */
+function borderProps(): string[] {
+  const sides = ["", "-top", "-right", "-bottom", "-left", "-block", "-block-start", "-block-end", "-inline", "-inline-start", "-inline-end"];
+  const out: string[] = ["border-radius"];
+  for (const s of sides) for (const part of ["", "-width", "-style", "-color"]) out.push(`border${s}${part}`);
+  return out;
+}
+
+/** The kinds of box a book may ask for. `none` is left out: hidden text would still be read aloud. */
+const DISPLAY = new Set(["block", "inline", "inline-block", "list-item"]);
+
+/** Below this a book's faded label is no longer readable, so the declaration is dropped. */
+const MIN_OPACITY = 0.2;
+
+/** Padding past this would squeeze the line (em-like units, and percent of the column). */
+const PADDING_MAX_EM = 4;
+const PADDING_MAX_PCT = 25;
 
 /** Properties that escape the column or fight the engine. Dropped outright, in every mode but raw. */
 const NEVER = new Set([
   "position", "float", "clear",
-  "width", "height", "min-width", "min-height", "max-width", "max-height",
-  "padding", "padding-top", "padding-bottom", "padding-left", "padding-right",
-  "padding-block", "padding-block-start", "padding-block-end",
-  "padding-inline", "padding-inline-start", "padding-inline-end",
+  "height", "min-height", "max-height",
   "columns", "column-count", "column-width", "column-gap", "column-rule", "column-span", "column-fill",
   "page-break-before", "page-break-after", "page-break-inside",
   "break-before", "break-after", "break-inside",
-  "background", "background-color", "background-image",
+  "background-image",
   "zoom", "transform", "writing-mode", "direction",
   "overflow", "overflow-x", "overflow-y",
   "line-height", // the reader owns this — RAWY-195 hardened it deliberately
@@ -82,33 +110,125 @@ const NEGATIVE_LENGTH = /-\s*\d*\.?\d+\s*(pt|px|cm|mm|in|pc|q|em|rem|ex|ch|%|vw|
 const isRelativeSize = (v: string): boolean => !ABSOLUTE_UNIT.test(v);
 const hasNegative = (v: string): boolean => NEGATIVE_LENGTH.test(v);
 
-/** Does this declaration survive? The single place the table is applied. */
-export function keepDeclaration(prop: string, value: string, selector: string): boolean {
+/**
+ * Does the selector style the PAGE — `<html>`, `<body>`, `:root`, or everything (`*`)?
+ *
+ * The page's box, ground and geometry are the reader's: the margins, the paper colour and the column
+ * come from Sard's own settings. A book's `body { margin: 1em 1.5em; padding: 1.5em 2em; max-width: 38em }`
+ * is exactly what squeezed its text into a narrow strip in a narrow column (measured with the book's
+ * sheet passed through untouched). True when ANY selector in the list has one of those as its subject.
+ */
+export function stylesPage(selector: string): boolean {
+  return selector.split(",").some((s) => {
+    const subject = s.trim().split(/[\s>+~]+/).pop() ?? "";
+    return /^(?:(?:html|body|:root)(?![\w-])|\*$)/i.test(subject);
+  });
+}
+
+/** Properties that shape a box. On the page itself they are the reader's (see `stylesPage`). */
+const BOX_PROP = /^(margin|padding|width|min-width|max-width|background|border|opacity|display|box-sizing)/;
+
+/** CSS px per unit, to judge a border's width (em-like units at a 16 px text size). */
+const PX_PER: Record<string, number> = {
+  px: 1, pt: 4 / 3, pc: 16, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6, em: 16, rem: 16, ex: 8, ch: 8,
+};
+/**
+ * A length token at the start of a word, so a colour such as `#c8a96e` can never be read as one.
+ *
+ * The character before the number is matched and given back (`lead`) rather than asserted with a
+ * lookbehind: a lookbehind is a syntax error to an older WebKitGTK, and a regex literal that fails to
+ * parse takes the whole bundle down with it on Linux.
+ */
+const LENGTH_TOKEN = /(^|[^#\w.])(\d*\.?\d+)\s*(px|pt|pc|in|cm|mm|q|em|rem|ex|ch)\b/gi;
+
+/**
+ * A border with its widths named rather than measured: `1px solid #ccc` → `thin solid #ccc`.
+ *
+ * A rule under a heading or a frame round a summary is the book's look, but its width is written in
+ * pixels, and no absolute length may reach the frame (the property the whole module exists to keep).
+ * The keywords are the browser's own widths (thin ≈ 1 px, medium ≈ 3 px, thick ≈ 5 px), so the rule is
+ * drawn as the book drew it and nothing measured survives.
+ */
+function borderValue(v: string): string | null {
+  if (hasNegative(v)) return null;
+  const named = v.replace(LENGTH_TOKEN, (_, lead: string, n: string, unit: string) => {
+    const px = parseFloat(n) * (PX_PER[unit.toLowerCase()] ?? 16);
+    return lead + (px <= 1.5 ? "thin" : px <= 3.5 ? "medium" : "thick");
+  });
+  return ABSOLUTE_UNIT.test(named) || /\d\s*(%|vw|vh)/i.test(named) ? null : named;
+}
+
+/** Padding inside the book's own boxes: relative, never negative, and never wide enough to squeeze the line. */
+function paddingOk(v: string): boolean {
+  if (!isRelativeSize(v) || hasNegative(v) || v.includes("(")) return false;
+  const lengths = /(\d*\.?\d+)\s*([a-z%]*)/gi;
+  for (let m = lengths.exec(v); m; m = lengths.exec(v)) {
+    const n = parseFloat(m[1]);
+    const unit = m[2].toLowerCase();
+    if (unit === "em" || unit === "rem") { if (n > PADDING_MAX_EM) return false; }
+    else if (unit === "ex" || unit === "ch") { if (n / 2 > PADDING_MAX_EM) return false; }
+    else if (unit === "%") { if (n > PADDING_MAX_PCT) return false; }
+    else if (unit !== "" || n !== 0) return false; // viewport units, or a bare number
+  }
+  return true;
+}
+
+/** A plain colour — the only background a book may give a box. Never an image, a gradient or a url. */
+const PLAIN_COLOUR = /^(#[0-9a-f]{3,8}|[a-z]+|(?:rgb|rgba|hsl|hsla)\([^()]*\))$/i;
+
+/**
+ * The value this declaration keeps, or null when it is dropped. The single place the table is applied.
+ *
+ * Most declarations are kept as written. A border's widths are rewritten as keywords (`borderValue`).
+ */
+export function cleanDeclaration(prop: string, value: string, selector: string): string | null {
   const p = prop.trim().toLowerCase();
   // FINDING-1: a substring test for "!important" was a real bypass. CSS permits whitespace AND
   // comments between the bang and the keyword — `! important` and `!/**/important` are valid and
   // mean exactly the same thing, so both slipped through while the plain form was blocked. Comments
-  // are stripped here as well as at sheet level, because `keepDeclaration` is called directly (by
-  // the block filter and by tests) with values the sheet-level pass never saw.
-  const v = value.replace(/\/\*[\s\S]*?\*\//g, "").trim().toLowerCase();
-  if (!p || !v) return false;
+  // are stripped here as well as at sheet level, because this is called directly (by the block
+  // filter and by tests) with values the sheet-level pass never saw.
+  const written = value.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+  const v = written.toLowerCase();
+  if (!p || !v) return null;
   // `!important` from a book must never outrank the reader's own controls.
-  if (/!\s*important/.test(v)) return false;
-  if (NEVER.has(p)) return false;
-  if (!KEEP.has(p)) return false;
+  if (/!\s*important/.test(v)) return null;
+  if (NEVER.has(p)) return null;
+  if (!KEEP.has(p)) return null;
 
   // A book may colour a WORD, never the page: a body/html-level colour would fight the theme.
-  if (p === "color" && /(^|[\s,])(body|html)\b/i.test(selector)) return false;
+  if (p === "color" && /(^|[\s,])(body|html)\b/i.test(selector)) return null;
+  // Nor shape the page's own box: its margins, ground and column are the reader's.
+  if (BOX_PROP.test(p) && stylesPage(selector)) return null;
 
   // Sizes and spacing must be relative, so the reader's zoom stays authoritative.
   if (p === "font-size" || p === "text-indent" || p === "letter-spacing") {
-    return isRelativeSize(v) && !hasNegative(v);
+    return isRelativeSize(v) && !hasNegative(v) ? written : null;
   }
   // Margins: relative only, and never negative — this is the clipping rule, and it is absolute.
   if (p.startsWith("margin")) {
-    return isRelativeSize(v) && !hasNegative(v);
+    return isRelativeSize(v) && !hasNegative(v) ? written : null;
   }
-  return true;
+  if (p.startsWith("padding")) return paddingOk(v) ? written : null;
+  if (p === "border-radius") return isRelativeSize(v) && !hasNegative(v) ? written : null;
+  if (p.startsWith("border") && p !== "border-collapse") return borderValue(written);
+  if (p === "width" || p === "min-width" || p === "max-width") {
+    const m = /^(\d*\.?\d+)%$/.exec(v);
+    return v === "auto" || (p === "max-width" && v === "none") || (m && parseFloat(m[1]) <= 100) ? written : null;
+  }
+  if (p === "background" || p === "background-color") return PLAIN_COLOUR.test(v) ? written : null;
+  if (p === "opacity") {
+    const m = /^(\d*\.?\d+)(%?)$/.exec(v);
+    const n = m ? parseFloat(m[1]) / (m[2] ? 100 : 1) : NaN;
+    return n >= MIN_OPACITY && n <= 1 ? written : null;
+  }
+  if (p === "display") return DISPLAY.has(v) ? written : null;
+  return written;
+}
+
+/** Does this declaration survive at all? */
+export function keepDeclaration(prop: string, value: string, selector: string): boolean {
+  return cleanDeclaration(prop, value, selector) !== null;
 }
 
 // ── the parser ───────────────────────────────────────────────────────────────────────────────────
@@ -204,8 +324,8 @@ function filterBlock(body: string, selector: string): string {
     const idx = decl.indexOf(":");
     if (idx < 0) continue;
     const prop = decl.slice(0, idx);
-    const value = decl.slice(idx + 1);
-    if (keepDeclaration(prop, value, selector)) out.push(`${prop.trim()}: ${value.trim()}`);
+    const kept = cleanDeclaration(prop, decl.slice(idx + 1), selector);
+    if (kept !== null) out.push(`${prop.trim()}: ${kept}`);
   }
   return out.join("; ");
 }
@@ -219,8 +339,14 @@ function filterBlock(body: string, selector: string): string {
 export function sanitiseBookCss(css: string, mode: BookCssMode): string {
   if (mode === "raw") return css;
   if (mode === "off") return "";
+  const clean = stripComments(css);
+  // AN INLINE `style="…"` ATTRIBUTE. The engine passes those through this same hook, and they are a
+  // list of declarations with no selector and no braces — so the rule parser found nothing in them, and
+  // a book's `style="text-align:center"` on a poem was erased. Filtered as one block instead; whose box
+  // it is cannot be known here, so the page rule (`stylesPage`) cannot apply to it.
+  if (!/[{}]/.test(clean)) return filterBlock(clean, "");
   const out: string[] = [];
-  for (const rule of parseRules(stripComments(css))) {
+  for (const rule of parseRules(clean)) {
     // Statement at-rules (@import pulls in a whole unsanitised sheet — and a remote one at that).
     if (rule.at && !rule.body) continue;
     if (rule.at) {

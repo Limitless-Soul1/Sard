@@ -852,6 +852,15 @@ interface OpenOptions {
   fxlMode?: "scroll" | "pages";
   /** Localized text for the hide-first-line placeholder + reveal (RAWY-70). */
   revealLabels?: RevealLabels;
+  /**
+   * What this book's own stylesheet may contain («تنسيق الكتاب», `features/reader/bookCss.ts`). Absent
+   * means `off`, so an open that names no mode can never inherit the previous book's.
+   *
+   * An OPTION rather than only the module setter, because the reader host (Linux, WebKit) runs its own
+   * copy of this module: the options cross to it with the book, a setter called in the application
+   * does not.
+   */
+  bookCss?: BookCssMode;
 }
 
 // Arabic combining marks (tashkīl). We wrap runs of them in spans so the diacritics
@@ -1375,12 +1384,10 @@ function markInBodyHeading(doc: Document, tocLabel: string | null): void {
 // only CENTRE, and the edge OPPOSITE the reading direction, count as intent. `start` (the initial value
 // — i.e. nothing was ever said) and `justify` never do.
 //
-// SCOPE TODAY: Sard does not currently apply an EPUB's external stylesheet at all (RAWY-195 measured
-// this; see OPEN.md), so a book's centring declared in a .css file cannot reach here yet. What this
-// pass DOES catch today is centring that does not go through a stylesheet — an inline
-// `style="text-align:center"` and the `[align=center]`/`<center>` presentational hints. It is also the
-// guard that keeps the book's centred poetry intact the day that stylesheet defect is fixed, at which
-// point the hardened !important alignment above would otherwise flatten every centred block.
+// SCOPE: a book's stylesheet applies by default, sanitised (`features/reader/bookCss.ts`), with its
+// inline `style="text-align:center"`; a book switched to Sard's style contributes nothing but the
+// `[align=center]`/`<center>` hints. This pass is what keeps that centred poetry and those title pages
+// from being flattened by the hardened alignment above.
 // PROSE WITH NO BLOCK CONTAINER — give the typography selectors something they can match.
 //
 // The four reader controls (leading, alignment, paragraph spacing, first-line indent) are written
@@ -1567,19 +1574,36 @@ function markParagraphBreaks(doc: Document): void {
   }
 }
 
+/**
+ * Which way the page reads, for judging alignment: the book's declared direction, and where it declares
+ * none, the direction its page is laid out in (`<html dir="rtl">`).
+ *
+ * Measured: two Arabic books with no declared direction and a stylesheet saying `body { text-align: right }`
+ * had EVERY paragraph read as aligned to the far edge, so all of them were spared and the reader's
+ * alignment did nothing.
+ */
+export function pageReadsRtl(declared: string | undefined, laidOut: string): boolean {
+  return (declared ?? laidOut) === "rtl";
+}
+
+/** Is this computed alignment the book's own intent? Centre, and the edge away from where the text starts. */
+export function alignedByBook(textAlign: string, rtl: boolean): boolean {
+  const opposite = rtl ? "left" : "right";
+  return textAlign === "center" || textAlign === "-webkit-center" || textAlign === "end" || textAlign === opposite;
+}
+
 function markBookAlignedBlocks(doc: Document, dir?: string): void {
   const root = doc.documentElement;
   if (!root) return;
   try {
     const win = doc.defaultView;
     if (!win) return;
-    const rtl = dir === "rtl";
-    const opposite = rtl ? "left" : "right"; // the edge away from where the text starts
     // foliate measures with the frame briefly displayed (a display:none iframe can't be trusted for
     // computed style in every engine); do the same so this pass can't silently read nothing.
     const frame = win.frameElement as HTMLElement | null;
     const hidden = frame?.style.display === "none";
     if (frame && hidden) frame.style.display = "block";
+    const rtl = pageReadsRtl(dir, win.getComputedStyle(doc.body ?? root).direction);
     // Two passes: read EVERY computed value first, tag second. Adding a class invalidates style for
     // that subtree, so interleaving the two would force a fresh style resolve on each read.
     // `.sard-text-host` is in this list because `markTextHosts` has just made those elements targets
@@ -1591,8 +1615,7 @@ function markBookAlignedBlocks(doc: Document, dir?: string): void {
     );
     const keep: HTMLElement[] = [];
     for (const el of blocks) {
-      const ta = win.getComputedStyle(el).textAlign;
-      if (ta === "center" || ta === "-webkit-center" || ta === "end" || ta === opposite) keep.push(el);
+      if (alignedByBook(win.getComputedStyle(el).textAlign, rtl)) keep.push(el);
     }
     if (frame && hidden) frame.style.display = "none";
     for (const el of keep) el.classList.add(BOOK_ALIGN_CLASS);
@@ -1928,15 +1951,14 @@ const NEVER_RENDERED = new Set(["script", "style"]);
 //
 // The vendored engine reads `globalThis.__sardSanitiseBookCss` at the top of `replaceCSS` (local
 // patch 5). Installing it here rather than per-open means there is no window in which a stylesheet
-// could be processed with no hook present, and the mode it applies is a module-level value the
-// Reader updates — so a setting change takes effect on the next book without re-installing anything.
+// could be processed with no hook present, and the mode it applies is a module-level value that
+// `open()` sets from its `bookCss` option before the book is fetched.
 //
-// It starts at `off`, the shipping default. Until stage 4 opens the CSP no book stylesheet reaches
-// the frame at all, so this hook is currently reached only by sheets that are already inert — which
-// is exactly the property stage 3 must preserve, and which rendering comparison must confirm.
+// It starts at `off`, and an open that names no mode resets it to `off`: fail-closed. A book opened by
+// the Reader names its own («تنسيق الكتاب», on — `sanitised` — unless the reader turned it off).
 let bookCssMode: BookCssMode = "off";
 
-/** Set the mode future stylesheets are sanitised with. Called by the Reader from the stored setting. */
+/** Set the mode future stylesheets are sanitised with. Called by `open()` from its options. */
 export function setBookCssMode(mode: BookCssMode): void {
   bookCssMode = mode;
 }
@@ -2170,6 +2192,8 @@ export class FoliateController {
   /** Open `source` into `container`. Idempotent — disposes any prior view first. */
   async open(source: string, container: HTMLElement, opts: OpenOptions): Promise<void> {
     this.dispose();
+    // Before anything is fetched: the sanitiser hook runs while the book's resources load.
+    setBookCssMode(opts.bookCss ?? "off");
     await ensureFoliateDefined();
 
     const view = document.createElement("foliate-view") as any;

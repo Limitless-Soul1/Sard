@@ -1,3 +1,8 @@
+// SUPERSEDED (2026-11-21). The reader no longer reads this app-wide row: the decision is now made per
+// book by «تنسيق الكتاب» (`features/reader/bookCss.ts`, key `book_css:<bookId>`, on by default) and
+// handed to the engine through `ctrl.open()`. Nothing ever wrote this row, so no stored state is lost.
+// What follows is the original stage-2 rationale, kept for its fail-closed parsing argument.
+//
 // RESILIENCE-1 / WP-7 (stage 2) — WHERE THE BOOK-CSS DECISION LIVES.
 //
 // The CSP is compiled into the binary and cannot be changed at runtime, so "should a book's own

@@ -1464,7 +1464,8 @@ export const en = {
   "tts.volume": "Volume",
   "tts.chapterDone": "Chapter finished",
   "tts.nextChapter": "Next chapter",
-  "tts.bookEnd": "End of the book",
+  "tts.bookEnd": "Every story ends, every journey leaves a trace.",
+  "tts.bookEndAsk": "What did you think of this journey?",
 
   // ── RESILIENCE-1 / WP-1: the failure surface ────────────────────────────────────────────────
   // Every string here answers three questions in order: WHAT failed · WHOSE fault it is · WHAT NEXT.

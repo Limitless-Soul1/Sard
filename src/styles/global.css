@@ -2320,6 +2320,65 @@ html, body, #root {
   outline: var(--nc-ring-w, 2px) solid var(--accent); outline-offset: -2px;
 }
 
+/* ================================================================================================
+   THE END-OF-BOOK CARD — design "Pill card", chosen by the owner on 2026-11-25.
+
+   When read-aloud finishes the LAST chapter there is nothing to continue to, so the pill does not turn
+   into the chapter-end plate above (TtsPlayer gives it `.book-end`, never `.chapter-end`). It keeps the
+   read-aloud pill's own body from `.tts-pill`, untouched: the 16px float radius, the chrome ground and
+   its frost, the 1px chrome border, and the transport shadow (with its book-dark variant). Inside sits a
+   closing card: an accent book badge, the closing line, the question, and a round close button.
+
+   EVERY THEME, BUILT-IN OR THE READER'S OWN: every colour here is one of the pill's own tokens
+   (`--chrome-bg`, `--chrome-border`, `--text`, `--muted`, `--accent`). `applyTheme` writes them for every
+   theme, a reader-made `u:<id>` one included, and the Reader re-scopes them to a هيئة's interface
+   palette. There is no per-theme value to fall through. That fall-through is the failure
+   `nextChapterTheme.test.ts` records, and `bookEndCard.test.ts` guards against it here.
+
+   BALANCE: the badge and the close sit in two end slots of the SAME width. The close is centred on the
+   card's height, not pinned to a corner, and both edges have the same 12px inset. The card is therefore
+   symmetric, and it mirrors in RTL through logical flow alone.
+
+   Nothing about the behaviour moves: the state (chapter-end with no next chapter), the bottom-centre
+   position and --reading-shift centring, and the close, which still calls `stop` with the same label. */
+.tts-pill.book-end {
+  width: max-content; max-width: calc(100vw - 28px);
+  flex-direction: row; padding: 12px;
+}
+.tts-book-end {
+  flex: 1; min-width: 0; display: flex; align-items: stretch; gap: 12px;
+  animation: tts-book-end-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes tts-book-end-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.tts-book-end-slot { flex: none; width: 40px; display: flex; align-items: center; justify-content: center; }
+.tts-book-end-badge {
+  width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.tts-book-end-badge svg { width: 19px; height: 19px; }
+.tts-book-end-text { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; text-align: start; }
+.tts-book-end-line { font: 500 0.875rem/1.5 var(--ui-font); color: var(--text); }
+.tts-book-end-ask { font: 400 0.78125rem/1.5 var(--ui-font); color: var(--muted); }
+/* the close: a real button, a faint ink ground with a hairline, not a stray glyph */
+.tts-book-end-close {
+  flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--text) 66%, transparent);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 11%, transparent);
+  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+.tts-book-end-close svg { width: 12px; height: 12px; }
+.tts-book-end-close:hover {
+  color: var(--text); background: color-mix(in srgb, var(--text) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 20%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tts-book-end { animation: none; }
+  .tts-book-end-close { transition: none; }
+}
+
 /* RAWY-193: the explicit "Edge unavailable" PAUSE state. Reuses the chapter-end block wholesale; the message
    reads as an alert (the RAWY-190 errored ink) beside the accent Retry, which is the only action offered.
    Theme-aware; mirrors in RTL. */

@@ -2341,8 +2341,12 @@ html, body, #root {
 
    Nothing about the behaviour moves: the state (chapter-end with no next chapter), the bottom-centre
    position and --reading-shift centring, and the close, which still calls `stop` with the same label. */
+/* No wider than the READING AREA it is centred on (`--reading-panels`, set by the Reader). The text wraps
+   instead. Measured before this cap: at the 720px minimum window with Contents open, the English card
+   (425px) was centred on a 340px reading area, slid under the panel, and its close was cut off past the
+   window's edge. */
 .tts-pill.book-end {
-  width: max-content; max-width: calc(100vw - 28px);
+  width: max-content; max-width: calc(100vw - var(--reading-panels, 0px) - 28px);
   flex-direction: row; padding: 12px;
 }
 .tts-book-end {

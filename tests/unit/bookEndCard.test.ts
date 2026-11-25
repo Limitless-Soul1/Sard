@@ -149,7 +149,8 @@ describe("the card follows every theme, built-in or the reader's own", () => {
   });
 
   it("takes every colour from the pill's own tokens", () => {
-    const allowed = new Set(["--text", "--muted", "--accent", "--ui-font"]);
+    // `--reading-panels` is the one non-colour variable: the reading area's width cap, below.
+    const allowed = new Set(["--text", "--muted", "--accent", "--ui-font", "--reading-panels"]);
     for (const r of rules) {
       for (const m of r.body.matchAll(/var\((--[\w-]+)/g)) expect(allowed.has(m[1]), `${r.sel}: ${m[1]}`).toBe(true);
     }
@@ -160,6 +161,16 @@ describe("the card follows every theme, built-in or the reader's own", () => {
     // The ground, border, frost and shadow come from `.tts-pill` itself, which `.book-end` does not restate.
     const pill = rules.find((r) => r.sel === ".tts-pill.book-end")!;
     expect(pill.body).not.toMatch(/background|border|box-shadow|backdrop-filter/);
+  });
+
+  it("is never wider than the reading area it is centred on", () => {
+    // MEASURED: uncapped, at the 720px minimum window with Contents open, the English card slid under the
+    // panel and its close was cut off past the window's edge. The Reader names the panels' width, and
+    // the card subtracts it.
+    const pill = rules.find((r) => r.sel === ".tts-pill.book-end")!;
+    expect(pill.body).toMatch(/max-width:\s*calc\(100vw - var\(--reading-panels, 0px\) - 28px\)/);
+    const reader = readFileSync(join(__dirname, "../../src/features/reader/Reader.tsx"), "utf8");
+    expect(reader).toContain('"--reading-panels": `${leftPad + rightPad}px`');
   });
 
   it("is set in the interface face", () => {

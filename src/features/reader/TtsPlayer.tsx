@@ -154,6 +154,9 @@ export function TtsPlayer({
   // finished chapter, `endDismissed` hides the stale continue offer (the pill returns to its normal
   // transport) while the session stays alive so Play still reads the current chapter.
   const chapterEnd = status === "chapter-end" && !endDismissed;
+  // The end of the BOOK: the same chapter-end state with no chapter after it. It keeps the pill's own body
+  // and shows the closing card instead of the chapter-end plate (global.css, "THE END-OF-BOOK CARD").
+  const bookEnd = chapterEnd && !hasNextChapter;
   const edgeErrored = status === "edge-error"; // RAWY-193: explicit "Edge unavailable" pause + choice
   // WP-5C: a DIFFERENT terminal state from edge-error, with different actions. "Retry" is useless here
   // (a voice that cannot render this script will not learn to), so it is not offered.
@@ -216,7 +219,7 @@ export function TtsPlayer({
           onDismiss={stop}
         />
       )}
-      <div className={`tts-pill${expanded ? " expanded" : ""}${errored || edgeErrored ? " errored" : ""}${chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")} onClickCapture={releaseButtonFocusAfterPointerClick}>
+      <div className={`tts-pill${expanded ? " expanded" : ""}${errored || edgeErrored ? " errored" : ""}${bookEnd ? " book-end" : chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")} onClickCapture={releaseButtonFocusAfterPointerClick}>
         {edgeErrored ? (
           /* RAWY-193: the Edge engine failed (and the one bounded retry failed) — an EXPLICIT, actionable
              PAUSE. Nothing plays in a voice the user didn't choose, and there is no alternative engine to fall
@@ -243,20 +246,38 @@ export function TtsPlayer({
               </button>
             </div>
           </div>
+        ) : bookEnd ? (
+          /* The end of the book: a closing card — an accent book badge, the closing line and the question,
+             and a round close that stops read-aloud exactly as the ✕ always has. The badge and the close sit
+             in two end slots of the same width, so the card is balanced in both directions. */
+          <div className="tts-book-end">
+            <span className="tts-book-end-slot" aria-hidden>
+              <span className="tts-book-end-badge">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6.6C10.4 5.4 8 4.9 4.5 5.1v12.6c3.5-.2 5.9.3 7.5 1.5 1.6-1.2 4-1.7 7.5-1.5V5.1C16 4.9 13.6 5.4 12 6.6z" /><path d="M12 6.6v12.6" /></svg>
+              </span>
+            </span>
+            <span className="tts-book-end-text">
+              <span className="tts-book-end-line">{t("tts.bookEnd")}</span>
+              <span className="tts-book-end-ask">{t("tts.bookEndAsk")}</span>
+            </span>
+            <span className="tts-book-end-slot">
+              <button className="tts-book-end-close" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M7 7l10 10M17 7L7 17" /></svg>
+              </button>
+            </span>
+          </div>
         ) : chapterEnd ? (
-          /* RAWY-184 (Part B): end-of-chapter — STOP + a tasteful "next chapter" affordance (or a gentle
-             end-of-book state with no button). On-brand, per-theme, mirrors in RTL like the rest of the pill. */
+          /* RAWY-184 (Part B): end-of-chapter — STOP + a tasteful "next chapter" affordance. On-brand,
+             per-theme, mirrors in RTL like the rest of the pill. (The end of the BOOK has its own card above.) */
           <div className="tts-pill-end">
-            <span className="tts-end-msg">{hasNextChapter ? t("tts.chapterDone") : t("tts.bookEnd")}</span>
+            <span className="tts-end-msg">{t("tts.chapterDone")}</span>
             <div className="tts-end-actions">
-              {hasNextChapter && (
-                <button className="tts-end-next tts-next-plate" onClick={() => onNextChapter?.()}>
-                  <span className="tts-next-label">{t("tts.nextChapter")}</span>
-                  <span className="tts-next-cap" aria-hidden>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><path d={NEXT_CHEVRON[dir]} /></svg>
-                  </span>
-                </button>
-              )}
+              <button className="tts-end-next tts-next-plate" onClick={() => onNextChapter?.()}>
+                <span className="tts-next-label">{t("tts.nextChapter")}</span>
+                <span className="tts-next-cap" aria-hidden>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><path d={NEXT_CHEVRON[dir]} /></svg>
+                </span>
+              </button>
               <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
               </button>

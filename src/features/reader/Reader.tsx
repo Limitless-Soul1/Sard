@@ -3515,6 +3515,10 @@ export function Reader({
     // panel's own colours, so it follows the palette the panel now wears rather than the page's.
     ...(uiProfile && chromeTheme ? textureVars(uiProfile.data.texture, chromeTheme.colors, deskScrim) : {}),
     "--reading-shift": `${(leftPad - rightPad) / 2}px`,
+    // ...and how much width the open side panels take, so a floating card can be no wider than the
+    // reading area it is centred on. The shift alone cannot say: both panels open and none open both
+    // give 0. Read by the end-of-book card (global.css).
+    "--reading-panels": `${leftPad + rightPad}px`,
     // THE هيئة'S PAPER, FULL STOP. `style.pageColor` was a shared override read ahead of it, so a
     // colour chosen in one book painted every other and no Discard could reach it. One owner now —
     // the legacy row values are cleared by migration 20260924210000.

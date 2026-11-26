@@ -97,6 +97,7 @@ suite("the drift that is reported and the drift that is saved read one source", 
     // The marks are written only once one of them has actually moved — the same rule the measure
     // follows. Without this, confirming a colour change would turn `voice: null` ("leave the reader's
     // own marks alone") into seven asserted values.
-    expect(dialog).toContain('if (TTS_TRACKING_KEYS.some((k) => String(liveStyle[k] ?? "") !== asserted[k])) {');
+    // And only the هيئة's OWN marks: the two highlight switches are the reader's and are never folded in.
+    expect(dialog).toContain('if (TTS_APPEARANCE_KEYS.some((k) => String(liveStyle[k] ?? "") !== asserted[k])) {');
   });
 });

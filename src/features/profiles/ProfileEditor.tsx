@@ -518,18 +518,12 @@ export function ProfileEditor({
         const held = TYPOGRAPHY_KEYS.filter((k) => draft.data.type.reading[k] !== null).length;
         return held ? localeDigits(String(held), lang) : t("profiles.measure.follows");
       }
-      // WHICH MARKS ARE ON, not a colour. The chapter holds two independent effects, and either one
-      // of their colours would misrepresent the other; naming the effects answers the rail's question
-      // ("what does this chapter say") in the one line it has.
-      case "voice": {
-        const v = draft.data.voice;
-        if (!v) return t("profiles.voice.follows");
-        const on = [
-          v.ttsSpotlightOn ? t("track.spotlight") : null,
-          v.ttsKaraokeOn ? t("track.karaoke") : null,
-        ].filter(Boolean);
-        return on.length ? on.join(" · ") : t("profiles.voice.none");
-      }
+      // WHOSE MARKS, not a colour. The chapter holds two independent effects, and either one of their
+      // colours would misrepresent the other. It used to name which effects were ON, but whether one is
+      // on is the reader's answer now, not the هيئة's (`TTS_READER_SWITCHES`) — so the line says what
+      // the chapter's own header says: Sard's marks, or the هيئة's.
+      case "voice":
+        return draft.data.voice ? t("profiles.voice.carried") : t("profiles.voice.follows");
       case "refs": {
         const r = draft.data.refs;
         if (!r) return t("profiles.refs.follows");

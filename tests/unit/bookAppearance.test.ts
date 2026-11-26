@@ -40,7 +40,9 @@ import {
 import { changesBetween } from "../../src/features/profiles/session";
 import { useProfiles } from "../../src/features/profiles/store";
 import type { Theme } from "../../src/theme/tokens";
-import { ARABIC_DEFAULTS, LATIN_DEFAULTS, REF_RULE_KEYS, TTS_TRACKING_KEYS } from "../../src/reader-engine/injectedCss";
+import {
+  ARABIC_DEFAULTS, LATIN_DEFAULTS, REF_RULE_KEYS, TTS_READER_SWITCHES, TTS_TRACKING_KEYS,
+} from "../../src/reader-engine/injectedCss";
 import type { CustomThemeId } from "../../src/theme/tokens";
 
 const root = join(import.meta.dirname, "..", "..");
@@ -200,8 +202,11 @@ describe("a هيئة resolves COMPLETE, not as a palette", () => {
 
   it("covers every field the project declares appearance-owned", () => {
     const { set } = readingPatch(RUNES);
+    // Written, or a measure field that is cleared when unnamed — or one of the reader's two read-aloud
+    // switches, which a هيئة stores but never asserts, and which the session lays back over the top.
     for (const k of PROFILE_READING_FIELDS) {
-      expect(Object.prototype.hasOwnProperty.call(set, k) || (TYPOGRAPHY_KEYS as readonly string[]).includes(k), k).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(set, k) || (TYPOGRAPHY_KEYS as readonly string[]).includes(k)
+        || (TTS_READER_SWITCHES as readonly string[]).includes(k), k).toBe(true);
     }
   });
 });
@@ -228,7 +233,13 @@ describe("the fields a هيئة does not own stay the reader's", () => {
     //   textColor       -> theme.reading.colors.text
     // Everything else the firewall names stays the reader's, and that is reading MODE.
     const elsewhere = ["backgroundColor", "pageColor", "textColor"];
-    expect([...SESSION_OWNED_FIELDS].sort()).toEqual(notOwned.filter((k) => !elsewhere.includes(k)).sort());
+    // AND TWO GO THE OTHER WAY: the read-aloud switches are the READER's, yet stay inside the
+    // firewall's boundary, because a هيئة still stores them and a package that names them must still
+    // be accepted. They are session-owned in effect, not in the firewall.
+    const readerSwitches = TTS_READER_SWITCHES as readonly string[];
+    for (const k of readerSwitches) expect(PROFILE_READING_FIELDS as readonly string[]).toContain(k);
+    expect([...SESSION_OWNED_FIELDS].filter((k) => !readerSwitches.includes(k)).sort())
+      .toEqual(notOwned.filter((k) => !elsewhere.includes(k)).sort());
     for (const k of elsewhere) expect(notOwned).toContain(k);
     expect(readingPatch(RUNES).set).toHaveProperty("backgroundColor");
   });
@@ -272,8 +283,9 @@ describe("editing while a book wears a هيئة edits THAT هيئة", () => {
 
   it("gives a هيئة with no opinion about the marks one built from Sard's own, not from nowhere", () => {
     expect(RUNES.data.voice).toBeNull();
-    const n = withReadingEdit(RUNES, { ttsKaraokeOn: false } as never);
-    expect(n.data.voice?.ttsKaraokeOn).toBe(false);
+    // A COLOUR, not a switch: the switches are the reader's and never reach a هيئة.
+    const n = withReadingEdit(RUNES, { ttsKaraokeColor: "#B08968" } as never);
+    expect(n.data.voice?.ttsKaraokeColor).toBe("#B08968");
     for (const k of TTS_TRACKING_KEYS) expect(n.data.voice, k).toHaveProperty(k);
     const r = withReadingEdit(RUNES, { refRuleOffset: 0.5 } as never);
     for (const k of REF_RULE_KEYS) expect(r.data.refs, k).toHaveProperty(k);

@@ -21,7 +21,6 @@ import {
   TYPOGRAPHY_KEYS,
   PROFILE_WRITES,
   REF_KEYS,
-  VOICE_KEYS,
   parseProfileData,
   profileReadingTheme,
   profileRefs,
@@ -36,6 +35,8 @@ import { inspectPackage, serialiseProfile } from "../../src/features/profiles/mo
 import {
   ARABIC_DEFAULTS,
   LATIN_DEFAULTS,
+  TTS_APPEARANCE_KEYS,
+  TTS_READER_SWITCHES,
   TTS_TRACKING_DEFAULTS,
 } from "../../src/reader-engine/injectedCss";
 import { THEMES } from "../../src/theme/themes";
@@ -93,13 +94,14 @@ describe("the boundary — what a profile may write", () => {
     Object.assign(blob, patch.set);
   };
 
-  /** The three the patch always carries, plus the seven read-aloud marks and the three reference-mark
-   *  fields it now always carries too. Derived from the key lists, so a field added to either reaches
-   *  this expectation in one edit and a field that stops being written fails here. */
+  /** The three the patch always carries, plus the هيئة's own read-aloud fields and the three
+   *  reference-mark fields it now always carries too. Derived from the key lists, so a field added to
+   *  either reaches this expectation in one edit and a field that stops being written fails here. */
   // `pageColor` LEFT THIS LIST when the shared override it existed to defeat was removed — a هيئة's
   // answer to the page colour is its own palette, which is not part of the reading-style patch.
+  // The two highlight SWITCHES left it too: they are the reader's (`TTS_READER_SWITCHES`).
   const ALWAYS = ["arabicFont", "backgroundColor", "latinFont", "numberColor",
-    ...VOICE_KEYS, ...REF_KEYS].sort();
+    ...TTS_APPEARANCE_KEYS, ...REF_KEYS].sort();
 
   it("a profile with no typography opinion patches the faces, the number ink and the overlay", () => {
     // `backgroundColor` joins for the same reason `numberColor` did: it is a LOOK the profile owns,
@@ -144,8 +146,10 @@ describe("the boundary — what a profile may write", () => {
     // (no opinion) left the reader reading B in A's green. A هيئة is a complete look; activating
     // one has to establish the whole of it.
     const patch = readingPatch(profile()).set as Record<string, unknown>;
-    for (const k of VOICE_KEYS) expect(Object.hasOwn(patch, k), k).toBe(true);
-    for (const [k, v] of Object.entries(TTS_TRACKING_DEFAULTS)) expect(patch[k], k).toBe(v);
+    for (const k of TTS_APPEARANCE_KEYS) expect(Object.hasOwn(patch, k), k).toBe(true);
+    for (const k of TTS_APPEARANCE_KEYS) expect(patch[k], k).toBe(TTS_TRACKING_DEFAULTS[k]);
+    // The two switches are the reader's: neither written nor cleared, so the reader's answer stands.
+    for (const k of TTS_READER_SWITCHES) expect(Object.hasOwn(patch, k), k).toBe(false);
   });
 
   it("and those values ARE the engine's own defaults, not a second copy of them", () => {
@@ -158,7 +162,9 @@ describe("the boundary — what a profile may write", () => {
     expect(LATIN_DEFAULTS.ttsKaraokeOpacity).toBe(TTS_TRACKING_DEFAULTS.ttsKaraokeOpacity);
     const patch = readingPatch(profile()).set as Record<string, unknown>;
     expect(patch.ttsSpotlightColor).toBeNull();
-    expect(patch.ttsSpotlightOn).toBe(true);
+    // Absent rather than `true`: the same effective state for a reader who never answered, and no
+    // overwrite for one who did.
+    expect(patch).not.toHaveProperty("ttsSpotlightOn");
   });
 
   it("A(custom) -> B(none) -> A(custom): B does not wear A's marks, and A gets them back", () => {
@@ -198,7 +204,10 @@ describe("the boundary — what a profile may write", () => {
       ttsSpeakSymbols: true,
     };
     const patch = readingPatch(p).set as Record<string, unknown>;
-    for (const k of VOICE_KEYS) expect(Object.hasOwn(patch, k), k).toBe(true);
+    for (const k of TTS_APPEARANCE_KEYS) expect(Object.hasOwn(patch, k), k).toBe(true);
+    // A block that stores the switches still does not assert them (`TTS_READER_SWITCHES`).
+    expect(patch).not.toHaveProperty("ttsKaraokeOn");
+    expect(patch).not.toHaveProperty("ttsSpotlightOn");
     expect(patch.ttsSpotlightColor).toBe("#6E7F5B");
     expect(patch.ttsSpotlightOpacity).toBeNull();
     expect(patch.ttsSpotlightRule).toBe(false);
@@ -224,8 +233,9 @@ describe("the boundary — what a profile may write", () => {
     expect(old.voice).toBeNull();
     // And wearing it puts the marks back to Sard's own rather than leaving the last هيئة's standing.
     const patch = readingPatch({ ...profile(), data: old }).set as Record<string, unknown>;
-    expect(patch.ttsSpotlightOn).toBe(TTS_TRACKING_DEFAULTS.ttsSpotlightOn);
+    expect(patch.ttsSpotlightRule).toBe(TTS_TRACKING_DEFAULTS.ttsSpotlightRule);
     expect(patch.ttsKaraokeColor).toBeNull();
+    expect(patch).not.toHaveProperty("ttsSpotlightOn");
   });
 
   it("a hostile voice block is defaulted field by field, never trusted", () => {

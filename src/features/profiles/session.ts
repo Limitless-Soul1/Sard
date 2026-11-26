@@ -32,9 +32,10 @@ import { bookAppearanceInForce } from "../reader/bookAppearance";
 import {
   REF_RULE_DEFAULTS,
   REF_RULE_KEYS,
+  TTS_APPEARANCE_KEYS,
   TTS_TRACKING_DEFAULTS,
-  TTS_TRACKING_KEYS,
   defaultsForDir,
+  isTtsReaderSwitch,
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import { useTheme } from "../../theme/store";
@@ -59,8 +60,12 @@ import { useProfiles } from "./store";
  * It is derived now. A field added to `PROFILE_READING_FIELDS` is a field this compares, an editor
  * row, and a value `readingPatch` asserts, in one edit; a future setting cannot escape by being
  * forgotten in a second list.
+ *
+ * LESS THE READER'S TWO READ-ALOUD SWITCHES. A هيئة still stores them, but activating it no longer
+ * asserts them (`TTS_READER_SWITCHES`), so a reader turning a highlight off has changed nothing the
+ * هيئة would put back — and comparing them would report a change that Discard could never undo.
  */
-const READING_KEYS = PROFILE_READING_FIELDS;
+const READING_KEYS = PROFILE_READING_FIELDS.filter((k) => !isTtsReaderSwitch(k));
 
 export type SessionKey = "theme_id" | "book_theme_id" | (typeof READING_KEYS)[number];
 
@@ -105,7 +110,7 @@ export function profileValues(p: Profile): Record<SessionKey, string> {
     // field either way, so an absent colour is a value the profile holds, not a gap.
     numberColor: p.data.theme.reading.numbers ?? "",
     ...Object.fromEntries(
-      TTS_TRACKING_KEYS.map((k) => [k, String((p.data.voice ?? TTS_TRACKING_DEFAULTS)[k] ?? "")]),
+      TTS_APPEARANCE_KEYS.map((k) => [k, String((p.data.voice ?? TTS_TRACKING_DEFAULTS)[k] ?? "")]),
     ),
     // THE REFERENCE MARK, on the same rule as the read-aloud marks: a هيئة carrying no opinion still
     // ASSERTS Sard's own on activation (see `readingPatch`), so that IS what it says the mark should
@@ -191,7 +196,7 @@ export function liveValues(): Record<SessionKey, string> {
     arabicFont: String(s?.arabicFont ?? ""),
     latinFont: String(s?.latinFont ?? ""),
     numberColor: String(s?.numberColor ?? ""),
-    ...Object.fromEntries(TTS_TRACKING_KEYS.map((k) => [k, String(s?.[k] ?? "")])),
+    ...Object.fromEntries(TTS_APPEARANCE_KEYS.map((k) => [k, String(s?.[k] ?? "")])),
     ...Object.fromEntries(REF_RULE_KEYS.map((k) => [k, String(s?.[k] ?? "")])),
     // The live measure. `useReader.style` is the RESOLVED style, so every one of these is a real
     // value while a book is open and the comparison is like for like.

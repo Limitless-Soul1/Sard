@@ -333,6 +333,32 @@ export const TTS_TRACKING_KEYS = [
   "ttsKaraokeOn", "ttsKaraokeColor", "ttsKaraokeOpacity", "ttsSpeakSymbols",
 ] as const satisfies readonly (keyof typeof TTS_TRACKING_DEFAULTS)[];
 
+/**
+ * THE TWO SWITCHES AMONG THEM THAT BELONG TO THE READER, NOT TO A هيئة.
+ *
+ * «إبراز الجملة» and «إبراز الكلمة» are on or off because the reader said so. They used to travel
+ * inside a هيئة with the rest of the marks, and wearing one wrote them over the reader's own row — so
+ * a reader who switched the sentence highlight off had it switched back on by the next هيئة they
+ * designed, received or chose, since a هيئة with no read-aloud block asserts Sard's default, which is
+ * on. The owner's rule: once switched off, it stays off until the reader turns it on.
+ *
+ * WHAT STAYS WITH THE هيئة is everything else in the block: both colours, both strengths, the
+ * underline and the spoken symbols. A هيئة still carries the two switches as stored data, and a
+ * package naming them is still accepted (the firewall refuses an unknown field at any depth, so
+ * dropping them from the model would refuse every package that already carries them); they simply
+ * have no effect when it is worn. Activation, the unsaved-change check and a book's own هيئة all
+ * consult this list, so the three cannot disagree about who owns them.
+ */
+export const TTS_READER_SWITCHES = [
+  "ttsSpotlightOn", "ttsKaraokeOn",
+] as const satisfies readonly (typeof TTS_TRACKING_KEYS)[number][];
+
+export const isTtsReaderSwitch = (k: string): boolean =>
+  (TTS_READER_SWITCHES as readonly string[]).includes(k);
+
+/** The read-aloud fields a هيئة does own: `TTS_TRACKING_KEYS` less the reader's two switches. */
+export const TTS_APPEARANCE_KEYS = TTS_TRACKING_KEYS.filter((k) => !isTtsReaderSwitch(k));
+
 // RAWY-212: immersive per-element hide defaults, shared by BOTH per-script default sets so they can never
 // drift. These reproduce RAWY-210/211 exactly for an existing `immersive_scroll=1` profile — pill + scrollbar
 // hide on scroll-away (the resume hint was never hidden, and still isn't) — so nobody sees a behaviour change.

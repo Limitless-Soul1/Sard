@@ -29,7 +29,7 @@ import { resolvePill, resolveSpotlight, TRACK_SHAPE } from "../../../../reader-e
 // book draws them with, so the specimen cannot be a near-miss of the mark.
 import { refRuleBars, resolveRefRule } from "../../../../reader-engine/refRule";
 import { bookFaceCss } from "../../mini";
-import { refStyleFor } from "../../model/profile";
+import { refStyleFor, voiceStyleFor } from "../../model/profile";
 import type { Profile } from "../../model/profile";
 
 /**
@@ -265,7 +265,8 @@ export function BookFace({
    * The style is the هيئة's block over the reader's live one, exactly as the voice chapter's controls
    * sit: a هيئة carrying no read-aloud opinion previews the marks the reader already has.
    */
-  const voiceStyle: ReadingStyle = { ...readerStyle, ...(profile.data.voice ?? {}) };
+  // The two highlight SWITCHES are the reader's, never the هيئة's — `voiceStyleFor` says so once.
+  const voiceStyle: ReadingStyle = voiceStyleFor(profile, readerStyle);
   const spot = resolveSpotlight(voiceStyle, dark);
   // THE SAME GROUND THE READER WILL PAINT ON, so the preview cannot drift from the page: the pill's
   // blend is now decided against the paper and ink in force rather than by polarity alone, and this

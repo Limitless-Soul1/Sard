@@ -42,6 +42,8 @@ import {
   PAGE_WIDTH_MIN,
   REF_RULE_DEFAULTS,
   REF_RULE_KEYS,
+  TTS_APPEARANCE_KEYS,
+  TTS_READER_SWITCHES,
   TTS_TRACKING_DEFAULTS,
   TTS_TRACKING_KEYS,
   ZOOM_MAX,
@@ -194,6 +196,20 @@ export function refStyleFor(p: Profile, readerStyle: ReadingStyle): ReadingStyle
   // A هيئة carrying no opinion resolves to the reader's own mark — what they are actually looking at,
   // which is the honest thing to draw beside a control they have not touched.
   return { ...readerStyle, ...(p.data.refs ?? {}) };
+}
+
+/**
+ * THE SAME QUESTION FOR THE READ-ALOUD MARKS, and the one place the editor answers it — the voice
+ * chapter's controls and the specimen on the page both read this, for the reason `refStyleFor` gives.
+ *
+ * The هيئة's block over the reader's live style, with ONE difference: the two switches are always the
+ * reader's (`TTS_READER_SWITCHES`). A block stored with them is read, but they are not the هيئة's to
+ * answer, so the specimen highlights exactly when the reader's book would.
+ */
+export function voiceStyleFor(p: Profile, readerStyle: ReadingStyle): ReadingStyle {
+  const out = { ...readerStyle, ...(p.data.voice ?? {}) } as ReadingStyle;
+  for (const k of TTS_READER_SWITCHES) out[k] = readerStyle[k];
+  return out;
 }
 
 export interface ProfileTypography {
@@ -991,7 +1007,7 @@ export function readingPatch(p: Profile): ReadingPatch {
     if (v !== null && v !== undefined) out[k] = v;
     else clear.push(k);
   }
-  // THE READ-ALOUD MARKS: ALWAYS ALL SEVEN, whether the هيئة carries an opinion or not.
+  // THE READ-ALOUD MARKS: ALWAYS ALL OF THE هيئة'S OWN, whether it carries an opinion or not.
   //
   // OMITTING THEM LEAKED ONE هيئة'S MARKS INTO ANOTHER, and that is the defect this closes. A patch
   // merges into the reader's blob, so a هيئة with no opinion wrote nothing and simply left whatever
@@ -1015,8 +1031,14 @@ export function readingPatch(p: Profile): ReadingPatch {
   // `TTS_TRACKING_DEFAULTS` is identical in both per-script sets, so writing them and clearing them
   // are the same effective state — and writing keeps `null` available as the real value it is there
   // ("the theme's own colour"), which absence could not express.
+  //
+  // EXCEPT THE TWO SWITCHES, which are NEITHER written NOR cleared: whether the sentence and the word
+  // are highlighted at all is the reader's answer, kept in the reader's own row and changed only by
+  // the reader (see `TTS_READER_SWITCHES`). Writing them is what switched «إبراز الجملة» back on
+  // whenever a new or received هيئة was worn. Left untouched, a reader who never answered still reads
+  // with both on, because `loadGlobalStyle` resolves an absent field to the engine's default.
   const voice = p.data.voice ?? TTS_TRACKING_DEFAULTS;
-  for (const k of VOICE_KEYS) out[k] = voice[k];
+  for (const k of TTS_APPEARANCE_KEYS) out[k] = voice[k];
   // THE REFERENCE MARK: ALL THREE, ALWAYS — the same argument as the read-aloud marks above, and it
   // matters for the same reason. Omitting them would leave the PREVIOUS هيئة's reference colour and
   // sizes standing in the reader's blob, so wearing a هيئة that says nothing about references would

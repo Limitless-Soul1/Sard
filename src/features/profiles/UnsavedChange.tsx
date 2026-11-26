@@ -25,7 +25,7 @@ import { useReader } from "../../reader-engine/store";
 // drift that is SAVED are read from one source.
 import { peekGlobalStyle } from "../reader/perBookSettings";
 import { bookAppearanceInForce } from "../reader/bookAppearance";
-import { REF_RULE_KEYS, TTS_TRACKING_KEYS } from "../../reader-engine/injectedCss";
+import { REF_RULE_KEYS, TTS_APPEARANCE_KEYS, TTS_TRACKING_DEFAULTS } from "../../reader-engine/injectedCss";
 import { TYPOGRAPHY_KEYS, type ProfileRefs } from "./model/profile";
 import { useDialog } from "../../components/useDialog";
 
@@ -181,10 +181,14 @@ export function UnsavedChange() {
       // drifted would turn a هيئة that deliberately holds none — `voice: null`, "leave the reader's
       // own marks alone" — into one that imposes Sard's defaults, as a side effect of confirming an
       // unrelated colour. The same rule the measure below has always followed.
-      if (TTS_TRACKING_KEYS.some((k) => String(liveStyle[k] ?? "") !== asserted[k])) {
-        data.voice = Object.fromEntries(
-          TTS_TRACKING_KEYS.map((k) => [k, liveStyle[k]]),
-        ) as ProfileData["voice"];
+      //
+      // ONLY THE هيئة'S OWN FIELDS: the two highlight switches are the reader's (`TTS_READER_SWITCHES`)
+      // and stay in the reader's row. The block keeps whatever it already stored for them.
+      if (TTS_APPEARANCE_KEYS.some((k) => String(liveStyle[k] ?? "") !== asserted[k])) {
+        data.voice = {
+          ...(active.data.voice ?? TTS_TRACKING_DEFAULTS),
+          ...Object.fromEntries(TTS_APPEARANCE_KEYS.map((k) => [k, liveStyle[k]])),
+        } as ProfileData["voice"];
       }
       // AND THE REFERENCE MARK, on the same rule and for the same reason: an opinion only once one of
       // the three has moved, so confirming an unrelated change cannot turn a هيئة that carries none

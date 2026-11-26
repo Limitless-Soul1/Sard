@@ -1748,12 +1748,11 @@ export const en = {
   "profiles.chapter.measure.q": "How should the words be set?",
   "profiles.focus.measure": "the set page",
   "profiles.voice.hint":
-    "The read-aloud marks are drawn on the page like every other mark, so a profile may carry them. It need not: a profile that carries none puts them back to Sard's own, so no profile inherits the marks of the one worn before it.",
+    "The read-aloud marks are drawn on the page like every other mark, so a profile may carry them. It need not: a profile that carries none puts them back to Sard's own, so no profile inherits the marks of the one worn before it. Turning a highlight on or off is done in the reading settings, and no profile changes it.",
   "profiles.voice.label": "Read-aloud marks",
   "profiles.voice.follows": "Sard's own",
   "profiles.voice.carried": "From the profile",
   "profiles.voice.clear": "Back to Sard's own marks",
-  "profiles.voice.none": "No marks",
 
   // The reference mark — the twin rule under a marked word. Worded on the read-aloud pattern because
   // it is the same case: a mark drawn on the page, which a profile may carry and need not.

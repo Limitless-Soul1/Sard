@@ -20,7 +20,7 @@
 // added to a هيئة travels here without anyone remembering to add it.
 
 import {
-  REF_RULE_DEFAULTS, REF_RULE_KEYS, TTS_TRACKING_DEFAULTS, TTS_TRACKING_KEYS,
+  REF_RULE_DEFAULTS, REF_RULE_KEYS, TTS_READER_SWITCHES, TTS_TRACKING_DEFAULTS, TTS_TRACKING_KEYS,
   defaultsForDir, type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import {
@@ -67,9 +67,13 @@ export const BOOK_APPEARANCE_FOLLOW = "~follow";
  * The four that remain are how the book is READ rather than how it looks: the flow, whether the page
  * fits the window, and the two immersive-chrome answers. Switching from Pages to Scroll is not an
  * edit to a هيئة and must never ask to be saved into one.
+ *
+ * THE TWO READ-ALOUD SWITCHES JOINED THEM: whether the sentence and the word are highlighted is the
+ * reader's answer too (`TTS_READER_SWITCHES`), so a book wearing a هيئة of its own still highlights
+ * exactly when the reader asked, and flipping one there writes the reader's row, not that هيئة.
  */
 export const SESSION_OWNED_FIELDS = [
-  "pageFitWindow", "flowMode", "immHidePill", "immHideScrollbar",
+  "pageFitWindow", "flowMode", "immHidePill", "immHideScrollbar", ...TTS_READER_SWITCHES,
 ] as const;
 
 const isSessionOwned = (k: string): boolean =>
@@ -211,6 +215,9 @@ export function withReadingEdit(p: Profile, patch: Partial<ReadingStyle>): Profi
   let touched = false;
 
   for (const [k, v] of Object.entries(patch)) {
+    // Not the هيئة's to hold: `readingPatch` never writes these, so folding one in would store a value
+    // nothing reads. They are the reader's own row's.
+    if (isSessionOwned(k)) continue;
     if (k === "arabicFont") { type.arabic = v as string; touched = true; continue; }
     if (k === "latinFont") { type.latin = v as string; touched = true; continue; }
     if (k === "numberColor") { themeReading.numbers = (v ?? null) as string | null; touched = true; continue; }

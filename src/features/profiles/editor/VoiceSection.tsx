@@ -19,7 +19,7 @@
 import { useI18n } from "../../../i18n";
 import { TtsTrackingControls } from "../../reader/TtsTrackingControls";
 import type { ReadingStyle } from "../../../reader-engine/injectedCss";
-import type { Profile, ProfileVoice } from "../model/profile";
+import { voiceStyleFor, type Profile, type ProfileVoice } from "../model/profile";
 
 export function VoiceSection({
   draft,
@@ -48,8 +48,9 @@ export function VoiceSection({
   const carried = voice !== null;
   const reading = draft.data.theme.reading;
 
-  // What the controls draw: the هيئة's own marks, or the reader's while it has none.
-  const shown: ReadingStyle = carried ? { ...readerStyle, ...voice } : readerStyle;
+  // What the controls draw: the هيئة's own marks, or the reader's while it has none — and the two
+  // highlight switches always the reader's (see `voiceStyleFor`).
+  const shown: ReadingStyle = voiceStyleFor(draft, readerStyle);
 
   /**
    * Any change materialises the block, complete.
@@ -102,6 +103,8 @@ export function VoiceSection({
           contrast guard has to be told about the paper they will actually sit on and the ink they
           have to stay readable behind — the reading palette, exactly as the preview beside this
           chapter draws it. */}
+      {/* NO ON/OFF HERE: whether each highlight is drawn is the reader's answer, made in the reading
+          panel, and a هيئة cannot change it (`TTS_READER_SWITCHES`). It carries how they look. */}
       <TtsTrackingControls
         style={shown}
         update={update}
@@ -109,6 +112,7 @@ export function VoiceSection({
         paperBg={reading.colors.paperBg}
         themeInk={reading.colors.text}
         deskBg={reading.colors.surfaceBg}
+        switches={false}
       />
     </div>
   );

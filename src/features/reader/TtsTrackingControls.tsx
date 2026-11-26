@@ -25,6 +25,13 @@ interface Props {
   // RAWY-265 (Phase 3): the DESK colour behind a translucent page. Passed rather than read from the
   // DOM so the guard is a pure function of its inputs and testable headlessly.
   deskBg: string;
+  /**
+   * Whether this surface shows the two on/off switches. Default true: the reading panel, where they
+   * live. The هيئة editor passes false — the switches are the reader's (`TTS_READER_SWITCHES`), so a
+   * هيئة carries only how each highlight looks, and its colour rows are shown whatever the reader's
+   * answer is, so a colour can still be chosen while a highlight is off.
+   */
+  switches?: boolean;
 }
 
 // One effect's block: on/off toggle, a Default+presets+custom colour row, an opacity slider, and a
@@ -38,6 +45,7 @@ function EffectBlock({
   themeInk,
   deskBg,
   hint,
+  switches = true,
 }: Props & { kind: "spotlight" | "karaoke"; hint?: string }) {
   const { t } = useI18n();
   // RAWY-265 (Phase 3): read straight from the background store rather than adding two props. This
@@ -83,18 +91,27 @@ function EffectBlock({
 
   return (
     <div className="rs-track-effect">
-      <button className="rs-toggle-row" onClick={() => setOn(!on)} aria-pressed={on}>
+      {switches ? (
+        <button className="rs-toggle-row" onClick={() => setOn(!on)} aria-pressed={on}>
+          <span className="rs-toggle-text">
+            <span className="rs-toggle-label">{t(isSpot ? "track.spotlight" : "track.karaoke")}</span>
+            {hint && <span className="rs-toggle-hint">{hint}</span>}
+          </span>
+          <span className={`rs-switch${on ? " on" : ""}`} aria-hidden>
+            <span className="rs-knob" />
+          </span>
+        </button>
+      ) : (
+        // Without a switch the effect is still named, in the same label the switch row carries.
         <span className="rs-toggle-text">
           <span className="rs-toggle-label">{t(isSpot ? "track.spotlight" : "track.karaoke")}</span>
           {hint && <span className="rs-toggle-hint">{hint}</span>}
         </span>
-        <span className={`rs-switch${on ? " on" : ""}`} aria-hidden>
-          <span className="rs-knob" />
-        </span>
-      </button>
+      )}
 
-      {/* The colour + opacity are only meaningful while the effect is ON. */}
-      {on && (
+      {/* The colour + opacity are only meaningful while the effect is ON — on a surface that has the
+          switch. Where it has none, the colours are what is being chosen, so they always show. */}
+      {(on || !switches) && (
         <>
           <div className="rs-inks">
             {/* Default = the theme's built-in terracotta; resets BOTH colour and opacity to null so the

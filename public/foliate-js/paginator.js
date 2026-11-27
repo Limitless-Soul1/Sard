@@ -209,6 +209,12 @@ const setStylesImportant = (el, styles) => {
 
 class View {
     #observer = new ResizeObserver(() => this.expand())
+    // ---- SARD LOCAL PATCH 13 — a view that has not loaded its document has nothing to render ----
+    // `#createView()` publishes the View on the paginator BEFORE `load()` has put a document in its
+    // iframe. Until then the iframe holds about:blank. See `Paginator.render()` for what a render in
+    // that window does; this flag is how it knows.
+    #loaded = false
+    // ---- end SARD LOCAL PATCH 13 ----
     #element = document.createElement('div')
     #iframe = document.createElement('iframe')
     #contentRange = document.createRange()
@@ -268,6 +274,10 @@ class View {
     get document() {
         return this.#iframe.contentDocument
     }
+    // SARD LOCAL PATCH 13 — true once the section document has arrived and its first layout ran.
+    get loaded() {
+        return this.#loaded
+    }
     async load(src, afterLoad, beforeRender) {
         if (typeof src !== 'string') throw new Error(`${src} is not string`)
         return new Promise(resolve => {
@@ -287,6 +297,7 @@ class View {
                 this.#contentRange.selectNodeContents(doc.body)
                 const layout = beforeRender?.({ vertical, rtl, background })
                 this.#iframe.style.display = 'block'
+                this.#loaded = true // SARD LOCAL PATCH 13 — from here on, a render has a document
                 this.render(layout)
                 this.#observer.observe(doc.body)
 
@@ -797,7 +808,29 @@ export class Paginator extends HTMLElement {
         return { height, width, margin, gap, columnWidth }
     }
     render() {
-        if (!this.#view) return
+        // ---- SARD LOCAL PATCH 13 — never lay out a view whose section has not loaded ----
+        // Upstream: `if (!this.#view) return`.
+        //
+        // `#display()` assigns `this.#view` in `#createView()` and only then awaits `load()`, so for the
+        // whole of a section load the view exists and its iframe shows about:blank. The container's
+        // ResizeObserver (constructor) delivers its notification at the next rendering opportunity —
+        // which, on a first open, is exactly that window whenever the open reached `#createView`
+        // without a frame in between. This method then ran `View.render` → `columnize` → `expand`
+        // on about:blank: an empty content range measures 0, `pageCount` is 0, and `expand` writes
+        // `width: 0px` on the iframe. The real section then loads into a ZERO-WIDTH frame and its own
+        // `expand()` forces a layout at that width before it can correct it — every line wraps at
+        // nothing, and the engine walks the platform font fallback per character.
+        // MEASURED on a long Arabic chapter, Blink: the forced layout inside `expand()` took
+        // 3.2–3.8 s (47,551 `FontCache::FallbackFontForCharacter` calls in one trace) against
+        // 100–150 ms when the race fell the other way — a first page after ~3.5 s in roughly one
+        // open out of three, ~350 ms otherwise. The `#scrollToAnchor` below also dispatched two
+        // `relocate` events for the blank document before the section had loaded.
+        //
+        // Skipping is correct, not merely safe: `load()` itself calls `beforeRender` and `render`
+        // once the document is there, and `beforeRender` measures the container at THAT moment, so a
+        // resize during the load is already accounted for by the load's own layout.
+        if (!this.#view?.loaded) return
+        // ---- end SARD LOCAL PATCH 13 ----
         this.#view.render(this.#beforeRender({
             vertical: this.#vertical,
             rtl: this.#rtl,
